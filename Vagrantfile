@@ -15,7 +15,7 @@ Vagrant.configure("2") do |config|
   config.vm.box = "almalinux/9"
   
   config.vm.provider "vmware_desktop" do |v|
-    v.gui = false
+    v.gui = true
   end
 
   # Control Plane
