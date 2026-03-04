@@ -11,6 +11,47 @@ $prep_script = <<-SCRIPT
   systemctl disable --now firewalld || true
 SCRIPT
 
+$k8s_install_script = <<-SCRIPT
+  echo "Instalando Containerd e ferramentas K8s..."
+  
+  # Configurar módulos do kernel para o Containerd
+  cat <<EOF | tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+  modprobe overlay
+  modprobe br_netfilter
+
+  # Parâmetros de rede para o Kubernetes
+  cat <<EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+  sysctl --system
+
+  # Instalar Containerd (AlmaLinux/CentOS repos)
+  dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+  dnf install -y containerd.io
+  mkdir -p /etc/containerd
+  containerd config default | tee /etc/containerd/config.toml
+  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  systemctl enable --now containerd
+
+  # Configurar Repositório Kubernetes v1.30
+  cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+EOF
+
+  dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+  systemctl enable --now kubelet
+SCRIPT
+
 Vagrant.configure("2") do |config|
   # Usando AlmaLinux 9 para replicar um ambiente enterprise Red Hat
   config.vm.box = "almalinux/9"
@@ -28,6 +69,7 @@ Vagrant.configure("2") do |config|
       v.vmx["memsize"] = "4096"
     end
     master.vm.provision "shell", inline: $prep_script
+    master.vm.provision "shell", inline: $k8s_install_script
   end
 
   # Worker 01
@@ -39,6 +81,7 @@ Vagrant.configure("2") do |config|
       v.vmx["memsize"] = "2048"
     end
     worker1.vm.provision "shell", inline: $prep_script
+    worker1.vm.provision "shell", inline: $k8s_install_script
   end
 
   # Worker 02
@@ -50,5 +93,6 @@ Vagrant.configure("2") do |config|
       v.vmx["memsize"] = "2048"
     end
     worker2.vm.provision "shell", inline: $prep_script
+    worker2.vm.provision "shell", inline: $k8s_install_script
   end
 end
