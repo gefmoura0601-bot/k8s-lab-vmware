@@ -2,9 +2,11 @@ name: Deploy K8s Lab Local (VMware)
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ main ]
+
+env:
+  # Isso impede que o GitHub mate os processos do VMware ao final do Job
+  RUNNER_TRACKING_ID: ""
 
 jobs:
   provision-infrastructure:
