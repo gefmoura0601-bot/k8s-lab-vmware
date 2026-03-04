@@ -7,7 +7,8 @@ $prep_script = <<-SCRIPT
   sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
   setenforce 0
   sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
-  systemctl disable --now firewalld
+  # O '|| true' garante que o script não pare se o serviço não existir
+  systemctl disable --now firewalld || true
 SCRIPT
 
 Vagrant.configure("2") do |config|
