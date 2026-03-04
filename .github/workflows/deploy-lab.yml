@@ -1,0 +1,24 @@
+name: Deploy K8s Lab Local (VMware)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  provision-infrastructure:
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Validar sintaxe do Vagrantfile
+        run: vagrant validate
+
+      - name: Subir as VMs no VMware Workstation
+        run: vagrant up --provider=vmware_desktop
+
+      - name: Status das VMs
+        run: vagrant status
