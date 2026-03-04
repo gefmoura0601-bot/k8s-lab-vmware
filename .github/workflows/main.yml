@@ -1,0 +1,12 @@
+name: Deploy Test Local
+on: [push]
+
+jobs:
+  check-infra:
+    runs-on: [self-hosted, master] # Usa as labels que você configurou
+    steps:
+      - name: Validar Nodes
+        run: kubectl get nodes
+
+      - name: Validar Storage Enterprise
+        run: df -hT /k8s-enterprise-storage
