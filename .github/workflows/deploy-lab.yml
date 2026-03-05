@@ -2,25 +2,23 @@ name: Deploy K8s Lab Local (VMware)
 
 on:
   push:
-    branches: [ main ]
-
-env:
-  # Isso impede que o GitHub mate os processos do VMware ao final do Job
-  RUNNER_TRACKING_ID: ""
+    branches: [ "main" ]
 
 jobs:
-  provision-infrastructure:
-    runs-on: self-hosted
-    
+  k8s-deploy:
+    runs-on: [self-hosted, master] 
+
     steps:
-      - name: Checkout do código
+      - name: Checkout do Código
         uses: actions/checkout@v4
 
-      - name: Validar sintaxe do Vagrantfile
-        run: vagrant validate
+      - name: Validar Conexão
+        run: kubectl get nodes
 
-      - name: Subir as VMs no VMware Workstation
-        run: vagrant up --provider=vmware_desktop
-
-      - name: Status das VMs
-        run: vagrant status
+      - name: Deploy Aplicativo no PRD
+        run: |
+          # Aplica o manifesto do Nginx que está na pasta prd
+          kubectl apply -f k8s/prd/nginx-enterprise.yaml
+          
+      - name: Verificar Status do Pod
+        run: kubectl get pods -n prd
