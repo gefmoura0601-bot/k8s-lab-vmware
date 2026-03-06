@@ -1,0 +1,14 @@
+loki:
+  auth_enabled: false
+
+singleBinary:
+  replicas: 1
+
+gateway:
+  enabled: false
+
+loki:
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 20Gi
