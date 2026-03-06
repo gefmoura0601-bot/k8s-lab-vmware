@@ -7,7 +7,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/gefcmoura0601-bot/k8s-lab-vmware
+    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
     targetRevision: HEAD
     path: kubernetes/argocd
 
