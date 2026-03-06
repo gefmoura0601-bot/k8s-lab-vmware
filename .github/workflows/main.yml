@@ -12,13 +12,13 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v4
 
-      - name: Validar Conexão
+      - name: Validar Conexão com Cluster
         run: kubectl get nodes
 
-      - name: Deploy Aplicativo no PRD
+      - name: Deploy Nginx no PRD
         run: |
-          # Aplica o manifesto do Nginx que está na pasta prd
+          # Aplica o manifesto do Nginx com storage XFS/LVM
           kubectl apply -f k8s/prd/nginx-enterprise.yaml
           
-      - name: Verificar Status do Pod
+      - name: Verificar Status do Deploy
         run: kubectl get pods -n prd
