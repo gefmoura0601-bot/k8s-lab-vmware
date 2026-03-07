@@ -1,0 +1,139 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+$prep_script = <<-SCRIPT
+swapoff -a
+sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+setenforce 0
+sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+systemctl disable --now firewalld || true
+SCRIPT
+
+$k8s_install_script = <<-SCRIPT
+
+cat <<EOF | tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+cat <<EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables=1
+net.ipv4.ip_forward=1
+net.bridge.bridge-nf-call-ip6tables=1
+EOF
+
+sysctl --system
+
+dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+dnf install -y containerd.io
+
+mkdir -p /etc/containerd
+containerd config default | tee /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+systemctl enable --now containerd
+
+cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+EOF
+
+dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+systemctl enable --now kubelet
+
+SCRIPT
+
+$hosts_script = <<-SCRIPT
+cat <<EOF >> /etc/hosts
+192.168.109.10 k8s-master
+192.168.109.21 k8s-worker-01
+192.168.109.22 k8s-worker-02
+EOF
+SCRIPT
+
+$dns_script = <<-SCRIPT
+echo "nameserver 8.8.8.8" | tee /etc/resolv.conf
+echo "nameserver 1.1.1.1" | tee -a /etc/resolv.conf
+SCRIPT
+
+Vagrant.configure("2") do |config|
+
+config.vm.boot_timeout = 600
+config.ssh.insert_key = false
+config.vm.box = "almalinux/9"
+
+config.vm.provider "vmware_desktop" do |v|
+  v.gui = true
+end
+
+# -----------------------
+# MASTER
+# -----------------------
+
+config.vm.define "k8s-master" do |master|
+
+  master.vm.hostname = "k8s-master"
+  master.vm.network "private_network", ip: "192.168.109.10"
+
+  master.vm.provider "vmware_desktop" do |v|
+    v.vmx["numvcpus"] = "4"
+    v.vmx["memsize"] = "4096"
+  end
+
+  master.vm.provision "shell", inline: $prep_script
+  master.vm.provision "shell", inline: $k8s_install_script
+  master.vm.provision "shell", inline: $hosts_script
+  master.vm.provision "shell", inline: $dns_script
+
+end
+
+# -----------------------
+# WORKER 01
+# -----------------------
+
+config.vm.define "k8s-worker-01" do |worker1|
+
+  worker1.vm.hostname = "k8s-worker-01"
+  worker1.vm.network "private_network", ip: "192.168.109.21"
+
+  worker1.vm.provider "vmware_desktop" do |v|
+    v.vmx["numvcpus"] = "4"
+    v.vmx["memsize"] = "4096"
+  end
+
+  worker1.vm.provision "shell", inline: $prep_script
+  worker1.vm.provision "shell", inline: $k8s_install_script
+  worker1.vm.provision "shell", inline: $hosts_script
+  worker1.vm.provision "shell", inline: $dns_script
+
+end
+
+# -----------------------
+# WORKER 02
+# -----------------------
+
+config.vm.define "k8s-worker-02" do |worker2|
+
+  worker2.vm.hostname = "k8s-worker-02"
+  worker2.vm.network "private_network", ip: "192.168.109.22"
+
+  worker2.vm.provider "vmware_desktop" do |v|
+    v.vmx["numvcpus"] = "4"
+    v.vmx["memsize"] = "4096"
+  end
+
+  worker2.vm.provision "shell", inline: $prep_script
+  worker2.vm.provision "shell", inline: $k8s_install_script
+  worker2.vm.provision "shell", inline: $hosts_script
+  worker2.vm.provision "shell", inline: $dns_script
+
+end
+
+end
