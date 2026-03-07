@@ -1,15 +1,28 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+NODES = {
+  "k8s-master"    => { ip: "192.168.109.151", cpus: "4", mem: "4096" },
+  "k8s-worker-01" => { ip: "192.168.109.153", cpus: "4", mem: "4096" },
+  "k8s-worker-02" => { ip: "192.168.109.155", cpus: "4", mem: "4096" }
+}
+
 $prep_script = <<-SCRIPT
+set -e
+
 swapoff -a
 sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
-setenforce 0
+
+setenforce 0 || true
 sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+
 systemctl disable --now firewalld || true
 SCRIPT
 
 $k8s_install_script = <<-SCRIPT
+set -e
+
+dnf install -y dnf-plugins-core
 
 cat <<EOF | tee /etc/modules-load.d/containerd.conf
 overlay
@@ -31,7 +44,7 @@ dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce
 dnf install -y containerd.io
 
 mkdir -p /etc/containerd
-containerd config default | tee /etc/containerd/config.toml
+containerd config default | tee /etc/containerd/config.toml >/dev/null
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 
 systemctl enable --now containerd
@@ -47,93 +60,107 @@ EOF
 
 dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 systemctl enable --now kubelet
-
 SCRIPT
 
 $hosts_script = <<-SCRIPT
-cat <<EOF >> /etc/hosts
-192.168.109.10 k8s-master
-192.168.109.21 k8s-worker-01
-192.168.109.22 k8s-worker-02
+set -e
+
+cat <<EOF >/etc/hosts
+127.0.0.1   localhost localhost.localdomain
+::1         localhost localhost.localdomain
+192.168.109.151 k8s-master
+192.168.109.153 k8s-worker-01
+192.168.109.155 k8s-worker-02
 EOF
 SCRIPT
 
-$dns_script = <<-SCRIPT
-echo "nameserver 8.8.8.8" | tee /etc/resolv.conf
-echo "nameserver 1.1.1.1" | tee -a /etc/resolv.conf
+$network_script = <<-SCRIPT
+set -e
+
+TARGET_DEV=$(ip -o -4 addr show | awk '$4 ~ /^192\\.168\\.109\\./ {print $2; exit}')
+
+if [ -z "$TARGET_DEV" ]; then
+  TARGET_DEV=$(ip route | awk '/default/ {print $5; exit}')
+fi
+
+TARGET_CON=$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v dev="$TARGET_DEV" '$2==dev{print $1; exit}')
+
+if [ -z "$TARGET_DEV" ] || [ -z "$TARGET_CON" ]; then
+  echo "Nao foi possivel identificar a interface principal"
+  echo "==== ip addr ===="
+  ip addr
+  echo "==== nmcli device status ===="
+  nmcli device status
+  echo "==== nmcli connection show --active ===="
+  nmcli connection show --active
+  exit 1
+fi
+
+echo "Interface principal detectada: $TARGET_DEV"
+echo "Conexao principal detectada: $TARGET_CON"
+
+nmcli con mod "$TARGET_CON" connection.autoconnect yes
+nmcli con mod "$TARGET_CON" ipv4.method manual
+nmcli con mod "$TARGET_CON" ipv4.addresses "${NODE_IP}/24"
+nmcli con mod "$TARGET_CON" ipv4.gateway "192.168.109.2"
+nmcli con mod "$TARGET_CON" ipv4.dns "8.8.8.8 1.1.1.1"
+nmcli con mod "$TARGET_CON" ipv6.method ignore
+
+for conn in $(nmcli -t -f NAME,TYPE,DEVICE connection show --active | awk -F: '$2=="802-3-ethernet"{print $1 "|" $3}'); do
+  CONN_NAME=$(echo "$conn" | cut -d'|' -f1)
+  CONN_DEV=$(echo "$conn" | cut -d'|' -f2)
+
+  if [ "$CONN_DEV" != "$TARGET_DEV" ]; then
+    echo "Desativando conexao secundaria: $CONN_NAME ($CONN_DEV)"
+    nmcli con mod "$CONN_NAME" connection.autoconnect no || true
+    nmcli con down "$CONN_NAME" || true
+  fi
+done
+
+nmcli con up "$TARGET_CON" || true
+SCRIPT
+
+$kubelet_ip_script = <<-SCRIPT
+set -e
+
+cat <<EOF >/etc/sysconfig/kubelet
+KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}
+EOF
+
+systemctl daemon-reload
+systemctl restart kubelet || true
 SCRIPT
 
 Vagrant.configure("2") do |config|
+  config.vm.box = "almalinux/9"
+  config.vm.boot_timeout = 600
+  config.ssh.insert_key = false
 
-config.vm.boot_timeout = 600
-config.ssh.insert_key = false
-config.vm.box = "almalinux/9"
+  NODES.each do |name, spec|
+    config.vm.define name do |node|
+      node.vm.hostname = name
 
-config.vm.provider "vmware_desktop" do |v|
-  v.gui = true
-end
+      node.vm.provider "vmware_desktop" do |v|
+        v.gui = true
+        v.vmx["numvcpus"] = spec[:cpus]
+        v.vmx["memsize"] = spec[:mem]
 
-# -----------------------
-# MASTER
-# -----------------------
+        # Forca apenas a NIC principal na vmnet8
+        v.vmx["ethernet0.present"] = "TRUE"
+        v.vmx["ethernet0.connectiontype"] = "custom"
+        v.vmx["ethernet0.vnet"] = "vmnet8"
 
-config.vm.define "k8s-master" do |master|
+        # Desabilita NICs extras
+        v.vmx["ethernet1.present"] = "FALSE"
+        v.vmx["ethernet2.present"] = "FALSE"
+        v.vmx["ethernet3.present"] = "FALSE"
+      end
 
-  master.vm.hostname = "k8s-master"
-  master.vm.network "private_network", ip: "192.168.109.10"
-
-  master.vm.provider "vmware_desktop" do |v|
-    v.vmx["numvcpus"] = "4"
-    v.vmx["memsize"] = "4096"
+      node.vm.provision "shell", inline: $prep_script
+      node.vm.provision "shell", inline: $k8s_install_script
+      node.vm.provision "shell", inline: $hosts_script
+      node.vm.provision "shell", env: { "NODE_IP" => spec[:ip] }, inline: $network_script
+      node.vm.provision "shell", env: { "NODE_IP" => spec[:ip] }, inline: $kubelet_ip_script
+    end
   end
-
-  master.vm.provision "shell", inline: $prep_script
-  master.vm.provision "shell", inline: $k8s_install_script
-  master.vm.provision "shell", inline: $hosts_script
-  master.vm.provision "shell", inline: $dns_script
-
-end
-
-# -----------------------
-# WORKER 01
-# -----------------------
-
-config.vm.define "k8s-worker-01" do |worker1|
-
-  worker1.vm.hostname = "k8s-worker-01"
-  worker1.vm.network "private_network", ip: "192.168.109.21"
-
-  worker1.vm.provider "vmware_desktop" do |v|
-    v.vmx["numvcpus"] = "4"
-    v.vmx["memsize"] = "4096"
-  end
-
-  worker1.vm.provision "shell", inline: $prep_script
-  worker1.vm.provision "shell", inline: $k8s_install_script
-  worker1.vm.provision "shell", inline: $hosts_script
-  worker1.vm.provision "shell", inline: $dns_script
-
-end
-
-# -----------------------
-# WORKER 02
-# -----------------------
-
-config.vm.define "k8s-worker-02" do |worker2|
-
-  worker2.vm.hostname = "k8s-worker-02"
-  worker2.vm.network "private_network", ip: "192.168.109.22"
-
-  worker2.vm.provider "vmware_desktop" do |v|
-    v.vmx["numvcpus"] = "4"
-    v.vmx["memsize"] = "4096"
-  end
-
-  worker2.vm.provision "shell", inline: $prep_script
-  worker2.vm.provision "shell", inline: $k8s_install_script
-  worker2.vm.provision "shell", inline: $hosts_script
-  worker2.vm.provision "shell", inline: $dns_script
-
-end
-
 end
