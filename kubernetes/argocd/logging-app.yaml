@@ -3,23 +3,22 @@ kind: Application
 metadata:
   name: logging
   namespace: argocd
-
 spec:
   project: default
-
-  source:
-    repoURL: https://grafana.github.io/helm-charts
-    chart: loki
-    targetRevision: 5.41.0
-
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki-stack
+      targetRevision: 2.10.3
+      helm:
+        releaseName: loki
+        valueFiles:
+          - $values/kubernetes/logging/loki-values.yaml
+    - repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: logging
-
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-
     syncOptions:
       - CreateNamespace=true
