@@ -1,0 +1,24 @@
+name: Deploy K8s Lab Local (VMware)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  k8s-deploy:
+    runs-on: [self-hosted, master] 
+
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+
+      - name: Validar Conexão
+        run: kubectl get nodes
+
+      - name: Deploy Aplicativo no PRD
+        run: |
+          # Aplica o manifesto do Nginx que está na pasta prd
+          kubectl apply -f k8s/prd/nginx-enterprise.yaml
+          
+      - name: Verificar Status do Pod
+        run: kubectl get pods -n prd

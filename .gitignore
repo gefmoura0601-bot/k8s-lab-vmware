@@ -1,4 +1,8 @@
 .vagrant/
 *.log
+<<<<<<< HEAD
 *.iso
 *.box
+=======
+*.lock
+>>>>>>> a8ad8c233a8377b5a5fe1e92f8e71c814b8700c8
