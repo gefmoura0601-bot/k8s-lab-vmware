@@ -77,6 +77,8 @@ SCRIPT
 $network_script = <<-SCRIPT
 set -e
 
+echo "NODE_IP recebido: ${NODE_IP}"
+
 TARGET_DEV=$(ip -o -4 addr show | awk '$4 ~ /^192\\.168\\.109\\./ {print $2; exit}')
 
 if [ -z "$TARGET_DEV" ]; then
@@ -100,11 +102,11 @@ echo "Interface principal detectada: $TARGET_DEV"
 echo "Conexao principal detectada: $TARGET_CON"
 
 nmcli con mod "$TARGET_CON" connection.autoconnect yes
-nmcli con mod "$TARGET_CON" ipv4.method manual
 nmcli con mod "$TARGET_CON" ipv4.addresses "${NODE_IP}/24"
 nmcli con mod "$TARGET_CON" ipv4.gateway "192.168.109.2"
 nmcli con mod "$TARGET_CON" ipv4.dns "8.8.8.8 1.1.1.1"
 nmcli con mod "$TARGET_CON" ipv6.method ignore
+nmcli con mod "$TARGET_CON" ipv4.method manual
 
 for conn in $(nmcli -t -f NAME,TYPE,DEVICE connection show --active | awk -F: '$2=="802-3-ethernet"{print $1 "|" $3}'); do
   CONN_NAME=$(echo "$conn" | cut -d'|' -f1)
@@ -117,7 +119,7 @@ for conn in $(nmcli -t -f NAME,TYPE,DEVICE connection show --active | awk -F: '$
   fi
 done
 
-nmcli con up "$TARGET_CON" || true
+nmcli con up "$TARGET_CON" || nmcli device reapply "$TARGET_DEV" || true
 SCRIPT
 
 $kubelet_ip_script = <<-SCRIPT
