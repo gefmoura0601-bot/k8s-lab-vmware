@@ -13,6 +13,17 @@ spec:
         protocol: HTTP
       hosts:
         - nginx.lab.local
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: nginx-lab-istio-tls
+      hosts:
+        - nginx.lab.local
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
