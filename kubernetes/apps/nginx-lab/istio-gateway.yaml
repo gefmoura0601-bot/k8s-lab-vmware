@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: nginx-lab-gateway
+  namespace: nginx-lab
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - nginx.lab.local
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: nginx-lab
+  namespace: nginx-lab
+spec:
+  hosts:
+    - nginx.lab.local
+  gateways:
+    - nginx-lab-gateway
+  http:
+    - route:
+        - destination:
+            host: nginx-lab
+            port:
+              number: 80
