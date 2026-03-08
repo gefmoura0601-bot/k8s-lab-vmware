@@ -5,6 +5,10 @@ metadata:
   namespace: nginx-lab
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - nginx.lab.local
+      secretName: nginx-lab-tls
   rules:
     - host: nginx.lab.local
       http:
