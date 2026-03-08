@@ -3,3 +3,4 @@ kind: Kustomization
 
 resources:
   - all.yaml
+  - ingress.yaml
