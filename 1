@@ -28,10 +28,8 @@ spec:
       app: nginx-lab
   template:
     metadata:
-      annotations:
-        sidecar.istio.io/inject: "true"
-      labels:
-        app: nginx-lab
+        labels:
+          app: nginx-lab
     spec:
       initContainers:
         - name: init-html
