@@ -1,0 +1,65 @@
+name: CPU Producer Image CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/cpu-producer-go/**'
+      - '.github/workflows/cpu-producer-image-ci.yaml'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize owner
+        id: owner
+        run: echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
+      - name: Set image tag
+        id: vars
+        run: echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/cpu-producer-go
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:${{ steps.vars.outputs.tag }}
+            ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:latest
+
+      - name: Update GitOps manifest with new tag
+        run: |
+          sed -i 's|image: ghcr.io/.*/cpu-producer-go:.*|image: ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:${{ steps.vars.outputs.tag }}|' kubernetes/apps/workers/cpu-producer/deployment.yaml
+          grep 'image:' kubernetes/apps/workers/cpu-producer/deployment.yaml
+
+      - name: Commit manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add kubernetes/apps/workers/cpu-producer/deployment.yaml
+
+          if git diff --cached --quiet; then
+            echo "Sem mudanças para commit."
+            exit 0
+          fi
+
+          git commit -m "ci: update cpu-producer image tag to ${{ steps.vars.outputs.tag }}"
+          git push
