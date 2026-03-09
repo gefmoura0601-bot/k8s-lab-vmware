@@ -1,48 +1,41 @@
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: rabbitmq
-  namespace: messaging
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: rabbitmq
-  template:
-    metadata:
-      labels:
-        app: rabbitmq
-    spec:
-      containers:
-        - name: rabbitmq
-          image: rabbitmq:3.13-management-alpine
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 5672
-              name: amqp
-            - containerPort: 15672
-              name: http
-          env:
-            - name: RABBITMQ_DEFAULT_USER
-              value: admin
-            - name: RABBITMQ_DEFAULT_PASS
-              value: admin123
-          readinessProbe:
-            httpGet:
-              path: /api/health/checks/local-alarms
-              port: 15672
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /api/health/checks/virtual-hosts
-              port: 15672
-            initialDelaySeconds: 40
-            periodSeconds: 20
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
+containers:
+  - name: rabbitmq
+    image: rabbitmq:3.13-management-alpine
+    imagePullPolicy: IfNotPresent
+    ports:
+      - containerPort: 5672
+        name: amqp
+      - containerPort: 15672
+        name: http
+    env:
+      - name: RABBITMQ_DEFAULT_USER
+        value: admin
+      - name: RABBITMQ_DEFAULT_PASS
+        value: admin123
+    readinessProbe:
+      exec:
+        command:
+          - rabbitmq-diagnostics
+          - -q
+          - ping
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    livenessProbe:
+      exec:
+        command:
+          - rabbitmq-diagnostics
+          - -q
+          - check_running
+      initialDelaySeconds: 40
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
