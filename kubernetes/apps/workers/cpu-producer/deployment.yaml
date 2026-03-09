@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: cpu-producer
-          image: ghcr.io/gefmoura0601-bot/cpu-producer-go:latest
+          image: ghcr.io/gefmoura0601-bot/cpu-producer-go:1e78b4a
           imagePullPolicy: Always
           env:
             - name: RABBITMQ_URL
