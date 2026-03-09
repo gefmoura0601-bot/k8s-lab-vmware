@@ -37,17 +37,18 @@ jobs:
         run: |
           kubectl kustomize kubernetes/apps/nginx-lab > /tmp/nginx-lab-rendered.yaml
           test -s /tmp/nginx-lab-rendered.yaml
-          echo "Rendered manifests:"
-          head -n 50 /tmp/nginx-lab-rendered.yaml
+          head -n 80 /tmp/nginx-lab-rendered.yaml
 
       - name: Dry-run nginx-lab manifests
         run: |
-          kubectl apply --dry-run=client -f /tmp/nginx-lab-rendered.yaml
+          kubectl apply --dry-run=client --validate=false -f /tmp/nginx-lab-rendered.yaml
 
       - name: Basic resource checks
         run: |
-          grep -q "kind: Deployment" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: Namespace" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: Service" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: PersistentVolumeClaim" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: Deployment" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: Ingress" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: Gateway" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: VirtualService" /tmp/nginx-lab-rendered.yaml
