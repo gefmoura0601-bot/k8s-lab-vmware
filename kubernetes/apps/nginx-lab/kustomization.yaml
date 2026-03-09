@@ -5,3 +5,4 @@ resources:
   - all.yaml
   - ingress.yaml
   - istio-gateway.yaml
+  - networkpolicy.yaml
