@@ -3,19 +3,6 @@ kind: Namespace
 metadata:
   name: nginx-lab
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: nginx-lab-pvc
-  namespace: nginx-lab
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: nfs-client
-  resources:
-    requests:
-      storage: 1Gi
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,42 +20,32 @@ spec:
       labels:
         app: nginx-lab
     spec:
-      initContainers:
-        - name: init-html
-          image: busybox:1.36
-          command:
-            - /bin/sh
-            - -c
-            - |
-              cat <<'HTML' > /workdir/index.html
-              <!DOCTYPE html>
-              <html lang="pt-BR">
-              <head>
-                <meta charset="UTF-8">
-                <title>Nginx Lab</title>
-              </head>
-              <body>
-                <h1>Nginx Lab via ArgoCD</h1>
-                <p>Deploy realizado com sucesso no namespace nginx-lab.</p>
-              </body>
-              </html>
-              HTML
-          volumeMounts:
-            - name: app-data
-              mountPath: /workdir
       containers:
         - name: nginx
-          image: nginx:stable
+          image: ghcr.io/gefmoura0601-bot/nginx-lab:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
               name: http
-          volumeMounts:
-            - name: app-data
-              mountPath: /usr/share/nginx/html
-      volumes:
-        - name: app-data
-          persistentVolumeClaim:
-            claimName: nginx-lab-pvc
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
