@@ -6,3 +6,4 @@ resources:
   - ingress.yaml
   - istio-gateway.yaml
   - networkpolicy.yaml
+  - hpa.yaml
