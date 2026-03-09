@@ -1,0 +1,54 @@
+name: GitOps CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'kubernetes/**'
+      - '.github/workflows/gitops-ci.yaml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'kubernetes/**'
+      - '.github/workflows/gitops-ci.yaml'
+
+jobs:
+  validate-nginx-lab:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.14'
+
+      - name: Show repo structure
+        run: |
+          pwd
+          ls -la
+          find kubernetes -maxdepth 3 -type f | sort
+
+      - name: Render nginx-lab with kustomize
+        run: |
+          kubectl kustomize kubernetes/apps/nginx-lab > /tmp/nginx-lab-rendered.yaml
+          test -s /tmp/nginx-lab-rendered.yaml
+          echo "Rendered manifests:"
+          head -n 50 /tmp/nginx-lab-rendered.yaml
+
+      - name: Dry-run nginx-lab manifests
+        run: |
+          kubectl apply --dry-run=client -f /tmp/nginx-lab-rendered.yaml
+
+      - name: Basic resource checks
+        run: |
+          grep -q "kind: Deployment" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: Service" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: Ingress" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: Gateway" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: VirtualService" /tmp/nginx-lab-rendered.yaml
+          grep -q "kind: NetworkPolicy" /tmp/nginx-lab-rendered.yaml
