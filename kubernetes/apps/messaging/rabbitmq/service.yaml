@@ -12,7 +12,24 @@ spec:
       port: 5672
       targetPort: 5672
       nodePort: 32742
-    - name: http
+    - name: http-management
       port: 15672
       targetPort: 15672
       nodePort: 30137
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-headless
+  namespace: messaging
+spec:
+  clusterIP: None
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: http-management
+      port: 15672
+      targetPort: 15672
