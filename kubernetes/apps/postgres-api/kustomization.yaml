@@ -9,3 +9,4 @@ resources:
   - service.yaml
   - networkpolicy-egress.yaml
   - networkpolicy-db-allow.yaml
+  - virtualservice.yaml

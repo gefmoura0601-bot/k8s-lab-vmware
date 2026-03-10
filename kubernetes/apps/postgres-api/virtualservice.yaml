@@ -1,0 +1,34 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: postgres-api
+  namespace: apps
+spec:
+  hosts:
+    - nginx.lab.local
+  gateways:
+    - nginx-lab/nginx-lab-gateway
+  http:
+    - match:
+        - uri:
+            exact: /postgres-api
+      rewrite:
+        uri: /
+      route:
+        - destination:
+            host: postgres-api.apps.svc.cluster.local
+            port:
+              number: 80
+
+    - match:
+        - uri:
+            prefix: /postgres-api/
+      rewrite:
+        uriRegexRewrite:
+          match: ^/postgres-api(/|$)(.*)
+          rewrite: /\2
+      route:
+        - destination:
+            host: postgres-api.apps.svc.cluster.local
+            port:
+              number: 80
