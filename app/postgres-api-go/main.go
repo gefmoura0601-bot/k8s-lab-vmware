@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type App struct {
@@ -30,6 +32,38 @@ type CreateUserRequest struct {
 	Email string `json:"email"`
 }
 
+var (
+	httpRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgres_api_http_requests_total",
+			Help: "Total de requisições HTTP recebidas pela postgres-api.",
+		},
+		[]string{"method", "path", "status"},
+	)
+
+	httpRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "postgres_api_http_request_duration_seconds",
+			Help:    "Latência das requisições HTTP da postgres-api.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "path", "status"},
+	)
+
+	httpRequestsInFlight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "postgres_api_http_requests_in_flight",
+			Help: "Quantidade de requisições HTTP em andamento na postgres-api.",
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpRequestsTotal)
+	prometheus.MustRegister(httpRequestDuration)
+	prometheus.MustRegister(httpRequestsInFlight)
+}
+
 func main() {
 	db := connectWithRetry()
 	defer db.Close()
@@ -45,12 +79,13 @@ func main() {
 	mux.HandleFunc("/healthz", app.handleHealthz)
 	mux.HandleFunc("/readyz", app.handleReadyz)
 	mux.HandleFunc("/users", app.handleUsers)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	serverPort := getEnv("SERVER_PORT", "8080")
 
 	server := &http.Server{
 		Addr:              ":" + serverPort,
-		Handler:           loggingMiddleware(mux),
+		Handler:           metricsMiddleware(loggingMiddleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -240,10 +275,7 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("erro ao serializar json: %v", err)
-	}
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -252,4 +284,53 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.statusCode = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpRequestsInFlight.Inc()
+		defer httpRequestsInFlight.Dec()
+
+		rec := &statusRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+		}
+
+		start := time.Now()
+		next.ServeHTTP(rec, r)
+		duration := time.Since(start).Seconds()
+
+		path := normalizePath(r.URL.Path)
+		status := fmt.Sprintf("%d", rec.statusCode)
+
+		httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
+		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration)
+	})
+}
+
+func normalizePath(path string) string {
+	switch {
+	case path == "/":
+		return "/"
+	case path == "/healthz":
+		return "/healthz"
+	case path == "/readyz":
+		return "/readyz"
+	case path == "/metrics":
+		return "/metrics"
+	case path == "/users":
+		return "/users"
+	default:
+		return "other"
+	}
 }

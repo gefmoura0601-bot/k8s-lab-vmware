@@ -10,3 +10,4 @@ resources:
   - networkpolicy-egress.yaml
   - networkpolicy-db-allow.yaml
   - virtualservice.yaml
+  - servicemonitor.yaml
