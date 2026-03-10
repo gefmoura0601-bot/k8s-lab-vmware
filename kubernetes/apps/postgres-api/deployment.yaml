@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-api
+  namespace: apps
+  labels:
+    app: postgres-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-api
+  template:
+    metadata:
+      labels:
+        app: postgres-api
+    spec:
+      containers:
+        - name: postgres-api
+          image: ghcr.io/gefmoura0601-bot/postgres-api-go:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: postgres-api-config
+            - secretRef:
+                name: postgres-api-secret
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
