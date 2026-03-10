@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: cpu-worker
-          image: ghcr.io/gefmoura0601-bot/cpu-worker-go:6145613
+          image: ghcr.io/gefmoura0601-bot/cpu-worker-go:bca9133
           imagePullPolicy: Always
           env:
             - name: RABBITMQ_URL
