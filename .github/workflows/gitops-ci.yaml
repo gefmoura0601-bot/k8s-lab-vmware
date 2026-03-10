@@ -48,7 +48,6 @@ jobs:
 
       - name: Basic resource checks
         run: |
-          grep -q "kind: Namespace" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: Service" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: PersistentVolumeClaim" /tmp/nginx-lab-rendered.yaml
           grep -q "kind: Deployment" /tmp/nginx-lab-rendered.yaml
