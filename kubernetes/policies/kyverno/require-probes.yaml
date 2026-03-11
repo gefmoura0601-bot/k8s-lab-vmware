@@ -1,0 +1,31 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-probes
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-probes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - monitoring
+                - logging
+                - argocd
+                - kyverno
+      validate:
+        message: "Todos os containers devem definir readinessProbe e livenessProbe."
+        pattern:
+          spec:
+            containers:
+              - name: "*"
+                readinessProbe: "?*"
+                livenessProbe: "?*"
