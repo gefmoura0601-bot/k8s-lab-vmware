@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -85,13 +86,13 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + serverPort,
-		Handler:           metricsMiddleware(loggingMiddleware(mux)),
+		Handler:           observabilityMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("API iniciada na porta %s", serverPort)
+	log.Printf("level=info msg=\"api iniciada\" port=%s", serverPort)
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("erro no servidor: %v", err)
+		log.Fatalf("level=error msg=\"erro no servidor\" error=%q", err.Error())
 	}
 }
 
@@ -130,16 +131,20 @@ func connectWithRetry() *sql.DB {
 			err = db.PingContext(ctx)
 			cancel()
 			if err == nil {
-				log.Println("conectado ao PostgreSQL com sucesso")
+				log.Println("level=info msg=\"conectado ao PostgreSQL com sucesso\"")
 				return db
 			}
 		}
 
-		log.Printf("tentativa %d/30 falhou ao conectar no PostgreSQL: %v", attempt, err)
+		log.Printf(
+			"level=warn msg=\"falha ao conectar no PostgreSQL\" attempt=%d max_attempts=30 error=%q",
+			attempt,
+			err,
+		)
 		time.Sleep(5 * time.Second)
 	}
 
-	log.Fatalf("não foi possível conectar no PostgreSQL após várias tentativas: %v", err)
+	log.Fatalf("level=error msg=\"não foi possível conectar no PostgreSQL após várias tentativas\" error=%q", err)
 	return nil
 }
 
@@ -278,14 +283,6 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
-	})
-}
-
 type statusRecorder struct {
 	http.ResponseWriter
 	statusCode int
@@ -296,7 +293,7 @@ func (sr *statusRecorder) WriteHeader(code int) {
 	sr.ResponseWriter.WriteHeader(code)
 }
 
-func metricsMiddleware(next http.Handler) http.Handler {
+func observabilityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpRequestsInFlight.Inc()
 		defer httpRequestsInFlight.Dec()
@@ -308,13 +305,28 @@ func metricsMiddleware(next http.Handler) http.Handler {
 
 		start := time.Now()
 		next.ServeHTTP(rec, r)
-		duration := time.Since(start).Seconds()
+		duration := time.Since(start)
 
 		path := normalizePath(r.URL.Path)
 		status := fmt.Sprintf("%d", rec.statusCode)
 
 		httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
-		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration)
+		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration.Seconds())
+
+		if shouldSkipAccessLog(path) {
+			return
+		}
+
+		log.Printf(
+			"level=info msg=\"http_request\" method=%s path=%s status=%d duration_ms=%d remote_addr=%s request_id=%s user_agent=%q",
+			r.Method,
+			r.URL.Path,
+			rec.statusCode,
+			duration.Milliseconds(),
+			clientIP(r),
+			requestID(r),
+			r.UserAgent(),
+		)
 	})
 }
 
@@ -333,4 +345,49 @@ func normalizePath(path string) string {
 	default:
 		return "other"
 	}
+}
+
+func shouldSkipAccessLog(path string) bool {
+	switch path {
+	case "/metrics":
+		return true
+	default:
+		return false
+	}
+}
+
+func requestID(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Request-Id")); v != "" {
+		return sanitize(v)
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Amzn-Trace-Id")); v != "" {
+		return sanitize(v)
+	}
+	return fmt.Sprintf("local-%d", time.Now().UnixNano())
+}
+
+func clientIP(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 {
+			return sanitize(strings.TrimSpace(parts[0]))
+		}
+	}
+	if xrip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xrip != "" {
+		return sanitize(xrip)
+	}
+
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return sanitize(host)
+	}
+
+	return sanitize(r.RemoteAddr)
+}
+
+func sanitize(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.ReplaceAll(v, " ", "_")
+	v = strings.ReplaceAll(v, "\"", "")
+	return v
 }
