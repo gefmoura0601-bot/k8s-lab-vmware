@@ -1,0 +1,40 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-standard-labels
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-standard-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+                - CronJob
+                - Service
+                - ConfigMap
+                - Secret
+                - Ingress
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - monitoring
+                - logging
+                - argocd
+                - kyverno
+      validate:
+        message: "Os labels app, team e environment são obrigatórios."
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+              team: "?*"
+              environment: "?*"

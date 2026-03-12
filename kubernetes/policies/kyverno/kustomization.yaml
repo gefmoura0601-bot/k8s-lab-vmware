@@ -5,3 +5,4 @@ resources:
   - require-resources.yaml
   - require-probes.yaml
   - disallow-latest.yaml
+  - require-standard-labels.yaml
