@@ -6,3 +6,4 @@ resources:
   - require-probes.yaml
   - disallow-latest.yaml
   - require-standard-labels.yaml
+  - allow-approved-registries.yaml

@@ -1,0 +1,41 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: allow-approved-registries
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-allowed-image-registries
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - monitoring
+                - logging
+                - argocd
+                - kyverno
+                - cert-manager
+                - ingress-nginx
+                - istio-system
+      validate:
+        message: "A imagem deve vir de um registry aprovado."
+        foreach:
+          - list: "request.object.spec.containers"
+            anyPattern:
+              - image: "ghcr.io/gefmoura0601-bot/*"
+              - image: "quay.io/*"
+              - image: "registry.k8s.io/*"
+              - image: "docker.io/*"
+          - list: "request.object.spec.initContainers || `[]`"
+            anyPattern:
+              - image: "ghcr.io/gefmoura0601-bot/*"
+              - image: "quay.io/*"
+              - image: "registry.k8s.io/*"
+              - image: "docker.io/*"
