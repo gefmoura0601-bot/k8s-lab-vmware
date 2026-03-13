@@ -53,11 +53,10 @@ metadata:
   name: nginx-lab
   namespace: nginx-lab
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: nginx-lab
   ports:
     - name: http
       port: 80
       targetPort: 80
-      nodePort: 30080

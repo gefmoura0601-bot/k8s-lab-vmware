@@ -3,7 +3,6 @@ kind: Kustomization
 
 resources:
   - all.yaml
-  - ingress.yaml
   - istio-gateway.yaml
   - networkpolicy.yaml
   - hpa.yaml
