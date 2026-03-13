@@ -1,20 +1,15 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type App struct {
@@ -22,7 +17,7 @@ type App struct {
 }
 
 type User struct {
-	ID        int64     `json:"id"`
+	ID        int       `json:"id"`
 	Name      string    `json:"name"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
@@ -33,163 +28,81 @@ type CreateUserRequest struct {
 	Email string `json:"email"`
 }
 
-var (
-	httpRequestsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "postgres_api_http_requests_total",
-			Help: "Total de requisições HTTP recebidas pela postgres-api.",
-		},
-		[]string{"method", "path", "status"},
-	)
-
-	httpRequestDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "postgres_api_http_request_duration_seconds",
-			Help:    "Latência das requisições HTTP da postgres-api.",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"method", "path", "status"},
-	)
-
-	httpRequestsInFlight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "postgres_api_http_requests_in_flight",
-			Help: "Quantidade de requisições HTTP em andamento na postgres-api.",
-		},
-	)
-)
-
-func init() {
-	prometheus.MustRegister(httpRequestsTotal)
-	prometheus.MustRegister(httpRequestDuration)
-	prometheus.MustRegister(httpRequestsInFlight)
-}
-
 func main() {
-	db := connectWithRetry()
-	defer db.Close()
+	dbHost := getenv("DB_HOST", "postgres.databases.svc.cluster.local")
+	dbPort := getenv("DB_PORT", "5432")
+	dbName := getenv("DB_NAME", "appdb")
+	dbUser := getenv("DB_USER", "appuser")
+	dbPassword := getenv("DB_PASSWORD", "apppassword")
+	listenAddr := getenv("LISTEN_ADDR", ":80")
 
-	if err := initDB(db); err != nil {
-		log.Fatalf("erro ao inicializar banco: %v", err)
+	dsn := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName,
+	)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatalf("erro ao abrir conexão com banco: %v", err)
 	}
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("erro ao conectar no PostgreSQL: %v", err)
+	}
+
+	log.Println("conectado ao PostgreSQL com sucesso")
 
 	app := &App{db: db}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleRoot)
-	mux.HandleFunc("/healthz", app.handleHealthz)
-	mux.HandleFunc("/readyz", app.handleReadyz)
+	mux.HandleFunc("/health", app.handleHealth)
+	mux.HandleFunc("/healthz", app.handleHealth)
+	mux.HandleFunc("/readyz", app.handleReady)
 	mux.HandleFunc("/users", app.handleUsers)
-	mux.Handle("/metrics", promhttp.Handler())
-
-	serverPort := getEnv("SERVER_PORT", "8080")
 
 	server := &http.Server{
-		Addr:              ":" + serverPort,
-		Handler:           observabilityMiddleware(mux),
-		ReadHeaderTimeout: 5 * time.Second,
+		Addr:         listenAddr,
+		Handler:      loggingMiddleware(mux),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}
 
-	log.Printf("level=info msg=\"api iniciada\" port=%s", serverPort)
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("level=error msg=\"erro no servidor\" error=%q", err.Error())
-	}
-}
-
-func getEnv(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func buildDSN() string {
-	host := getEnv("POSTGRES_HOST", "postgres.databases.svc.cluster.local")
-	port := getEnv("POSTGRES_PORT", "5432")
-	dbname := getEnv("POSTGRES_DB", "appdb")
-	user := getEnv("POSTGRES_USER", "postgres")
-	password := getEnv("POSTGRES_PASSWORD", "postgres")
-	sslmode := getEnv("POSTGRES_SSLMODE", "disable")
-
-	return fmt.Sprintf(
-		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
-		host, port, dbname, user, password, sslmode,
-	)
-}
-
-func connectWithRetry() *sql.DB {
-	dsn := buildDSN()
-
-	var db *sql.DB
-	var err error
-
-	for attempt := 1; attempt <= 30; attempt++ {
-		db, err = sql.Open("postgres", dsn)
-		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			err = db.PingContext(ctx)
-			cancel()
-			if err == nil {
-				log.Println("level=info msg=\"conectado ao PostgreSQL com sucesso\"")
-				return db
-			}
-		}
-
-		log.Printf(
-			"level=warn msg=\"falha ao conectar no PostgreSQL\" attempt=%d max_attempts=30 error=%q",
-			attempt,
-			err,
-		)
-		time.Sleep(5 * time.Second)
-	}
-
-	log.Fatalf("level=error msg=\"não foi possível conectar no PostgreSQL após várias tentativas\" error=%q", err)
-	return nil
-}
-
-func initDB(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id SERIAL PRIMARY KEY,
-		name TEXT NOT NULL,
-		email TEXT NOT NULL UNIQUE,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := db.ExecContext(ctx, query)
-	return err
+	log.Printf("servidor iniciado em %s", listenAddr)
+	log.Fatal(server.ListenAndServe())
 }
 
 func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "postgres-api-go online",
 		"service": "postgres-api",
 	})
 }
 
-func (a *App) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
+func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "postgres-api-go online",
+		"service": "postgres-api",
+	})
+}
 
-	if err := a.db.PingContext(ctx); err != nil {
+func (a *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := a.db.Ping(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"status": "down",
-			"error":  err.Error(),
+			"status":  "not ready",
+			"details": err.Error(),
 		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
+		"status": "ready",
 	})
-}
-
-func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	a.handleHealthz(w, r)
 }
 
 func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -206,13 +119,10 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	rows, err := a.db.QueryContext(ctx, `
+	rows, err := a.db.Query(`
 		SELECT id, name, email, created_at
 		FROM users
-		ORDER BY id DESC
+		ORDER BY id
 	`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -222,7 +132,8 @@ func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	users := make([]User, 0)
+	var users []User
+
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.CreatedAt); err != nil {
@@ -247,9 +158,6 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
-	req.Email = strings.TrimSpace(req.Email)
-
 	if req.Name == "" || req.Email == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "name e email são obrigatórios",
@@ -257,11 +165,8 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
 	var user User
-	err := a.db.QueryRowContext(ctx, `
+	err := a.db.QueryRow(`
 		INSERT INTO users (name, email)
 		VALUES ($1, $2)
 		RETURNING id, name, email, created_at
@@ -277,117 +182,49 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, user)
 }
 
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (sr *statusRecorder) WriteHeader(code int) {
-	sr.statusCode = code
-	sr.ResponseWriter.WriteHeader(code)
-}
-
-func observabilityMiddleware(next http.Handler) http.Handler {
+func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpRequestsInFlight.Inc()
-		defer httpRequestsInFlight.Dec()
+		start := time.Now()
 
-		rec := &statusRecorder{
+		lrw := &loggingResponseWriter{
 			ResponseWriter: w,
 			statusCode:     http.StatusOK,
 		}
 
-		start := time.Now()
-		next.ServeHTTP(rec, r)
-		duration := time.Since(start)
-
-		path := normalizePath(r.URL.Path)
-		status := fmt.Sprintf("%d", rec.statusCode)
-
-		httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
-		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration.Seconds())
-
-		if shouldSkipAccessLog(path) {
-			return
-		}
+		next.ServeHTTP(lrw, r)
 
 		log.Printf(
-			"level=info msg=\"http_request\" method=%s path=%s status=%d duration_ms=%d remote_addr=%s request_id=%s user_agent=%q",
+			`level=info msg="http_request" method=%s path=%s status=%d duration_ms=%d remote_addr=%s user_agent=%q`,
 			r.Method,
 			r.URL.Path,
-			rec.statusCode,
-			duration.Milliseconds(),
-			clientIP(r),
-			requestID(r),
+			lrw.statusCode,
+			time.Since(start).Milliseconds(),
+			r.RemoteAddr,
 			r.UserAgent(),
 		)
 	})
 }
 
-func normalizePath(path string) string {
-	switch {
-	case path == "/":
-		return "/"
-	case path == "/healthz":
-		return "/healthz"
-	case path == "/readyz":
-		return "/readyz"
-	case path == "/metrics":
-		return "/metrics"
-	case path == "/users":
-		return "/users"
-	default:
-		return "other"
-	}
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
 }
 
-func shouldSkipAccessLog(path string) bool {
-	switch path {
-	case "/metrics":
-		return true
-	default:
-		return false
-	}
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func requestID(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("X-Request-Id")); v != "" {
-		return sanitize(v)
-	}
-	if v := strings.TrimSpace(r.Header.Get("X-Amzn-Trace-Id")); v != "" {
-		return sanitize(v)
-	}
-	return fmt.Sprintf("local-%d", time.Now().UnixNano())
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func clientIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return sanitize(strings.TrimSpace(parts[0]))
-		}
+func getenv(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
 	}
-	if xrip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xrip != "" {
-		return sanitize(xrip)
-	}
-
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return sanitize(host)
-	}
-
-	return sanitize(r.RemoteAddr)
-}
-
-func sanitize(v string) string {
-	v = strings.TrimSpace(v)
-	v = strings.ReplaceAll(v, " ", "_")
-	v = strings.ReplaceAll(v, "\"", "")
-	return v
+	return value
 }
