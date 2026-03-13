@@ -22,7 +22,6 @@ spec:
                 - argocd
                 - kyverno
                 - cert-manager
-                - ingress-nginx
                 - istio-system
       validate:
         message: "A imagem deve vir de um registry aprovado."
