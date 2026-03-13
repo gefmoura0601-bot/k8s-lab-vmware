@@ -19,7 +19,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: postgres-api
-          image: ghcr.io/gefmoura0601-bot/postgres-api-go:sha-62cc928
+          image: ghcr.io/gefmoura0601-bot/postgres-api-go:sha-0b51b66
           imagePullPolicy: Always
           ports:
             - name: http
