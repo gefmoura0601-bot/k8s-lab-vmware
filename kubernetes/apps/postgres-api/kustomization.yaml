@@ -11,3 +11,4 @@ resources:
   - networkpolicy-db-allow.yaml
   - virtualservice.yaml
   - servicemonitor.yaml
+  - dashboard-configmap.yaml
