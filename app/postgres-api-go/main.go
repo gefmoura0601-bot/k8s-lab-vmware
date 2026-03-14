@@ -29,16 +29,48 @@ type CreateUserRequest struct {
 }
 
 func main() {
-	dbHost := getenv("DB_HOST", "postgres.databases.svc.cluster.local")
-	dbPort := getenv("DB_PORT", "5432")
-	dbName := getenv("DB_NAME", "appdb")
-	dbUser := getenv("DB_USER", "appuser")
-	dbPassword := getenv("DB_PASSWORD", "apppassword")
-	listenAddr := getenv("LISTEN_ADDR", ":80")
+	dbHost := firstEnv("DB_HOST", "POSTGRES_HOST")
+	if dbHost == "" {
+		dbHost = "postgres.databases.svc.cluster.local"
+	}
+
+	dbPort := firstEnv("DB_PORT", "POSTGRES_PORT")
+	if dbPort == "" {
+		dbPort = "5432"
+	}
+
+	dbName := firstEnv("DB_NAME", "POSTGRES_DB")
+	if dbName == "" {
+		dbName = "appdb"
+	}
+
+	dbUser := firstEnv("DB_USER", "POSTGRES_USER")
+	if dbUser == "" {
+		dbUser = "appuser"
+	}
+
+	dbPassword := firstEnv("DB_PASSWORD", "POSTGRES_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = "apppassword"
+	}
+
+	serverPort := firstEnv("SERVER_PORT")
+	if serverPort == "" {
+		serverPort = "8080"
+	}
+	listenAddr := firstEnv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":" + serverPort
+	}
+
+	sslMode := firstEnv("POSTGRES_SSLMODE")
+	if sslMode == "" {
+		sslMode = "disable"
+	}
 
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName,
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, sslMode,
 	)
 
 	db, err := sql.Open("postgres", dsn)
@@ -221,10 +253,11 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
 	}
-	return value
+	return ""
 }
