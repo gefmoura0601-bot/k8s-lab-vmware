@@ -7,9 +7,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type App struct {
@@ -29,48 +31,16 @@ type CreateUserRequest struct {
 }
 
 func main() {
-	dbHost := firstEnv("DB_HOST", "POSTGRES_HOST")
-	if dbHost == "" {
-		dbHost = "postgres.databases.svc.cluster.local"
-	}
-
-	dbPort := firstEnv("DB_PORT", "POSTGRES_PORT")
-	if dbPort == "" {
-		dbPort = "5432"
-	}
-
-	dbName := firstEnv("DB_NAME", "POSTGRES_DB")
-	if dbName == "" {
-		dbName = "appdb"
-	}
-
-	dbUser := firstEnv("DB_USER", "POSTGRES_USER")
-	if dbUser == "" {
-		dbUser = "appuser"
-	}
-
-	dbPassword := firstEnv("DB_PASSWORD", "POSTGRES_PASSWORD")
-	if dbPassword == "" {
-		dbPassword = "apppassword"
-	}
-
-	serverPort := firstEnv("SERVER_PORT")
-	if serverPort == "" {
-		serverPort = "8080"
-	}
-	listenAddr := firstEnv("LISTEN_ADDR")
-	if listenAddr == "" {
-		listenAddr = ":" + serverPort
-	}
-
-	sslMode := firstEnv("POSTGRES_SSLMODE")
-	if sslMode == "" {
-		sslMode = "disable"
-	}
+	dbHost := getenvAny([]string{"DB_HOST", "POSTGRES_HOST"}, "postgres.databases.svc.cluster.local")
+	dbPort := getenvAny([]string{"DB_PORT", "POSTGRES_PORT"}, "5432")
+	dbName := getenvAny([]string{"DB_NAME", "POSTGRES_DB"}, "appdb")
+	dbUser := getenvAny([]string{"DB_USER", "POSTGRES_USER"}, "appuser")
+	dbPassword := getenvAny([]string{"DB_PASSWORD", "POSTGRES_PASSWORD"}, "apppassword")
+	listenAddr := normalizeListenAddr(getenvAny([]string{"LISTEN_ADDR", "SERVER_PORT"}, ":8080"))
 
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		dbHost, dbPort, dbUser, dbPassword, dbName, sslMode,
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName,
 	)
 
 	db, err := sql.Open("postgres", dsn)
@@ -91,11 +61,12 @@ func main() {
 	app := &App{db: db}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", app.handleRoot)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", app.handleHealth)
 	mux.HandleFunc("/healthz", app.handleHealth)
 	mux.HandleFunc("/readyz", app.handleReady)
 	mux.HandleFunc("/users", app.handleUsers)
+	mux.HandleFunc("/", app.handleRoot)
 
 	server := &http.Server{
 		Addr:         listenAddr,
@@ -105,7 +76,7 @@ func main() {
 		IdleTimeout:  30 * time.Second,
 	}
 
-	log.Printf("servidor iniciado em %s", listenAddr)
+	log.Printf("api iniciada em %s", listenAddr)
 	log.Fatal(server.ListenAndServe())
 }
 
@@ -253,11 +224,26 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func firstEnv(keys ...string) string {
+func getenvAny(keys []string, fallback string) string {
 	for _, key := range keys {
-		if value := os.Getenv(key); value != "" {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
 			return value
 		}
 	}
-	return ""
+	return fallback
+}
+
+func normalizeListenAddr(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ":8080"
+	}
+	if strings.HasPrefix(value, ":") {
+		return value
+	}
+	if !strings.Contains(value, ":") {
+		return ":" + value
+	}
+	return value
 }

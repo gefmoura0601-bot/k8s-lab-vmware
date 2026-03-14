@@ -3,11 +3,12 @@ kind: Service
 metadata:
   name: postgres-api
   namespace: apps
+  labels:
+    app: postgres-api
 spec:
   selector:
     app: postgres-api
   ports:
     - name: http
       port: 80
-      targetPort: 8080
-  type: ClusterIP
+      targetPort: http
