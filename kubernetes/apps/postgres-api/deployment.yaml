@@ -19,6 +19,8 @@ spec:
         team: platform
         environment: lab
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: postgres-api
           image: postgres-api-go
