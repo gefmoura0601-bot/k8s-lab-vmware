@@ -15,11 +15,14 @@ permissions:
 
 jobs:
   build-test-publish:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -52,21 +55,19 @@ jobs:
         with:
           context: ./app/postgres-api-go
           push: true
-          tags: |
-            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
+          tags: ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
 
       - name: Update kustomization image tag
         run: |
           IMAGE_NAME="${{ steps.meta.outputs.image_name }}"
           IMAGE_TAG="${{ steps.meta.outputs.image_tag }}"
-          cd kubernetes/apps/apps/postgres-api
-          sed -i "s|newName: .*|newName: ${IMAGE_NAME}|g" kustomization.yaml
-          sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|g" kustomization.yaml
+          sed -i "s|newName: .*|newName: ${IMAGE_NAME}|g" kubernetes/apps/postgres-api/kustomization.yaml
+          sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|g" kubernetes/apps/postgres-api/kustomization.yaml
 
       - name: Commit GitOps update
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add kubernetes/apps/apps/postgres-api/kustomization.yaml
-          git diff --cached --quiet || git commit -m "ci: update postgres-api image to ${{ steps.meta.outputs.image_tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kubernetes/apps/postgres-api/kustomization.yaml
+          git diff --cached --quiet || git commit -m "ci: update postgres-api image to ${{ steps.meta.outputs.image_tag }} [skip ci]"
           git push
