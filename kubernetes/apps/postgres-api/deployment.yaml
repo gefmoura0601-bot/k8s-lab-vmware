@@ -5,6 +5,8 @@ metadata:
   namespace: apps
   labels:
     app: postgres-api
+    team: platform
+    environment: lab
 spec:
   replicas: 1
   selector:
@@ -14,43 +16,37 @@ spec:
     metadata:
       labels:
         app: postgres-api
+        team: platform
+        environment: lab
     spec:
-      imagePullSecrets:
-        - name: ghcr-secret
       containers:
         - name: postgres-api
-          image: ghcr.io/gefmoura0601-bot/postgres-api-go:1.0.2
-          imagePullPolicy: Always
-          ports:
-            - name: http
-              containerPort: 8080
+          image: postgres-api-go
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: postgres-api-config
             - secretRef:
                 name: postgres-api-secret
+          ports:
+            - name: http
+              containerPort: 8080
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-            timeoutSeconds: 1
-            failureThreshold: 3
-            successThreshold: 1
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
-            timeoutSeconds: 1
-            failureThreshold: 3
-            successThreshold: 1
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: "300m"
-              memory: "256Mi"
+              cpu: 300m
+              memory: 256Mi

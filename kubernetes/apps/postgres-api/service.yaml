@@ -5,6 +5,8 @@ metadata:
   namespace: apps
   labels:
     app: postgres-api
+    team: platform
+    environment: lab
 spec:
   selector:
     app: postgres-api

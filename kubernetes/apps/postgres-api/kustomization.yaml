@@ -11,3 +11,8 @@ resources:
   - networkpolicy-db-allow.yaml
   - virtualservice.yaml
   - servicemonitor.yaml
+
+images:
+  - name: postgres-api-go
+    newName: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
+    newTag: 74821d4
