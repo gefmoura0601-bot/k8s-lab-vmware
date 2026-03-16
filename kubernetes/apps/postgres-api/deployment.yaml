@@ -2,11 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres-api
-  namespace: apps
   labels:
     app: postgres-api
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: postgres-api
@@ -15,42 +14,45 @@ spec:
       labels:
         app: postgres-api
     spec:
-      imagePullSecrets:
-        - name: ghcr-secret
       containers:
         - name: postgres-api
-          image: ghcr.io/gefmoura0601-bot/postgres-api-go:sha-100dec2
-          imagePullPolicy: Always
+          image: postgres-api-go
+          imagePullPolicy: IfNotPresent
           ports:
-            - name: http
-              containerPort: 8080
-          envFrom:
-            - configMapRef:
-                name: postgres-api-config
-            - secretRef:
-                name: postgres-api-secret
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres.databases.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: appdb
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
-            timeoutSeconds: 1
-            failureThreshold: 3
-            successThreshold: 1
           livenessProbe:
             httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 15
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
             periodSeconds: 20
-            timeoutSeconds: 1
-            failureThreshold: 3
-            successThreshold: 1
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: "300m"
-              memory: "256Mi"
+              cpu: 300m
+              memory: 256Mi

@@ -1,14 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+namespace: apps
+
 resources:
-  - namespace.yaml
-  - configmap.yaml
-  - secret.yaml
   - deployment.yaml
   - service.yaml
-  - networkpolicy-egress.yaml
-  - networkpolicy-db-allow.yaml
-  - virtualservice.yaml
   - servicemonitor.yaml
-  - dashboard-configmap.yaml
+
+images:
+  - name: postgres-api-go
+    newName: ghcr.io/gefmoura0601-bot/postgres-api-go
+    newTag: initial
