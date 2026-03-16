@@ -1,0 +1,72 @@
+name: postgres-api-go-ci
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/postgres-api-go/**'
+      - '.github/workflows/postgres-api-go-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Run tests
+        working-directory: app/postgres-api-go
+        run: |
+          go test ./...
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          IMAGE_TAG="${SHORT_SHA}"
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/postgres-api-go"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/postgres-api-go
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
+
+      - name: Update kustomization image tag
+        run: |
+          IMAGE_NAME="${{ steps.meta.outputs.image_name }}"
+          IMAGE_TAG="${{ steps.meta.outputs.image_tag }}"
+          cd kubernetes/apps/apps/postgres-api
+          sed -i "s|newName: .*|newName: ${IMAGE_NAME}|g" kustomization.yaml
+          sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|g" kustomization.yaml
+
+      - name: Commit GitOps update
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add kubernetes/apps/apps/postgres-api/kustomization.yaml
+          git diff --cached --quiet || git commit -m "ci: update postgres-api image to ${{ steps.meta.outputs.image_tag }}"
+          git push
