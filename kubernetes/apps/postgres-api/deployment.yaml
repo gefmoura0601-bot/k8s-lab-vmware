@@ -8,7 +8,12 @@ metadata:
     team: platform
     environment: lab
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: postgres-api
@@ -21,6 +26,15 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-secret
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: postgres-api
       containers:
         - name: postgres-api
           image: postgres-api-go

@@ -7,6 +7,7 @@ resources:
   - secret.yaml
   - ghcr-secret-sealed.yaml
   - deployment.yaml
+  - pdb.yaml
   - service.yaml
   - networkpolicy-egress.yaml
   - networkpolicy-db-allow.yaml
