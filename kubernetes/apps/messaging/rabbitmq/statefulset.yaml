@@ -3,6 +3,10 @@ kind: StatefulSet
 metadata:
   name: rabbitmq
   namespace: messaging
+  labels:
+    app: rabbitmq
+    team: platform
+    environment: lab
 spec:
   serviceName: rabbitmq-headless
   replicas: 1
@@ -13,7 +17,10 @@ spec:
     metadata:
       labels:
         app: rabbitmq
+        team: platform
+        environment: lab
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: rabbitmq
           image: rabbitmq:3.13-management-alpine
@@ -26,6 +33,43 @@ spec:
           envFrom:
             - secretRef:
                 name: rabbitmq-secret
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - rabbitmq-diagnostics -q ping
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 18
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 15
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - rabbitmq-diagnostics -q ping
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - sleep 5
           resources:
             requests:
               cpu: "100m"
@@ -36,29 +80,13 @@ spec:
           volumeMounts:
             - name: rabbitmq-data
               mountPath: /var/lib/rabbitmq
-          livenessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - rabbitmq-diagnostics -q ping
-            initialDelaySeconds: 40
-            periodSeconds: 20
-            timeoutSeconds: 5
-            failureThreshold: 6
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms
-            initialDelaySeconds: 20
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 6
   volumeClaimTemplates:
     - metadata:
         name: rabbitmq-data
+        labels:
+          app: rabbitmq
+          team: platform
+          environment: lab
       spec:
         accessModes:
           - ReadWriteOnce
