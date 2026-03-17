@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: postgres
   namespace: databases
+  labels:
+    app: postgres
+    team: platform
+    environment: lab
 spec:
   selector:
     app: postgres

@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: rabbitmq
   namespace: messaging
+  labels:
+    app: rabbitmq
+    team: platform
+    environment: lab
 spec:
   type: NodePort
   selector:
@@ -22,6 +26,10 @@ kind: Service
 metadata:
   name: rabbitmq-headless
   namespace: messaging
+  labels:
+    app: rabbitmq
+    team: platform
+    environment: lab
 spec:
   clusterIP: None
   selector:
