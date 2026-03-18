@@ -47,7 +47,7 @@ spec:
               app: postgres-api
       containers:
         - name: postgres-api
-          image: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go:74821d4
+          image: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go:8f05f41
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
