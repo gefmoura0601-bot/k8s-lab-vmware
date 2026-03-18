@@ -4,8 +4,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secret.yaml
-  - ghcr-secret-sealed.yaml
+  - postgres-api-secret-sealed.yaml
   - deployment.yaml
   - pdb.yaml
   - service.yaml
@@ -15,6 +14,6 @@ resources:
   - servicemonitor.yaml
 
 images:
-  - name: postgres-api-go
+  - name: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
     newName: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
-    newTag: 74821d4
+    newTag: 8f05f41
