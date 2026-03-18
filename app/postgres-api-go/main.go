@@ -1,17 +1,29 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+const (
+	dbStartupTimeout      = 5 * time.Second
+	dbRequestTimeout      = 3 * time.Second
+	serverShutdownTimeout = 15 * time.Second
+	maxRequestBodyBytes   = 1 << 20 // 1 MiB
 )
 
 type App struct {
@@ -35,12 +47,17 @@ func main() {
 	dbPort := getenvAny([]string{"DB_PORT", "POSTGRES_PORT"}, "5432")
 	dbName := getenvAny([]string{"DB_NAME", "POSTGRES_DB"}, "appdb")
 	dbUser := getenvAny([]string{"DB_USER", "POSTGRES_USER"}, "appuser")
-	dbPassword := getenvAny([]string{"DB_PASSWORD", "POSTGRES_PASSWORD"}, "apppassword")
+	dbPassword := getenvAny([]string{"DB_PASSWORD", "POSTGRES_PASSWORD"}, "")
+	dbSSLMode := getenvAny([]string{"DB_SSLMODE", "POSTGRES_SSLMODE"}, "disable")
 	listenAddr := normalizeListenAddr(getenvAny([]string{"LISTEN_ADDR", "SERVER_PORT"}, ":8080"))
 
+	if dbPassword == "" {
+		log.Fatal("variável de ambiente do segredo do banco não definida")
+	}
+
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName,
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode,
 	)
 
 	db, err := sql.Open("postgres", dsn)
@@ -51,8 +68,12 @@ func main() {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(10 * time.Minute)
 
-	if err := db.Ping(); err != nil {
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), dbStartupTimeout)
+	defer startupCancel()
+
+	if err := db.PingContext(startupCtx); err != nil {
 		log.Fatalf("erro ao conectar no PostgreSQL: %v", err)
 	}
 
@@ -69,18 +90,56 @@ func main() {
 	mux.HandleFunc("/", app.handleRoot)
 
 	server := &http.Server{
-		Addr:         listenAddr,
-		Handler:      loggingMiddleware(mux),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		Addr:              listenAddr,
+		Handler:           loggingMiddleware(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 
-	log.Printf("api iniciada em %s", listenAddr)
-	log.Fatal(server.ListenAndServe())
+	serverErrCh := make(chan error, 1)
+	go func() {
+		log.Printf("api iniciada em %s", listenAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrCh <- err
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	select {
+	case err := <-serverErrCh:
+		log.Fatalf("erro no servidor HTTP: %v", err)
+
+	case sig := <-sigCh:
+		log.Printf("sinal recebido: %s; iniciando shutdown gracioso", sig)
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+		defer shutdownCancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("erro no shutdown do servidor HTTP: %v", err)
+		}
+
+		if err := db.Close(); err != nil {
+			log.Printf("erro ao fechar conexão com banco: %v", err)
+		}
+
+		log.Println("aplicação encerrada com sucesso")
+	}
 }
 
 func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "rota não encontrada",
+		})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "postgres-api-go online",
 		"service": "postgres-api",
@@ -89,16 +148,20 @@ func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
 		"message": "postgres-api-go online",
 		"service": "postgres-api",
 	})
 }
 
 func (a *App) handleReady(w http.ResponseWriter, r *http.Request) {
-	if err := a.db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), dbRequestTimeout)
+	defer cancel()
+
+	if err := a.db.PingContext(ctx); err != nil {
+		log.Printf("erro no readiness check do banco: %v", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"status":  "not ready",
-			"details": err.Error(),
+			"status": "not ready",
 		})
 		return
 	}
@@ -122,14 +185,18 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(`
+	ctx, cancel := context.WithTimeout(r.Context(), dbRequestTimeout)
+	defer cancel()
+
+	rows, err := a.db.QueryContext(ctx, `
 		SELECT id, name, email, created_at
 		FROM users
 		ORDER BY id
 	`)
 	if err != nil {
+		log.Printf("erro ao listar usuários: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
+			"error": "erro interno ao consultar usuários",
 		})
 		return
 	}
@@ -140,26 +207,50 @@ func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.CreatedAt); err != nil {
+			log.Printf("erro ao ler linha de usuários: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
-				"error": err.Error(),
+				"error": "erro interno ao ler usuários",
 			})
 			return
 		}
 		users = append(users, u)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Printf("erro ao iterar usuários: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "erro interno ao iterar usuários",
+		})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, users)
 }
 
 func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
-	var req CreateUserRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	defer r.Body.Close()
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req CreateUserRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "json inválido",
 		})
 		return
 	}
+
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "json deve conter apenas um objeto",
+		})
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.Email = strings.TrimSpace(req.Email)
 
 	if req.Name == "" || req.Email == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -168,16 +259,28 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), dbRequestTimeout)
+	defer cancel()
+
 	var user User
-	err := a.db.QueryRow(`
+	err := a.db.QueryRowContext(ctx, `
 		INSERT INTO users (name, email)
 		VALUES ($1, $2)
 		RETURNING id, name, email, created_at
 	`, req.Name, req.Email).Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt)
-
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			log.Printf("conflito ao criar usuário com email %s: %v", req.Email, err)
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "email já cadastrado",
+			})
+			return
+		}
+
+		log.Printf("erro ao criar usuário: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
+			"error": "erro interno ao criar usuário",
 		})
 		return
 	}
