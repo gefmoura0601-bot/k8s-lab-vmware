@@ -6,3 +6,10 @@
 =======
 *.lock
 >>>>>>> a8ad8c233a8377b5a5fe1e92f8e71c814b8700c8
+
+# local build artifacts
+app/postgres-api-go/postgres-api-go
+
+# local backups
+backups/
+*.bkp.*
