@@ -12,6 +12,11 @@ resources:
   - networkpolicy-db-allow.yaml
   - virtualservice.yaml
   - servicemonitor.yaml
+  - dashboard-configmap.yaml
+  - peerauthentication.yaml
+  - authorizationpolicy.yaml
+  - destinationrule.yaml
+  - hpa.yaml
 
 images:
   - name: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go

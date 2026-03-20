@@ -17,6 +17,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+
     - to:
         - namespaceSelector:
             matchLabels:
@@ -26,3 +27,14 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - protocol: TCP
+          port: 15012

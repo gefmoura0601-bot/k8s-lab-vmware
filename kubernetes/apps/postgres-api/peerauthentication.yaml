@@ -1,0 +1,11 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: postgres-api
+  namespace: apps
+spec:
+  selector:
+    matchLabels:
+      app: postgres-api
+  mtls:
+    mode: STRICT
