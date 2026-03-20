@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - sealed-secret-rabbitmq.yaml
   - deployment.yaml
   - hpa.yaml
   - networkpolicy.yaml

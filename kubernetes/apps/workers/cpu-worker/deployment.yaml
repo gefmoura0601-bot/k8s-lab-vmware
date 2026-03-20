@@ -19,7 +19,10 @@ spec:
           imagePullPolicy: Always
           env:
             - name: RABBITMQ_URL
-              value: amqp://admin:admin123@rabbitmq.messaging.svc.cluster.local:5672/
+              valueFrom:
+                secretKeyRef:
+                  name: workers-rabbitmq
+                  key: RABBITMQ_URL
             - name: QUEUE_NAME
               value: cpu-jobs
             - name: WORK_SECONDS
