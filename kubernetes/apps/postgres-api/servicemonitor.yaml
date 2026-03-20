@@ -13,8 +13,8 @@ spec:
     matchLabels:
       app: postgres-api
   endpoints:
-    - port: http
-      path: /metrics
+    - port: metrics
+      path: /stats/prometheus
       scheme: http
       interval: 30s
       scrapeTimeout: 10s

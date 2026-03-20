@@ -5,8 +5,8 @@ metadata:
   namespace: apps
   labels:
     app: postgres-api
-    team: platform
     environment: lab
+    team: platform
 spec:
   selector:
     app: postgres-api
@@ -14,3 +14,6 @@ spec:
     - name: http
       port: 80
       targetPort: http
+    - name: metrics
+      port: 15020
+      targetPort: 15020
