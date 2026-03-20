@@ -5,6 +5,11 @@ metadata:
   namespace: workers
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: cpu-worker
@@ -13,6 +18,22 @@ spec:
       labels:
         app: cpu-worker
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: cpu-worker
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cpu-worker
       containers:
         - name: cpu-worker
           image: ghcr.io/gefmoura0601-bot/cpu-worker-go:bca9133
