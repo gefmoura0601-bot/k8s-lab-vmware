@@ -3,6 +3,10 @@ kind: Deployment
 metadata:
   name: cpu-producer
   namespace: workers
+  labels:
+    app: cpu-producer
+    team: platform
+    environment: lab
 spec:
   replicas: 1
   selector:
@@ -10,8 +14,12 @@ spec:
       app: cpu-producer
   template:
     metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-20T18:58:30-03:00"
       labels:
         app: cpu-producer
+        team: platform
+        environment: lab
     spec:
       containers:
         - name: cpu-producer
@@ -28,13 +36,13 @@ spec:
             - name: MESSAGE_COUNT
               value: "80"
             - name: MESSAGE_PREFIX
-              value: "cpu-job"
+              value: cpu-job
             - name: MESSAGE_DELAY_MS
               value: "10"
           resources:
             requests:
-              cpu: "50m"
-              memory: "64Mi"
+              cpu: 50m
+              memory: 64Mi
             limits:
-              cpu: "200m"
-              memory: "128Mi"
+              cpu: 200m
+              memory: 128Mi

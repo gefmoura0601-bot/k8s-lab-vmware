@@ -3,28 +3,34 @@ kind: Deployment
 metadata:
   name: postgres-api
   namespace: apps
+  labels:
+    app: postgres-api
+    team: platform
+    environment: lab
 spec:
   replicas: 2
+  selector:
+    matchLabels:
+      app: postgres-api
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 0
       maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: postgres-api
   template:
     metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-23T18:27:10-03:00"
       labels:
         app: postgres-api
-        environment: lab
         team: platform
+        environment: lab
     spec:
-      imagePullSecrets:
-        - name: ghcr-secret
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      imagePullSecrets:
+        - name: ghcr-secret
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -48,36 +54,19 @@ spec:
                 matchLabels:
                   app: postgres-api
               topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: DoNotSchedule
-          labelSelector:
-            matchLabels:
-              app: postgres-api
       containers:
         - name: postgres-api
           image: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go:8f05f41
           imagePullPolicy: IfNotPresent
-          ports:
-            - name: http
-              containerPort: 8080
-              protocol: TCP
           envFrom:
             - configMapRef:
                 name: postgres-api-config
             - secretRef:
                 name: postgres-api-secret
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
-              scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 1
-            successThreshold: 1
-            failureThreshold: 3
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
           livenessProbe:
             httpGet:
               path: /health
@@ -85,6 +74,16 @@ spec:
               scheme: HTTP
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
             timeoutSeconds: 1
             successThreshold: 1
             failureThreshold: 3
@@ -103,3 +102,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: postgres-api

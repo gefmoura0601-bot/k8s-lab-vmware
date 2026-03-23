@@ -3,20 +3,26 @@ kind: Deployment
 metadata:
   name: cpu-worker
   namespace: workers
+  labels:
+    app: cpu-worker
+    team: platform
+    environment: lab
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: cpu-worker
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: cpu-worker
   template:
     metadata:
       labels:
         app: cpu-worker
+        team: platform
+        environment: lab
     spec:
       affinity:
         podAntiAffinity:
@@ -27,13 +33,6 @@ spec:
                   matchLabels:
                     app: cpu-worker
                 topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: cpu-worker
       containers:
         - name: cpu-worker
           image: ghcr.io/gefmoura0601-bot/cpu-worker-go:bca9133
@@ -50,8 +49,15 @@ spec:
               value: "8"
           resources:
             requests:
-              cpu: "100m"
-              memory: "64Mi"
+              cpu: 100m
+              memory: 64Mi
             limits:
-              cpu: "1000m"
-              memory: "128Mi"
+              cpu: "1"
+              memory: 128Mi
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cpu-worker

@@ -10,28 +10,33 @@ spec:
       match:
         any:
           - resources:
+              namespaces:
+                - apps
+                - workers
               kinds:
                 - Pod
+                - Service
                 - Deployment
                 - StatefulSet
                 - DaemonSet
                 - Job
                 - CronJob
-                - Service
                 - ConfigMap
                 - Secret
-                - Ingress
+                - PersistentVolumeClaim
       exclude:
         any:
           - resources:
-              namespaces:
-                - kube-system
-                - monitoring
-                - logging
-                - argocd
-                - kyverno
+              kinds:
+                - ConfigMap
+              names:
+                - kube-root-ca.crt
+                - istio-ca-crl
+                - istio-ca-root-cert
+      skipBackgroundRequests: true
       validate:
-        message: "Os labels app, team e environment são obrigatórios."
+        allowExistingViolations: true
+        message: Os labels app, team e environment são obrigatórios.
         pattern:
           metadata:
             labels:

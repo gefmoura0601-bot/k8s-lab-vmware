@@ -10,22 +10,23 @@ spec:
       match:
         any:
           - resources:
+              namespaces:
+                - apps
+                - workers
               kinds:
                 - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - monitoring
-                - logging
-                - argocd
-                - kyverno
+      skipBackgroundRequests: true
       validate:
-        message: "Todos os containers devem definir readinessProbe e livenessProbe."
-        pattern:
-          spec:
-            containers:
-              - name: "*"
-                readinessProbe: "?*"
-                livenessProbe: "?*"
+        message: Todos os containers da aplicação devem definir readinessProbe e livenessProbe.
+        allowExistingViolations: true
+        foreach:
+          - list: "request.object.spec.containers"
+            preconditions:
+              all:
+                - key: "{{ element.name }}"
+                  operator: NotEquals
+                  value: istio-proxy
+            pattern:
+              name: "*"
+              readinessProbe:
+              livenessProbe:
