@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: cpu-worker
   minReplicas: 1
-  maxReplicas: 8
+  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
