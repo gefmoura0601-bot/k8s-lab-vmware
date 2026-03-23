@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cpu-worker
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+    targetRevision: main
+    path: kubernetes/apps/workers/cpu-worker
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workers
+  syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: cpu-worker
+      namespace: workers
+      jsonPointers:
+        - /spec/replicas
