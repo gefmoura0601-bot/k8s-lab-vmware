@@ -126,3 +126,10 @@ validate-postgres-api-mesh:
 validate-all: validate-postgres-api-manifests validate-postgres-api-mesh
 	@echo ""
 	@echo "Validação completa concluída com sucesso."
+
+
+validate-platform-smoke:
+	@bash scripts/validation/validate-platform-smoke.sh
+
+validate-cpu-pipeline-e2e:
+	@bash scripts/validation/validate-cpu-pipeline-e2e.sh
