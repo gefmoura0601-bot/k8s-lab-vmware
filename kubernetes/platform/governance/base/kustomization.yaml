@@ -2,6 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - workers-limits.yaml
+  - workers-quota.yaml
+  - messaging-limits.yaml
+  - messaging-quota.yaml
+  - databases-limits.yaml
+  - databases-quota.yaml
   - priorityclass-platform-critical.yaml
   - priorityclass-app-standard.yaml
   - priorityclass-batch-low.yaml
