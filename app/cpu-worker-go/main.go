@@ -70,17 +70,17 @@ func main() {
 		}
 
 		args := amqp.Table{
-                "x-queue-type": "quorum",
-        }
+			"x-queue-type": "quorum",
+		}
 
-        _, err = ch.QueueDeclare(
-                queueName,
-                true,
-                false,
-                false,
-                false,
-                args,
-        )
+		_, err = ch.QueueDeclare(
+			queueName,
+			true,
+			false,
+			false,
+			false,
+			args,
+		)
 		if err != nil {
 			log.Printf("falha ao declarar fila: %v", err)
 			_ = ch.Close()
