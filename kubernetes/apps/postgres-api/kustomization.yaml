@@ -17,7 +17,6 @@ resources:
   - peerauthentication.yaml
   - authorizationpolicy.yaml
   - destinationrule.yaml
-  - hpa.yaml
 
 images:
   - name: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
