@@ -6,7 +6,6 @@ metadata:
     app: rabbitmq
 spec:
   serviceName: rabbitmq-headless
-  podManagementPolicy: Parallel
   replicas: 3
   selector:
     matchLabels:
