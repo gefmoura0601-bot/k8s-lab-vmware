@@ -1,0 +1,7 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: batch-low
+value: 1000
+globalDefault: false
+description: "PriorityClass para workloads batch e baixa prioridade."

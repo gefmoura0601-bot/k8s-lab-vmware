@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: apps-compute-quota
+  namespace: apps
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 6Gi
+    pods: "20"
+    services: "10"
+    configmaps: "20"
+    secrets: "20"

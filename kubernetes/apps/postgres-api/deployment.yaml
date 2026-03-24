@@ -54,6 +54,7 @@ spec:
                 matchLabels:
                   app: postgres-api
               topologyKey: kubernetes.io/hostname
+      priorityClassName: app-standard
       containers:
         - name: postgres-api
           image: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go:8f05f41
