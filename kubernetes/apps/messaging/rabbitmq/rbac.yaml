@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rabbitmq-peer-discovery
+  labels:
+    app: rabbitmq
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints", "pods", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rabbitmq-peer-discovery
+  labels:
+    app: rabbitmq
+subjects:
+  - kind: ServiceAccount
+    name: rabbitmq
+    namespace: messaging
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rabbitmq-peer-discovery

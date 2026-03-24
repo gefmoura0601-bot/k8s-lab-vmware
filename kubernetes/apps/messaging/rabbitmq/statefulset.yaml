@@ -2,14 +2,12 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: rabbitmq
-  namespace: messaging
   labels:
     app: rabbitmq
-    team: platform
-    environment: lab
 spec:
   serviceName: rabbitmq-headless
-  replicas: 1
+  podManagementPolicy: Parallel
+  replicas: 3
   selector:
     matchLabels:
       app: rabbitmq
@@ -17,11 +15,31 @@ spec:
     metadata:
       labels:
         app: rabbitmq
-        team: platform
-        environment: lab
     spec:
+      serviceAccountName: rabbitmq
       terminationGracePeriodSeconds: 60
       priorityClassName: platform-critical
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: rabbitmq
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: rabbitmq
       containers:
         - name: rabbitmq
           image: docker.io/library/rabbitmq:3.13-management-alpine
@@ -29,65 +47,94 @@ spec:
           ports:
             - name: amqp
               containerPort: 5672
-            - name: http-management
+              protocol: TCP
+            - name: management
               containerPort: 15672
+              protocol: TCP
+            - name: prometheus
+              containerPort: 15692
+              protocol: TCP
+            - name: epmd
+              containerPort: 4369
+              protocol: TCP
+            - name: clustering
+              containerPort: 25672
+              protocol: TCP
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_SERVICE_NAME
+              value: rabbitmq-headless
+            - name: RABBITMQ_USE_LONGNAME
+              value: "true"
+            - name: RABBITMQ_NODENAME
+              value: rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
           envFrom:
             - secretRef:
                 name: rabbitmq-secret
           startupProbe:
             exec:
               command:
-                - sh
-                - -c
-                - rabbitmq-diagnostics -q ping
-            initialDelaySeconds: 20
+                - rabbitmq-diagnostics
+                - -q
+                - ping
             periodSeconds: 10
-            timeoutSeconds: 10
-            failureThreshold: 18
+            timeoutSeconds: 5
+            failureThreshold: 30
           readinessProbe:
             exec:
               command:
                 - sh
-                - -c
+                - -ec
                 - rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms
-            initialDelaySeconds: 20
-            periodSeconds: 15
-            timeoutSeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 10
             failureThreshold: 6
           livenessProbe:
             exec:
               command:
-                - sh
-                - -c
-                - rabbitmq-diagnostics -q ping
-            initialDelaySeconds: 40
-            periodSeconds: 20
-            timeoutSeconds: 10
+                - rabbitmq-diagnostics
+                - -q
+                - ping
+            periodSeconds: 30
+            timeoutSeconds: 5
             failureThreshold: 6
-          lifecycle:
-            preStop:
-              exec:
-                command:
-                  - sh
-                  - -c
-                  - sleep 5
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: 500m
+              memory: 512Mi
           volumeMounts:
             - name: rabbitmq-data
               mountPath: /var/lib/rabbitmq
+            - name: rabbitmq-config
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
+            - name: rabbitmq-config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+      volumes:
+        - name: rabbitmq-config
+          configMap:
+            name: rabbitmq-config
+            items:
+              - key: rabbitmq.conf
+                path: rabbitmq.conf
+              - key: enabled_plugins
+                path: enabled_plugins
   volumeClaimTemplates:
     - metadata:
         name: rabbitmq-data
         labels:
           app: rabbitmq
-          team: platform
-          environment: lab
       spec:
         accessModes:
           - ReadWriteOnce

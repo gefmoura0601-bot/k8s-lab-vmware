@@ -2,13 +2,10 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: rabbitmq
-  namespace: messaging
   labels:
     app: rabbitmq
-    team: platform
-    environment: lab
 spec:
-  minAvailable: 1
+  minAvailable: 2
   selector:
     matchLabels:
       app: rabbitmq

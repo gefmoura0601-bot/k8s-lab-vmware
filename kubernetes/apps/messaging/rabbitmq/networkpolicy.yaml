@@ -2,7 +2,6 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress-messaging
-  namespace: messaging
 spec:
   podSelector: {}
   policyTypes:
@@ -12,7 +11,6 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-rabbitmq-amqp-from-workers
-  namespace: messaging
 spec:
   podSelector:
     matchLabels:
@@ -38,8 +36,28 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-rabbitmq-from-messaging
-  namespace: messaging
+  name: allow-rabbitmq-clustering-internal
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 4369
+        - protocol: TCP
+          port: 25672
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rabbitmq-management-from-messaging
 spec:
   podSelector:
     matchLabels:
@@ -53,6 +71,23 @@ spec:
               kubernetes.io/metadata.name: messaging
       ports:
         - protocol: TCP
-          port: 5672
-        - protocol: TCP
           port: 15672
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rabbitmq-metrics-from-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 15692
