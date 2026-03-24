@@ -21,6 +21,7 @@ spec:
         environment: lab
     spec:
       terminationGracePeriodSeconds: 60
+      priorityClassName: platform-critical
       containers:
         - name: rabbitmq
           image: docker.io/library/rabbitmq:3.13-management-alpine

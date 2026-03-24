@@ -21,6 +21,7 @@ spec:
         team: platform
         environment: lab
     spec:
+      priorityClassName: batch-low
       containers:
         - name: cpu-producer
           image: ghcr.io/gefmoura0601-bot/cpu-producer-go:1e78b4a
