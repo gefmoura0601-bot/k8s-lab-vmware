@@ -27,7 +27,7 @@ jobs:
           matches="$(
             git grep -nE '<<<<<<<|>>>>>>>|image: .+:latest|targetRevision: HEAD' \
               -- '*.yaml' '*.yml' '.gitignore' |
-              grep -v 'kubernetes/policies/kyverno/disallow-latest.yaml' || true
+              grep -vE 'kubernetes/policies/kyverno/disallow-latest.yaml|.github/workflows/validate.yml' || true
           )"
           if [[ -n "${matches}" ]]; then
             echo "${matches}"
