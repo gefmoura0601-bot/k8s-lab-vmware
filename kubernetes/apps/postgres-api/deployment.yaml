@@ -41,13 +41,6 @@ spec:
                     operator: In
                     values:
                       - preferred
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: workload
-                    operator: In
-                    values:
-                      - apps
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
