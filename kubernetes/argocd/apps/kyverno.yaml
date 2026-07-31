@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-30"
-    argocd.argoproj.io/compare-options: ServerSideDiff=false
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:
