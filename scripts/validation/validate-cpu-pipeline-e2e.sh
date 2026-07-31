@@ -183,7 +183,7 @@ done
 FINAL_QUEUE_METRICS="$(get_queue_metrics)"
 [[ -n "${FINAL_QUEUE_METRICS}" ]] || fail "Não foi possível obter métricas finais da fila ${QUEUE_NAME}"
 
-IFS='|' read -r FINAL_READY_MSGS FINAL_UNACK_MSGS FINAL_CONSUMERS <<< "${FINAL_QUEUE_METRICS}"
+IFS='|' read -r FINAL_READY_MSGS FINAL_UNACK_MSGS _ <<< "${FINAL_QUEUE_METRICS}"
 
 echo
 info "Estado final"
