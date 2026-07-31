@@ -8,7 +8,7 @@ spec:
 
   source:
     repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
-    targetRevision: HEAD
+    targetRevision: main
     path: kubernetes/argocd
 
   destination:
@@ -19,3 +19,6 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

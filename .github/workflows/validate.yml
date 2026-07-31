@@ -1,0 +1,47 @@
+name: Validate IaC
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate Vagrantfile syntax
+        run: ruby -c iac/vagrant/Vagrantfile
+
+      - name: Validate shell scripts
+        run: shellcheck iac/vagrant/scripts/*.sh
+
+      - name: Reject mutable references and merge markers
+        shell: bash
+        run: |
+          matches="$(
+            git grep -nE '<<<<<<<|>>>>>>>|image: .+:latest|targetRevision: HEAD' \
+              -- '*.yaml' '*.yml' '.gitignore' |
+              grep -v 'kubernetes/policies/kyverno/disallow-latest.yaml' || true
+          )"
+          if [[ -n "${matches}" ]]; then
+            echo "${matches}"
+            echo "Mutable references or unresolved merge markers found." >&2
+            exit 1
+          fi
+
+      - name: Validate YAML syntax
+        run: |
+          ruby -e 'require "yaml"; ARGV.each { |file| YAML.parse_stream(File.read(file)) }' \
+            $(git ls-files '*.yaml' '*.yml')
+
+      - name: Render Kustomize trees
+        run: |
+          for file in $(git ls-files 'kubernetes/**/kustomization.yaml'); do
+            kubectl kustomize "$(dirname "$file")" >/dev/null
+          done

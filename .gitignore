@@ -1,11 +1,13 @@
 .vagrant/
 *.log
-<<<<<<< HEAD
 *.iso
 *.box
-=======
 *.lock
->>>>>>> a8ad8c233a8377b5a5fe1e92f8e71c814b8700c8
+.cluster/
+.kube/
+kubeconfig*
+*.retry
+*.tmp
 
 # local build artifacts
 app/postgres-api-go/postgres-api-go

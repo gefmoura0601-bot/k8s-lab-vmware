@@ -1,0 +1,23 @@
+name: Reconcile Argo CD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, master]
+    environment: lab
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check cluster
+        run: kubectl get nodes
+
+      - name: Reconcile Argo CD root
+        run: |
+          kubectl apply --server-side -f kubernetes/argocd/root-app.yaml
+          kubectl -n argocd wait application/platform-root --for=jsonpath='{.status.health.status}'=Healthy --timeout=10m
