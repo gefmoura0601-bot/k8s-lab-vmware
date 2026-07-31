@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: ghcr.io/gefmoura0601-bot/nginx-lab:7b8d9bf
+          image: ghcr.io/gefmoura0601-bot/nginx-lab:f483d87
           imagePullPolicy: Always
           ports:
             - containerPort: 80
