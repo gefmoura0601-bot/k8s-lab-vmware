@@ -21,4 +21,4 @@ resources:
 images:
   - name: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
     newName: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go
-    newTag: 8f05f41
+    newTag: 816e378
