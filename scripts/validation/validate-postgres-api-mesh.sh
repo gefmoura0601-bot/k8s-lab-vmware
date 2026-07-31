@@ -84,13 +84,13 @@ pass "Deployment/${APP_NAME} está disponível"
 # ============================================================
 info "2) Validando injeção do sidecar Istio"
 
-PODS="$(kubectl get pods -n "${APP_NAMESPACE}" -l "${APP_SELECTOR}" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}')"
+PODS="$(kubectl get pods -n "${APP_NAMESPACE}" -l "${APP_SELECTOR}" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .spec.initContainers[*]}{.name}{","}{end}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}')"
 [[ -n "${PODS}" ]] || fail "Nenhum pod encontrado com selector ${APP_SELECTOR} no namespace ${APP_NAMESPACE}"
 
 MISSING_SIDECAR="$(printf '%s\n' "${PODS}" | awk -F'|' '$2 !~ /istio-proxy/ {print $1}')"
 [[ -z "${MISSING_SIDECAR}" ]] || fail "Pods sem sidecar Istio: ${MISSING_SIDECAR}"
 
-pass "Todos os pods da aplicação têm o container istio-proxy"
+pass "Todos os pods da aplicação têm o sidecar istio-proxy"
 
 # ============================================================
 # 3) Objetos esperados do mesh
@@ -190,7 +190,7 @@ kubectl run "${NEGATIVE_POD_NAME}" \
 
 kubectl wait --for=condition=Ready pod/"${NEGATIVE_POD_NAME}" -n "${VALIDATION_NAMESPACE}" --timeout=120s >/dev/null
 
-NEGATIVE_CONTAINERS="$(kubectl get pod "${NEGATIVE_POD_NAME}" -n "${VALIDATION_NAMESPACE}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}')"
+NEGATIVE_CONTAINERS="$(kubectl get pod "${NEGATIVE_POD_NAME}" -n "${VALIDATION_NAMESPACE}" -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.containers[*]}{.name}{"\n"}{end}')"
 printf '%s\n' "${NEGATIVE_CONTAINERS}" | grep -q '^istio-proxy$' && fail "O pod de teste negativo recebeu sidecar; ele precisa ficar fora do mesh"
 
 pass "Pod de teste negativo está realmente fora do mesh"
