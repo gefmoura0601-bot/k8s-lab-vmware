@@ -22,9 +22,16 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
     retry:
       limit: 10
       backoff:
         duration: 10s
         factor: 2
         maxDuration: 3m
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      name: istio-validator-istio-system
+      jsonPointers:
+        - /webhooks/0/failurePolicy

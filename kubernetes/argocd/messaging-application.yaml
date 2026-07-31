@@ -20,9 +20,17 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
     retry:
       limit: 10
       backoff:
         duration: 10s
         factor: 2
         maxDuration: 3m
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: rabbitmq
+      namespace: messaging
+      jsonPointers:
+        - /spec/volumeClaimTemplates
