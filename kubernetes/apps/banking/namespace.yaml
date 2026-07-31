@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking
+  labels:
+    istio-injection: enabled
+    team: banking
+    environment: lab

@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - banking-db-secret-sealed.yaml
+  - ghcr-secret-sealed.yaml
+  - account-service.yaml
+  - transaction-service.yaml
+  - autoscaling.yaml
+  - networkpolicies.yaml
+  - istio.yaml
+  - monitoring.yaml
