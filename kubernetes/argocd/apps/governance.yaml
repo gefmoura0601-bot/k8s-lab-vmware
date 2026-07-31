@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: governance
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   project: default
   destination:
@@ -18,3 +20,9 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

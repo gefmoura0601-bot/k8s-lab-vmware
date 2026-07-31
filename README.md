@@ -62,8 +62,25 @@ Nunca versione o Secret preenchido ou a chave privada.
 ## Fluxo GitHub
 
 Mudanças devem entrar por Pull Request. O workflow `Validate IaC` verifica
-Vagrant, shell scripts, referências mutáveis, sintaxe YAML e árvores Kustomize.
+Vagrant, todos os shell scripts, referências mutáveis, artefatos gerados, sintaxe
+YAML, árvores Kustomize e os três módulos Go (`gofmt`, `vet` e testes com race
+detector).
 O workflow `Reconcile Argo CD` é manual e usa o Environment protegido `lab`.
+
+## Validação local
+
+Com Go, ShellCheck e kubectl instalados:
+
+```bash
+make validate-local
+```
+
+As validações que dependem do cluster permanecem separadas:
+
+```bash
+make validate-platform-smoke
+make validate-cpu-pipeline-e2e
+```
 
 ## Limitações
 

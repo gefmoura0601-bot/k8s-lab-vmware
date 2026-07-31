@@ -137,7 +137,7 @@ spec:
       spec:
         accessModes:
           - ReadWriteOnce
-        storageClassName: nfs-client
+        storageClassName: local-path
         resources:
           requests:
             storage: 2Gi

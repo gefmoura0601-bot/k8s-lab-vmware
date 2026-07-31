@@ -33,6 +33,9 @@ RENDERED_POSTGRES_API ?= /tmp/postgres-api-rendered.yaml
 .PHONY: \
 	help \
 	print-postgres-api-mesh-vars \
+	validate-local \
+	validate-go \
+	validate-shell \
 	validate-postgres-api-manifests \
 	validate-postgres-api-mesh \
 	validate-all
@@ -40,6 +43,9 @@ RENDERED_POSTGRES_API ?= /tmp/postgres-api-rendered.yaml
 help:
 	@echo ""
 	@echo "Targets disponíveis:"
+	@echo "  make validate-local"
+	@echo "  make validate-go"
+	@echo "  make validate-shell"
 	@echo "  make print-postgres-api-mesh-vars"
 	@echo "  make validate-postgres-api-manifests"
 	@echo "  make validate-postgres-api-mesh"
@@ -50,6 +56,21 @@ help:
 	@echo "  make validate-postgres-api-mesh"
 	@echo "  make validate-postgres-api-mesh INGRESS_URL=https://192.168.109.151:31882 HOST_HEADER=nginx.lab.local"
 	@echo ""
+
+validate-local: validate-shell validate-go validate-postgres-api-manifests
+	@echo "Validações locais concluídas com sucesso."
+
+validate-shell:
+	@command -v shellcheck >/dev/null || { echo "shellcheck não encontrado."; exit 1; }
+	@git ls-files -z '*.sh' | xargs -0 shellcheck
+
+validate-go:
+	@command -v go >/dev/null || { echo "go não encontrado."; exit 1; }
+	@set -e; \
+	for module in app/cpu-producer-go app/cpu-worker-go app/postgres-api-go; do \
+		echo "Validando $$module..."; \
+		(cd "$$module" && test -z "$$(gofmt -l .)" && go vet ./... && go test -race ./...); \
+	done
 
 print-postgres-api-mesh-vars:
 	@echo ""

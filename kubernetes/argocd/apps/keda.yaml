@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: keda
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
 spec:
   project: default
   destination:
@@ -24,3 +26,9 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
