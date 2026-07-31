@@ -11,3 +11,4 @@ resources:
   - networkpolicies.yaml
   - istio.yaml
   - monitoring.yaml
+  - runtime-dashboards.yaml

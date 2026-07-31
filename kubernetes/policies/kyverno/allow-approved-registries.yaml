@@ -32,9 +32,11 @@ spec:
               - image: "quay.io/*"
               - image: "registry.k8s.io/*"
               - image: "docker.io/*"
+              - image: "mcr.microsoft.com/*"
           - list: "request.object.spec.initContainers || `[]`"
             anyPattern:
               - image: "ghcr.io/gefmoura0601-bot/*"
               - image: "quay.io/*"
               - image: "registry.k8s.io/*"
               - image: "docker.io/*"
+              - image: "mcr.microsoft.com/*"

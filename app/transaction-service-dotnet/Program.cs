@@ -5,8 +5,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Npgsql;
 using Prometheus;
+using Prometheus.DotNetRuntime;
 
 var builder = WebApplication.CreateBuilder(args);
+using var runtimeCollector = DotNetRuntimeStatsBuilder.Default().StartCollecting();
 builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseUpper)));

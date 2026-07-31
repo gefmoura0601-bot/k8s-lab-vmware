@@ -28,6 +28,8 @@ spec:
       imagePullSecrets:
         - name: ghcr-secret
       securityContext:
+        fsGroup: 1654
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -35,6 +37,16 @@ spec:
           image: ghcr.io/gefmoura0601-bot/transaction-service-dotnet:2f40913
           imagePullPolicy: IfNotPresent
           env:
+            - name: DOTNET_EnableDiagnostics
+              value: "1"
+            - name: DOTNET_EnableDiagnostics_IPC
+              value: "1"
+            - name: DOTNET_EnableDiagnostics_Profiler
+              value: "1"
+            - name: DOTNET_DiagnosticPorts
+              value: /diagnostics/port.sock,nosuspend
+            - name: COMPlus_PerfMapEnabled
+              value: "1"
             - name: AccountServiceUrl
               value: http://account-service.banking.svc.cluster.local
             - name: ConnectionStrings__Transactions
@@ -45,6 +57,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          volumeMounts:
+            - name: diagnostics
+              mountPath: /diagnostics
           startupProbe:
             httpGet:
               path: /health/live
@@ -75,6 +90,40 @@ spec:
             runAsGroup: 1654
             capabilities:
               drop: [ALL]
+        - name: dotnet-monitor
+          image: mcr.microsoft.com/dotnet/monitor:10
+          imagePullPolicy: IfNotPresent
+          args:
+            - collect
+            - --diagnostic-port
+            - /diagnostics/port.sock
+            - --urls
+            - http://127.0.0.1:52323
+            - --no-auth
+          ports:
+            - name: diagnostics
+              containerPort: 52323
+          volumeMounts:
+            - name: diagnostics
+              mountPath: /diagnostics
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1654
+            runAsGroup: 1654
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: diagnostics
+          emptyDir:
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service

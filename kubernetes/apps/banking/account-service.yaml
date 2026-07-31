@@ -35,6 +35,16 @@ spec:
           image: ghcr.io/gefmoura0601-bot/account-service-java:2f40913
           imagePullPolicy: IfNotPresent
           env:
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:NativeMemoryTracking=summary
+                -XX:+UnlockDiagnosticVMOptions
+                -XX:+DebugNonSafepoints
+                -XX:+PreserveFramePointer
+                -XX:StartFlightRecording=name=continuous,settings=default,disk=true,maxage=6h,maxsize=256m,dumponexit=true,filename=/diagnostics/account-service.jfr
+                -XX:FlightRecorderOptions=repository=/diagnostics/repository
+                -XX:+HeapDumpOnOutOfMemoryError
+                -XX:HeapDumpPath=/diagnostics
             - name: DATABASE_URL
               value: jdbc:postgresql://postgres.databases.svc.cluster.local:5432/appdb
             - name: DATABASE_USER
@@ -50,6 +60,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          volumeMounts:
+            - name: diagnostics
+              mountPath: /diagnostics
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -80,6 +93,10 @@ spec:
             runAsGroup: 10001
             capabilities:
               drop: [ALL]
+      volumes:
+        - name: diagnostics
+          emptyDir:
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service
