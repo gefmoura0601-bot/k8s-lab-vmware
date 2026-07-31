@@ -1,0 +1,99 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: calico-typha
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: calico-typha
+      rules:
+        - alert: CalicoTyphaTargetDown
+          expr: absent(up{namespace="calico-system", service="calico-typha-metrics"}) or sum(up{namespace="calico-system", service="calico-typha-metrics"}) < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Nenhum endpoint Typha está sendo coletado
+            description: O Prometheus não consegue coletar métricas do Typha há 5 minutos.
+        - alert: CalicoTyphaReplicaUnavailable
+          expr: absent(up{namespace="calico-system", service="calico-typha-metrics"}) or sum(up{namespace="calico-system", service="calico-typha-metrics"}) < 2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Menos de duas réplicas Typha estão disponíveis
+            description: A redundância do Typha está reduzida há 10 minutos.
+        - alert: CalicoTyphaConnectionsDropping
+          expr: sum(increase(typha_connections_dropped[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Typha está descartando conexões
+            description: Conexões de clientes Typha estão sendo descartadas continuamente.
+        - alert: CalicoTyphaHighCPU
+          expr: max(rate(process_cpu_seconds_total{namespace="calico-system", service="calico-typha-metrics"}[5m])) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Typha está usando mais de 90% de um core
+            description: O uso sustentado de CPU pode atrasar a propagação de políticas.
+        - alert: KubernetesNodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Node Kubernetes não está Ready
+            description: O node {{ $labels.node }} permanece indisponível há 5 minutos.
+        - alert: KubernetesPodCrashLoopBackOff
+          expr: max_over_time(kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}[5m]) >= 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Container em CrashLoopBackOff
+            description: O container {{ $labels.container }} do pod {{ $labels.namespace }}/{{ $labels.pod }} está reiniciando continuamente.
+        - alert: KubernetesContainerHighCPUThrottling
+          expr: sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / clamp_min(sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m])), 0.001) > 0.20
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: CPU throttling sustentado acima de 20%
+            description: O container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} está sofrendo throttling.
+        - alert: KubernetesContainerNearMemoryLimit
+          expr: container_memory_working_set_bytes{container!=""} / on(namespace, pod, container) kube_pod_container_resource_limits{resource="memory"} > 0.90
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Container próximo do limite de memória
+            description: O container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} utiliza mais de 90% do limite.
+        - alert: KubernetesNodeFilesystemAlmostFull
+          expr: 1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint="/"}) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Filesystem raiz acima de 85%
+            description: O filesystem raiz de {{ $labels.instance }} está próximo da capacidade.
+        - alert: CalicoFelixDataplaneErrors
+          expr: sum(rate(felix_int_dataplane_failures[5m])) + sum(rate(felix_iptables_restore_errors[5m])) + sum(rate(felix_ipset_errors[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Felix apresenta erros no dataplane
+            description: O Calico Felix está registrando falhas de dataplane, iptables ou ipsets.
+        - alert: CalicoFelixTargetDown
+          expr: absent(up{namespace="calico-system", service="calico-node-metrics"}) or sum(up{namespace="calico-system", service="calico-node-metrics"}) < 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Coleta de métricas Felix incompleta
+            description: Menos de três endpoints Felix estão sendo coletados pelo Prometheus.

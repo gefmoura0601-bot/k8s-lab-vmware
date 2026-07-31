@@ -2,7 +2,7 @@
 # vi: set ft=ruby :
 
 KUBERNETES_MINOR = ENV.fetch("KUBERNETES_MINOR", "v1.35")
-FLANNEL_VERSION = ENV.fetch("FLANNEL_VERSION", "v0.28.4")
+CALICO_VERSION = ENV.fetch("CALICO_VERSION", "v3.32.1")
 ARGOCD_VERSION = ENV.fetch("ARGOCD_VERSION", "v3.4.2")
 
 NODES = {
@@ -47,7 +47,7 @@ Vagrant.configure("2") do |config|
       if spec[:role] == "control-plane"
         node.vm.provision "shell",
           path: "scripts/control-plane.sh",
-          args: [spec[:ip], FLANNEL_VERSION, ARGOCD_VERSION]
+          args: [spec[:ip], CALICO_VERSION, ARGOCD_VERSION]
       else
         node.vm.provision "shell",
           path: "scripts/worker.sh"

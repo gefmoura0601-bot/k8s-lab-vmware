@@ -2,9 +2,9 @@
 
 ## Limites do ambiente
 
-O cluster não executa dentro da WSL. VMware hospeda três VMs AlmaLinux na rede
-NAT `vmnet8`; WSL, PowerShell, VS Code, PuTTY ou MobaXterm podem atuar como
-clientes SSH.
+O VMware hospeda três VMs AlmaLinux na rede NAT `vmnet8`. O PowerShell no
+Windows administra as VMs com Vagrant e acessa o master com OpenSSH. O
+`kubectl` executa no `k8s-master`.
 
 ```text
 Browser / terminal
@@ -30,7 +30,7 @@ um worker, mas não do `k8s-master`.
 | Componente | Versão/referência | Finalidade |
 |---|---:|---|
 | Kubernetes | 1.35 | Orquestração |
-| Flannel | 0.28.4 | CNI/pod network |
+| Calico | 3.32.1 | CNI, pod network e aplicação de NetworkPolicy |
 | Argo CD | 3.4.2 | Reconciliação GitOps |
 | Istio | 1.30.1 | Gateway, roteamento e mTLS |
 | KEDA | 2.16.1 | Escala orientada por eventos |
@@ -75,4 +75,3 @@ Volumes usam `local-path`, portanto permanecem vinculados ao disco de uma VM.
 PostgreSQL, RabbitMQ e Loki não possuem alta disponibilidade de storage. PDB,
 HPA, KEDA e VPA melhoram comportamento operacional, mas não transformam o
 laboratório em uma plataforma de produção.
-

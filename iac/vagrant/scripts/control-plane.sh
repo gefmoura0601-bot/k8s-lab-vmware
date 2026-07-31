@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 NODE_IP="${1:?node IP is required}"
-FLANNEL_VERSION="${2:?Flannel version is required}"
+CALICO_VERSION="${2:?Calico version is required}"
 ARGOCD_VERSION="${3:?Argo CD version is required}"
 LOCAL_PATH_VERSION="v0.0.32"
 export KUBECONFIG=/etc/kubernetes/admin.conf
@@ -24,7 +24,23 @@ kubectl get --raw=/readyz >/dev/null
 install -d -m 0700 /home/vagrant/.kube
 install -m 0600 "${KUBECONFIG}" /home/vagrant/.kube/config
 chown -R vagrant:vagrant /home/vagrant/.kube
-kubectl apply -f "https://github.com/flannel-io/flannel/releases/download/${FLANNEL_VERSION}/kube-flannel.yml"
+
+install -d -m 0700 /root/.kube
+install -m 0600 "${KUBECONFIG}" /root/.kube/config
+chown -R root:root /root/.kube
+kubectl apply --server-side --force-conflicts \
+  -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/v1_crd_projectcalico_org.yaml"
+kubectl apply --server-side --force-conflicts \
+  -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/tigera-operator.yaml"
+kubectl apply -f /workspace/iac/vagrant/calico/installation.yaml
+
+for _ in $(seq 1 120); do
+  if kubectl get tigerastatus calico >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+kubectl wait --for=condition=Available tigerastatus/calico --timeout=10m
 kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
 
 mkdir -p /vagrant/.cluster

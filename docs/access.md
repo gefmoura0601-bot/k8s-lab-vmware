@@ -9,28 +9,18 @@ ssh.exe -i .\iac\vagrant\.vagrant\machines\k8s-master\vmware_desktop\private_key
   -o IdentitiesOnly=yes vagrant@192.168.109.151
 ```
 
-Na WSL:
-
-```bash
-key_file="$(mktemp)"
-cp iac/vagrant/.vagrant/machines/k8s-master/vmware_desktop/private_key "$key_file"
-chmod 600 "$key_file"
-ssh -i "$key_file" -o IdentitiesOnly=yes vagrant@192.168.109.151
-rm -f "$key_file"
-```
-
-A cópia temporária evita a rejeição da chave armazenada em `/mnt/c`, cujas
-permissões podem parecer abertas ao OpenSSH. Dentro do master:
+Dentro do master:
 
 ```bash
 kubectl get nodes
 kubectl get applications -n argocd
 ```
 
-Se estiver como `root`, defina o kubeconfig correto:
+O provisionamento também instala o kubeconfig administrativo em `/root/.kube/config`.
+Assim, depois de executar `sudo -i`, use normalmente:
 
 ```bash
-export KUBECONFIG=/home/vagrant/.kube/config
+kubectl get nodes
 ```
 
 ## Padrão de túnel
@@ -133,4 +123,3 @@ Depois acesse `https://nginx.lab.local:31882`. Para testes CLI sem alterar DNS:
 curl -sk --resolve nginx.lab.local:31882:192.168.109.151 \
   https://nginx.lab.local:31882/
 ```
-

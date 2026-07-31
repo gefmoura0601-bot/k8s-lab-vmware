@@ -17,6 +17,7 @@ resources:
   - apps/keda.yaml
   - apps/kyverno.yaml
   - apps/monitoring.yaml
+  - apps/calico-monitoring.yaml
   - apps/vpa.yaml
 
   # Shared infrastructure

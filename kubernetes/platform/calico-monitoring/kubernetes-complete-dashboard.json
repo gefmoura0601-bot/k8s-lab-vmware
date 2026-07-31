@@ -1,0 +1,1111 @@
+{
+    "uid":  "kubernetes-complete-overview",
+    "title":  "Kubernetes Complete Overview",
+    "tags":  [
+                 "kubernetes",
+                 "calico",
+                 "typha",
+                 "infrastructure"
+             ],
+    "timezone":  "browser",
+    "schemaVersion":  39,
+    "version":  3,
+    "refresh":  "30s",
+    "time":  {
+                 "from":  "now-6h",
+                 "to":  "now"
+             },
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "name":  "node",
+                                        "label":  "Node",
+                                        "type":  "query",
+                                        "datasource":  "Prometheus",
+                                        "query":  "label_values(kube_node_info, node)",
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "refresh":  1,
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    },
+                                    {
+                                        "name":  "namespace",
+                                        "label":  "Namespace",
+                                        "type":  "query",
+                                        "datasource":  "Prometheus",
+                                        "query":  "label_values(kube_namespace_created, namespace)",
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "refresh":  1,
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    },
+                                    {
+                                        "name":  "workload",
+                                        "label":  "Deployment",
+                                        "type":  "query",
+                                        "datasource":  "Prometheus",
+                                        "query":  "label_values(kube_deployment_created{namespace=~\"$namespace\"}, deployment)",
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "refresh":  1,
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    },
+                                    {
+                                        "name":  "pod",
+                                        "label":  "Pod",
+                                        "type":  "query",
+                                        "datasource":  "Prometheus",
+                                        "query":  "label_values(kube_pod_info{namespace=~\"$namespace\"}, pod)",
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "refresh":  1,
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    },
+                                    {
+                                        "name":  "container",
+                                        "label":  "Container",
+                                        "type":  "query",
+                                        "datasource":  "Prometheus",
+                                        "query":  "label_values(kube_pod_container_info{namespace=~\"$namespace\",pod=~\"$pod\"}, container)",
+                                        "includeAll":  true,
+                                        "allValue":  ".*",
+                                        "multi":  true,
+                                        "refresh":  1,
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    }
+                                    }
+                                ]
+                   },
+    "panels":  [
+                   {
+                       "id":  1,
+                       "type":  "stat",
+                       "title":  "Nodes Ready",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\",node=~\"$node\"})"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "red"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  3
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  2,
+                       "type":  "stat",
+                       "title":  "Pods Running",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  4,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(kube_pod_status_phase{phase=\"Running\",namespace=~\"$namespace\"})"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "mode":  "thresholds"
+                                                                      },
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  3,
+                       "type":  "stat",
+                       "title":  "Pods não saudáveis",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  8,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\",namespace=~\"$namespace\"})"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  1
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  4,
+                       "type":  "stat",
+                       "title":  "CPU do cluster",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  12,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",instance=~\".*\"}[5m])))"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  70
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  90
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  5,
+                       "type":  "stat",
+                       "title":  "Memória do cluster",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  16,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  75
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  90
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  6,
+                       "type":  "stat",
+                       "title":  "Typha targets UP",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  20,
+                                       "y":  0
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(up{service=\"calico-typha-metrics\"})"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "red"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  1
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  2
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  7,
+                       "type":  "timeseries",
+                       "title":  "CPU por node",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+                                           "legendFormat":  "{{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0,
+                                                            "max":  100
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  8,
+                       "type":  "timeseries",
+                       "title":  "Memória por node",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+                                           "legendFormat":  "{{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0,
+                                                            "max":  100
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  9,
+                       "type":  "timeseries",
+                       "title":  "Uso de filesystem por node",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\",mountpoint=\"/\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\",mountpoint=\"/\"})",
+                                           "legendFormat":  "{{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0,
+                                                            "max":  100
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  10,
+                       "type":  "timeseries",
+                       "title":  "Rede dos nodes",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  12
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (instance) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|cali.*|tunl.*|vxlan.*\"}[5m]))",
+                                           "legendFormat":  "RX {{instance}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "-sum by (instance) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|cali.*|tunl.*|vxlan.*\"}[5m]))",
+                                           "legendFormat":  "TX {{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "Bps"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  11,
+                       "type":  "timeseries",
+                       "title":  "Drops e erros de rede",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  12
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (instance) (rate(node_network_receive_drop_total[5m]) + rate(node_network_transmit_drop_total[5m]))",
+                                           "legendFormat":  "drops {{instance}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "sum by (instance) (rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]))",
+                                           "legendFormat":  "erros {{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "pps"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  12,
+                       "type":  "timeseries",
+                       "title":  "Top pods por CPU",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  20
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",namespace=~\"$namespace\"}[5m])))",
+                                           "legendFormat":  "{{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "cores"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  13,
+                       "type":  "timeseries",
+                       "title":  "Top pods por memória",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  20
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace, pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",namespace=~\"$namespace\"}))",
+                                           "legendFormat":  "{{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "bytes"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  14,
+                       "type":  "timeseries",
+                       "title":  "CPU throttling por container",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  29
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, 100 * sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=\"\",namespace=~\"$namespace\"}[5m])) / clamp_min(sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=\"\",namespace=~\"$namespace\"}[5m])), 0.001))",
+                                           "legendFormat":  "{{namespace}}/{{pod}}/{{container}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  15,
+                       "type":  "timeseries",
+                       "title":  "Restarts de containers",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  29
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[1h])))",
+                                           "legendFormat":  "{{namespace}}/{{pod}}/{{container}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  16,
+                       "type":  "timeseries",
+                       "title":  "Deployments: desejadas vs disponíveis",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  38
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (namespace, deployment) (kube_deployment_spec_replicas{namespace=~\"$namespace\"})",
+                                           "legendFormat":  "desired {{namespace}}/{{deployment}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "sum by (namespace, deployment) (kube_deployment_status_replicas_available{namespace=~\"$namespace\"})",
+                                           "legendFormat":  "available {{namespace}}/{{deployment}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  17,
+                       "type":  "table",
+                       "title":  "Workloads indisponíveis",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  38
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "kube_deployment_status_replicas_unavailable{namespace=~\"$namespace\"} \u003e 0",
+                                           "format":  "table",
+                                           "instant":  true
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "kube_statefulset_status_replicas_ready{namespace=~\"$namespace\"} \u003c kube_statefulset_replicas{namespace=~\"$namespace\"}",
+                                           "format":  "table",
+                                           "instant":  true
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  18,
+                       "type":  "timeseries",
+                       "title":  "Rede por pod",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  47
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace, pod) (rate(container_network_receive_bytes_total{namespace=~\"$namespace\"}[5m])))",
+                                           "legendFormat":  "RX {{namespace}}/{{pod}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "topk(15, sum by (namespace, pod) (rate(container_network_transmit_bytes_total{namespace=~\"$namespace\"}[5m])))",
+                                           "legendFormat":  "TX {{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "Bps"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  19,
+                       "type":  "timeseries",
+                       "title":  "I/O de disco dos containers",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  47
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace, pod) (rate(container_fs_reads_bytes_total{namespace=~\"$namespace\"}[5m])))",
+                                           "legendFormat":  "read {{namespace}}/{{pod}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "topk(15, sum by (namespace, pod) (rate(container_fs_writes_bytes_total{namespace=~\"$namespace\"}[5m])))",
+                                           "legendFormat":  "write {{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "Bps"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  20,
+                       "type":  "timeseries",
+                       "title":  "Calico node DaemonSet",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  56
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "kube_daemonset_status_desired_number_scheduled{namespace=\"calico-system\",daemonset=\"calico-node\"}",
+                                           "legendFormat":  "desired"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "kube_daemonset_status_number_ready{namespace=\"calico-system\",daemonset=\"calico-node\"}",
+                                           "legendFormat":  "ready"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  21,
+                       "type":  "timeseries",
+                       "title":  "Typha CPU",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  56
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "rate(process_cpu_seconds_total{service=\"calico-typha-metrics\"}[5m])",
+                                           "legendFormat":  "CPU {{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "cores",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  22,
+                       "type":  "timeseries",
+                       "title":  "Typha cache por syncer",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  56
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (pod, syncer) (typha_cache_size)",
+                                           "legendFormat":  "{{pod}}/{{syncer}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  23,
+                       "type":  "timeseries",
+                       "title":  "Typha conexões aceitas e descartadas",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  64
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (pod) (rate(typha_connections_accepted[5m]))",
+                                           "legendFormat":  "accepted {{pod}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "sum by (pod) (rate(typha_connections_dropped[5m]))",
+                                           "legendFormat":  "dropped {{pod}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  24,
+                       "type":  "timeseries",
+                       "title":  "Typha latência dos clientes",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  64
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "typha_client_latency_secs{quantile=\"0.99\"}",
+                                           "legendFormat":  "p99 {{pod}}/{{syncer}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s"
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  25,
+                       "type":  "timeseries",
+                       "title":  "CPU usada vs requests por pod",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  72
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!=\"\",namespace=~\"$namespace\",pod=~\"$pod\"}[5m])))",
+                                           "legendFormat":  "uso {{namespace}}/{{pod}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "topk(15, sum by (namespace,pod) (kube_pod_container_resource_requests{resource=\"cpu\",namespace=~\"$namespace\",pod=~\"$pod\"}))",
+                                           "legendFormat":  "request {{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "cores",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  26,
+                       "type":  "timeseries",
+                       "title":  "Memória usada vs requests por pod",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  72
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "topk(15, sum by (namespace,pod) (container_memory_working_set_bytes{container!=\"\",namespace=~\"$namespace\",pod=~\"$pod\"}))",
+                                           "legendFormat":  "uso {{namespace}}/{{pod}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "topk(15, sum by (namespace,pod) (kube_pod_container_resource_requests{resource=\"memory\",namespace=~\"$namespace\",pod=~\"$pod\"}))",
+                                           "legendFormat":  "request {{namespace}}/{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "bytes",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  27,
+                       "type":  "table",
+                       "title":  "Containers aguardando (motivo)",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  81
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "kube_pod_container_status_waiting_reason{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"} == 1",
+                                           "format":  "table",
+                                           "instant":  true
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  28,
+                       "type":  "timeseries",
+                       "title":  "OOMKilled por pod",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  9,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  81
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (namespace,pod,container) (kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\",namespace=~\"$namespace\",pod=~\"$pod\"})",
+                                           "legendFormat":  "{{namespace}}/{{pod}}/{{container}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  29,
+                       "type":  "timeseries",
+                       "title":  "API Server latência p99",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  90
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "histogram_quantile(0.99, sum by (le,verb) (rate(apiserver_request_duration_seconds_bucket{verb!~\"WATCH|CONNECT\"}[5m])))",
+                                           "legendFormat":  "{{verb}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  30,
+                       "type":  "timeseries",
+                       "title":  "etcd latência p99",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  90
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "histogram_quantile(0.99, sum by (le,operation) (rate(etcd_request_duration_seconds_bucket[5m])))",
+                                           "legendFormat":  "{{operation}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  31,
+                       "type":  "timeseries",
+                       "title":  "CoreDNS latência p99",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  90
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "histogram_quantile(0.99, sum by (le,server) (rate(coredns_dns_request_duration_seconds_bucket[5m])))",
+                                           "legendFormat":  "{{server}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  32,
+                       "type":  "timeseries",
+                       "title":  "Erros de runtime do kubelet",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  98
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (instance,operation_type) (rate(kubelet_runtime_operations_errors_total[5m]))",
+                                           "legendFormat":  "{{instance}}/{{operation_type}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  33,
+                       "type":  "timeseries",
+                       "title":  "Felix workload endpoints do cluster",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  98
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "felix_cluster_num_workload_endpoints",
+                                           "legendFormat":  "{{instance}}"
+                                       }
+                                   ]
+                   },
+                   {
+                       "id":  34,
+                       "type":  "timeseries",
+                       "title":  "Felix estado de resync",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  98
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "felix_resync_state",
+                                           "legendFormat":  "{{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "short",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  35,
+                       "type":  "timeseries",
+                       "title":  "Felix erros de dataplane/iptables/ipsets",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  106
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (instance) (rate(felix_int_dataplane_failures[5m]))",
+                                           "legendFormat":  "dataplane {{instance}}"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "sum by (instance) (rate(felix_iptables_restore_errors[5m]))",
+                                           "legendFormat":  "iptables {{instance}}"
+                                       },
+                                       {
+                                           "refId":  "C",
+                                           "expr":  "sum by (instance) (rate(felix_ipset_errors[5m]))",
+                                           "legendFormat":  "ipsets {{instance}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "min":  0
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  36,
+                       "type":  "stat",
+                       "title":  "Containers sem requests/limits",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  106
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "count(kube_pod_container_info{namespace=~\"$namespace\"}) - count(kube_pod_container_resource_requests{resource=\"cpu\",namespace=~\"$namespace\"})",
+                                           "legendFormat":  "sem CPU request"
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "count(kube_pod_container_info{namespace=~\"$namespace\"}) - count(kube_pod_container_resource_limits{resource=\"memory\",namespace=~\"$namespace\"})",
+                                           "legendFormat":  "sem memory limit"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  1
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  37,
+                       "type":  "timeseries",
+                       "title":  "Typha memória residente",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  106
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "process_resident_memory_bytes{service=\"calico-typha-metrics\"}",
+                                           "legendFormat":  "{{pod}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "bytes",
+                                                            "min":  0
+                                                        }
+                                       }
+                   }
+               ]
+}

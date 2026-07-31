@@ -41,9 +41,7 @@ jobs:
         with:
           context: ./app/cpu-producer-go
           push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:${{ steps.vars.outputs.tag }}
-            ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:latest
+          tags: ghcr.io/${{ steps.owner.outputs.owner_lc }}/cpu-producer-go:${{ steps.vars.outputs.tag }}
 
       - name: Update GitOps manifest with new tag
         run: |
