@@ -10,6 +10,7 @@ resources:
   - apps/istio-base.yaml
   - apps/istiod.yaml
   - apps/istio-ingressgateway.yaml
+  - apps/nginx-lab-tls.yaml
   - apps/metrics-server.yaml
   - apps/keda.yaml
   - apps/kyverno.yaml
