@@ -63,10 +63,12 @@ spec:
             - name: MY_POD_NAME
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.name
             - name: MY_POD_NAMESPACE
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.namespace
             - name: K8S_SERVICE_NAME
               value: rabbitmq-headless

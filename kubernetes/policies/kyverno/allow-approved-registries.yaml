@@ -2,6 +2,8 @@ apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: allow-approved-registries
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
 spec:
   validationFailureAction: Audit
   background: true
