@@ -110,18 +110,33 @@ NOT_READY_NODES="$(
 pass "Todos os nodes estão Ready"
 
 # ============================================================
-# 2) ArgoCD Applications principais
+# 2) Calico
 # ============================================================
-info "2) Validando Applications do ArgoCD"
+info "2) Validando Calico"
+
+CALICO_AVAILABLE="$(
+  kubectl get tigerastatus calico \
+    -o jsonpath='{range .status.conditions[?(@.type=="Available")]}{.status}{end}'
+)"
+[[ "${CALICO_AVAILABLE}" == "True" ]] \
+  || fail "TigerStatus/calico não está Available (status=${CALICO_AVAILABLE:-<vazio>})"
+
+kubectl rollout status daemonset/calico-node -n calico-system --timeout=180s >/dev/null
+pass "Calico disponível em todos os nodes"
+
+# ============================================================
+# 3) ArgoCD Applications principais
+# ============================================================
+info "3) Validando Applications do ArgoCD"
 
 for app in "${REQUIRED_APPS[@]}"; do
   assert_app_synced_healthy "$app"
 done
 
 # ============================================================
-# 3) Rollouts principais
+# 4) Rollouts principais
 # ============================================================
-info "3) Validando rollouts principais"
+info "4) Validando rollouts principais"
 
 kubectl rollout status deployment/postgres-api -n "$APPS_NS" --timeout=180s >/dev/null
 pass "Deployment/postgres-api disponível"
@@ -142,9 +157,9 @@ kubectl rollout status statefulset/rabbitmq -n "$MESSAGING_NS" --timeout=180s >/
 pass "StatefulSet/rabbitmq disponível"
 
 # ============================================================
-# 4) Validação especializada do mesh da postgres-api
+# 5) Validação especializada do mesh da postgres-api
 # ============================================================
-info "4) Executando validação especializada do mesh da postgres-api"
+info "5) Executando validação especializada do mesh da postgres-api"
 
 APP_NAME="postgres-api" \
 APP_NAMESPACE="$APPS_NS" \
@@ -167,9 +182,9 @@ bash "$MESH_SCRIPT"
 pass "Validação especializada do mesh concluída"
 
 # ============================================================
-# 5) PostgreSQL
+# 6) PostgreSQL
 # ============================================================
-info "5) Validando PostgreSQL"
+info "6) Validando PostgreSQL"
 
 kubectl exec -n "$DATABASES_NS" "$POSTGRES_POD" -- \
   pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null
@@ -177,22 +192,34 @@ kubectl exec -n "$DATABASES_NS" "$POSTGRES_POD" -- \
 pass "PostgreSQL está respondendo"
 
 # ============================================================
-# 6) RabbitMQ
+# 7) RabbitMQ
 # ============================================================
-info "6) Validando RabbitMQ"
+info "7) Validando RabbitMQ"
 
-RABBIT_OUTPUT="$(kubectl exec -n "$MESSAGING_NS" "$RABBIT_POD" -- rabbitmqctl list_queues name messages consumers)"
+RABBIT_OUTPUT="$(kubectl exec -n "$MESSAGING_NS" "$RABBIT_POD" -- \
+  rabbitmqctl list_queues name type state messages consumers --local --timeout 30 2>&1)"
 printf '%s\n' "$RABBIT_OUTPUT"
+
+printf '%s\n' "$RABBIT_OUTPUT" | grep -qE 'badrpc|unresponsive' \
+  && fail "RabbitMQ reportou fila não responsiva"
 
 printf '%s\n' "$RABBIT_OUTPUT" | grep -q "^${RABBIT_QUEUE}[[:space:]]" \
   || fail "Fila ${RABBIT_QUEUE} não encontrada no RabbitMQ"
 
-pass "Fila ${RABBIT_QUEUE} encontrada no RabbitMQ"
+RABBIT_QUORUM_OUTPUT="$(kubectl exec -n "$MESSAGING_NS" "$RABBIT_POD" -- \
+  rabbitmq-queues quorum_status "$RABBIT_QUEUE")"
+printf '%s\n' "$RABBIT_QUORUM_OUTPUT"
+
+RABBIT_VOTERS="$(printf '%s\n' "$RABBIT_QUORUM_OUTPUT" | grep -c 'voter' || true)"
+[[ "$RABBIT_VOTERS" -eq 3 ]] \
+  || fail "Fila ${RABBIT_QUEUE} possui ${RABBIT_VOTERS} membros votantes; esperado: 3"
+
+pass "Fila quorum ${RABBIT_QUEUE} disponível com 3 membros votantes"
 
 # ============================================================
-# 7) KEDA e HPA gerado
+# 8) KEDA e HPA gerado
 # ============================================================
-info "7) Validando autoscaling KEDA do cpu-worker"
+info "8) Validando autoscaling KEDA do cpu-worker"
 
 kubectl get scaledobject "$CPU_WORKER_SCALEDOBJECT" -n "$WORKERS_NS" >/dev/null \
   || fail "ScaledObject/${CPU_WORKER_SCALEDOBJECT} não encontrado no namespace ${WORKERS_NS}"
@@ -209,9 +236,9 @@ kubectl get hpa "$CPU_WORKER_HPA" -n "$WORKERS_NS"
 pass "ScaledObject/${CPU_WORKER_SCALEDOBJECT} e HPA/${CPU_WORKER_HPA} encontrados"
 
 # ============================================================
-# 8) Kyverno
+# 9) Kyverno
 # ============================================================
-info "8) Validando ClusterPolicies do Kyverno"
+info "9) Validando ClusterPolicies do Kyverno"
 
 for policy in "${REQUIRED_POLICIES[@]}"; do
   assert_clusterpolicy_ready "$policy"
@@ -226,6 +253,7 @@ pass "Smoke test da plataforma concluído com sucesso"
 echo
 echo "Resumo:"
 echo "- nodes Ready"
+echo "- Calico disponível"
 echo "- Applications principais Synced/Healthy"
 echo "- rollouts principais OK"
 echo "- mesh/mTLS da postgres-api OK"

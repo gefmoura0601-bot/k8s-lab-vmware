@@ -6,23 +6,18 @@ A branch `main` é a fonte de verdade. O fluxo normal é:
 
 1. criar branch curta;
 2. alterar código ou manifestos;
-3. executar validações locais possíveis;
-4. abrir Pull Request;
-5. aguardar `Validate IaC`;
-6. revisar e fazer squash merge;
-7. acompanhar o Argo CD até `Synced/Healthy`.
+3. abrir Pull Request para disparar as validações;
+4. aguardar `Validate IaC`;
+5. revisar e fazer squash merge;
+6. acompanhar o Argo CD até `Synced/Healthy`.
 
 Não use `kubectl edit` como correção permanente. Uma alteração emergencial deve
 ser reproduzida no Git imediatamente.
 
 ## Validação
 
-```bash
-make validate-local
-```
-
-Esse target exige Go, ShellCheck e kubectl. O workflow `Validate IaC` também
-valida:
+O workflow `Validate IaC` executa no GitHub Actions em todo Pull Request e push
+na `main`. Ele valida:
 
 - sintaxe Ruby do Vagrantfile e scripts com ShellCheck;
 - YAML e render de todas as árvores Kustomize;
@@ -30,13 +25,11 @@ valida:
 - `gofmt`, `go vet` e testes com race detector;
 - build/test de Java 25 e .NET 10.
 
-Smoke tests que dependem do cluster:
-
-```bash
-make validate-platform-smoke
-make validate-cpu-pipeline-e2e
-make validate-postgres-api-mesh
-```
+Os testes que dependem do cluster ficam no workflow manual `Validate Cluster`,
+executado pelo runner self-hosted rotulado `master` e protegido pelo environment
+`lab`. O smoke inclui a validação do mesh da postgres-api. Ao disparar o
+workflow, habilite `run_cpu_e2e` somente quando quiser recriar o pod producer e
+observar carga, escala e drenagem da fila por cerca de três minutos.
 
 ## Pipelines de imagem
 
@@ -47,9 +40,8 @@ Alterações nos serviços disparam workflows específicos. Eles:
 3. atualizam o manifest para uma tag baseada no SHA;
 4. abrem um PR GitOps de automação.
 
-O merge desse segundo PR é o ato de promoção para o laboratório. A exceção
-histórica de tags `latest` nos workflows não deve aparecer nos manifests
-implantados.
+O merge desse segundo PR é o ato de promoção para o laboratório. Workflows e
+manifests publicam e consomem somente tags imutáveis baseadas no SHA.
 
 ## Reconciliação
 
@@ -84,4 +76,3 @@ kubectl -n argocd get application <APP> -o json | \
 Confirme se é mudança real, mutação legítima de controller ou configuração de
 comparação. Regras de `ignoreDifferences` e `ServerSideDiff` devem ser mínimas,
 justificadas e versionadas.
-

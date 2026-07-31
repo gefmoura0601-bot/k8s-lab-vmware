@@ -59,6 +59,36 @@ jobs:
           ruby -e 'require "yaml"; ARGV.each { |file| YAML.parse_stream(File.read(file)) }' \
             $(git ls-files '*.yaml' '*.yml')
 
+      - name: Validate Grafana dashboards
+        shell: bash
+        run: |
+          mapfile -t dashboards < <(find kubernetes -type f -name '*dashboard*.json' -print)
+          for dashboard in "${dashboards[@]}"; do
+            jq -e '.title and (.panels | type == "array") and (.panels | length > 0)' "$dashboard" >/dev/null
+            duplicate_ids="$(jq -r '[.panels[].id] | group_by(.)[] | select(length > 1) | .[0]' "$dashboard")"
+            if [[ -n "${duplicate_ids}" ]]; then
+              echo "Duplicate panel IDs in ${dashboard}: ${duplicate_ids}" >&2
+              exit 1
+            fi
+          done
+      - name: Validate local Markdown links
+        shell: ruby {0}
+        run: |
+          require "uri"
+
+          broken = []
+          Dir.glob("**/*.md").each do |file|
+            File.read(file).scan(/(?<!!)\[[^\]]+\]\(([^)]+)\)/).flatten.each do |link|
+              target = link.split("#", 2).first
+              next if target.empty? || target.match?(%r{\A(?:https?://|mailto:)})
+
+              path = File.expand_path(URI::DEFAULT_PARSER.unescape(target), File.dirname(file))
+              broken << "#{file}: #{link}" unless File.exist?(path)
+            end
+          end
+
+          abort broken.join("\n") unless broken.empty?
+
       - name: Render Kustomize trees
         run: |
           for file in $(git ls-files 'kubernetes/**/kustomization.yaml'); do

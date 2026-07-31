@@ -41,9 +41,7 @@ jobs:
         with:
           context: ./app/nginx-lab
           push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.owner_lc }}/nginx-lab:${{ steps.vars.outputs.tag }}
-            ghcr.io/${{ steps.owner.outputs.owner_lc }}/nginx-lab:latest
+          tags: ghcr.io/${{ steps.owner.outputs.owner_lc }}/nginx-lab:${{ steps.vars.outputs.tag }}
 
       - name: Update GitOps manifest with new tag
         run: |

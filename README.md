@@ -1,8 +1,8 @@
 # Kubernetes VMware Lab
 
 Laboratório Kubernetes reproduzível em VMs VMware, provisionado por Vagrant e
-operado por GitOps com Argo CD. A WSL é usada apenas como terminal e workspace;
-o cluster executa nas VMs.
+operado por GitOps com Argo CD. O Windows usa PowerShell, Vagrant e OpenSSH para
+administrar o ambiente; o cluster e o `kubectl` executam nas VMs.
 
 ## Visão rápida
 
@@ -10,7 +10,7 @@ o cluster executa nas VMs.
 |---|---|
 | Virtualização | VMware Workstation + Vagrant |
 | Sistema operacional | AlmaLinux 9 |
-| Kubernetes | kubeadm 1.35, containerd e Flannel |
+| Kubernetes | kubeadm 1.35, containerd e Calico |
 | GitOps | Argo CD 3.4, padrão App of Apps |
 | Rede de aplicações | Istio, mTLS e NetworkPolicy |
 | Observabilidade | Prometheus, Grafana, Loki e Promtail |

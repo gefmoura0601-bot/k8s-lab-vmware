@@ -55,18 +55,13 @@ cluster reconstruído.
 7. aplique/confirme `platform-root`;
 8. aguarde todas as aplicações ficarem saudáveis;
 9. restaure PostgreSQL e dados necessários;
-10. execute smoke tests e valide dashboards.
+10. execute o workflow `Validate Cluster` e valide os dashboards.
 
 ## Critérios de aceite
 
-```bash
-kubectl get nodes
-kubectl get applications -n argocd
-kubectl get pods -A
-make validate-platform-smoke
-make validate-cpu-pipeline-e2e
-```
+No GitHub Actions, execute manualmente `Validate Cluster` com `run_cpu_e2e`
+habilitado. O workflow valida nodes, aplicações Argo CD, rollouts, mesh/mTLS,
+PostgreSQL, RabbitMQ, KEDA, Kyverno e o pipeline de CPU.
 
 Uma reconstrução só está concluída após validar fluxos de negócio, coleta de
 métricas, logs e acesso administrativo.
-

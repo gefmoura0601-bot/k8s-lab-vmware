@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - felix-service.yaml
+  - felix-servicemonitor.yaml
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+  - dashboard-configmap.yaml
+
+configMapGenerator:
+  - name: kubernetes-complete-dashboard
+    namespace: monitoring
+    files:
+      - kubernetes-complete-dashboard.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+        app: kubernetes-monitoring
+
+generatorOptions:
+  disableNameSuffixHash: true

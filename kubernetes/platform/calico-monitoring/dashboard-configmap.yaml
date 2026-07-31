@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: calico-typha-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: calico-typha
+data:
+  calico-typha-dashboard.json: |
+    {
+      "uid": "calico-typha-overview",
+      "title": "Calico Typha Overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {"from": "now-6h", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Typha targets UP",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(up{namespace=\calico-system\,service=\calico-typha-metrics\})"}],
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "yellow", "value": 1}, {"color": "green", "value": 2}]}}}
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "CPU por Typha",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 8, "w": 9, "x": 6, "y": 0},
+          "targets": [{"refId": "A", "expr": "rate(process_cpu_seconds_total{namespace=\calico-system\,service=\calico-typha-metrics\}[5m])", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Memória residente",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 8, "w": 9, "x": 15, "y": 0},
+          "targets": [{"refId": "A", "expr": "process_resident_memory_bytes{namespace=\calico-system\,service=\calico-typha-metrics\}", "legendFormat": "{{pod}}"}],
+          "fieldConfig": {"defaults": {"unit": "bytes"}}
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Conexões aceitas",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "targets": [{"refId": "A", "expr": "sum by (pod) (rate(typha_connections_accepted[5m]))", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Conexões descartadas",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "targets": [{"refId": "A", "expr": "sum by (pod) (rate(typha_connections_dropped[5m]))", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Tamanho do cache",
+          "datasource": "Prometheus",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+          "targets": [{"refId": "A", "expr": "sum by (pod, syncer) (typha_cache_size)", "legendFormat": "{{pod}} / {{syncer}}"}]
+        }
+      ]
+    }

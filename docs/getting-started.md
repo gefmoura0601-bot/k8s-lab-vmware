@@ -9,7 +9,10 @@
 - pelo menos 12 vCPU, 16 GiB de RAM e espaço para três VMs;
 - acesso de leitura ao repositório privado e ao GHCR.
 
-WSL é opcional. Ela facilita Git e automação, mas não hospeda Kubernetes.
+No Windows são necessárias apenas as ferramentas nativas listadas acima. Não é
+preciso instalar um subsistema Linux, Kubernetes, Go, ShellCheck ou Make.
+Builds e testes automatizados executam no GitHub Actions; comandos de cluster
+executam por SSH no `k8s-master`.
 
 ## Provisionar
 
@@ -22,7 +25,7 @@ vagrant up
 vagrant status
 ```
 
-O provisionamento configura IPs, DNS, containerd, kubeadm, Flannel,
+O provisionamento configura IPs, DNS, containerd, kubeadm, Calico,
 local-path-provisioner e Argo CD. O kubeconfig administrativo fica em
 `/home/vagrant/.kube/config` no master.
 
@@ -71,9 +74,30 @@ vagrant reload k8s-worker-02 --provision-with network
 O provisioner `network` sempre reaplica o IP estático e DNS. Evite alterar as
 interfaces manualmente dentro da VM sem refletir a mudança no Vagrantfile.
 
+## Troca do CNI
+
+O estado desejado usa Calico com VXLAN e o pool de pods `10.244.0.0/16`. Não
+tente substituir o CNI em um cluster ativo: rotas, interfaces e pods existentes
+continuam vinculados ao provedor anterior. Faça os backups descritos em
+[disaster-recovery.md](disaster-recovery.md) e reconstrua as VMs:
+
+```powershell
+Set-Location C:\Labs\k8s-vmware\iac\vagrant
+vagrant destroy
+vagrant up
+```
+
+Depois da reconstrução, confirme `TigerStatus/calico`, nodes e aplicações:
+
+```powershell
+vagrant ssh k8s-master -c "kubectl get tigerastatus; kubectl get nodes"
+```
+
+Por fim, execute o workflow manual `Validate Cluster` no GitHub Actions. O
+workflow deve permanecer falhando em clusters antigos que ainda usem outro CNI.
+
 ## Destruição
 
 `vagrant destroy` elimina as VMs e os volumes locais. Faça backup primeiro e
 confirme explicitamente os alvos. A operação é apropriada somente quando a
 reconstrução completa estiver planejada.
-

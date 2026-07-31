@@ -1,0 +1,34 @@
+name: Validate Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_cpu_e2e:
+        description: Recria o pod producer e valida carga, escala e drenagem
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: validate-cluster
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-cluster:
+    name: Validate live cluster
+    runs-on: [self-hosted, master]
+    environment: lab
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Platform smoke test
+        run: bash scripts/validation/validate-platform-smoke.sh
+
+      - name: CPU pipeline E2E
+        if: ${{ inputs.run_cpu_e2e }}
+        run: bash scripts/validation/validate-cpu-pipeline-e2e.sh

@@ -32,6 +32,13 @@ setenforce 0 2>/dev/null || true
 sed -ri 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
 systemctl disable --now firewalld || true
 
+mkdir -p /etc/NetworkManager/conf.d
+cat >/etc/NetworkManager/conf.d/calico.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:cali*;interface-name:tunl*;interface-name:vxlan.calico
+EOF
+systemctl reload NetworkManager
+
 cat >/etc/modules-load.d/kubernetes.conf <<'EOF'
 overlay
 br_netfilter

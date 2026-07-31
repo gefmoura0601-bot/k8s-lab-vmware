@@ -2,15 +2,14 @@
 
 ## SSH: `Permission denied (publickey)`
 
-Use o usuário `vagrant`, a chave específica da VM e
-`-o IdentitiesOnly=yes`. Na WSL, copie a chave para um arquivo temporário e
-aplique `chmod 600`, conforme [access.md](access.md). A senha do usuário não
-substitui a chave criada pelo Vagrant.
+Use o usuário `vagrant`, a chave específica da VM e `-o IdentitiesOnly=yes`,
+conforme [access.md](access.md). A senha do usuário não substitui a chave criada
+pelo Vagrant.
 
 Para diagnóstico:
 
-```bash
-ssh -vvv -i <chave> -o IdentitiesOnly=yes \
+```powershell
+ssh.exe -vvv -i <chave> -o IdentitiesOnly=yes `
   vagrant@192.168.109.151
 ```
 
@@ -24,10 +23,14 @@ uma entrada ao arquivo `hosts`.
 Não há kubeconfig válido no usuário atual:
 
 ```bash
-export KUBECONFIG=/home/vagrant/.kube/config
+test -r ~/.kube/config
 kubectl config current-context
 kubectl cluster-info
 ```
+
+No master, o provisionamento instala configurações separadas em
+`/home/vagrant/.kube/config` e `/root/.kube/config`. Não use o caminho do usuário
+`vagrant` como solução permanente para uma sessão do `root`.
 
 ## Túnel abre, mas o browser não conecta
 
@@ -110,4 +113,3 @@ do dashboard e valide se ele foi recriado recentemente.
 O aviso TLS em Argo CD e no endpoint Istio é esperado no lab. Confirme o
 fingerprint antes de confiar. Não confunda aviso de certificado com falha de
 rede ou autenticação.
-
