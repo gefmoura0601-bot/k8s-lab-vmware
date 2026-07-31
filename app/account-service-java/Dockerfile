@@ -5,7 +5,7 @@ RUN mvn --batch-mode dependency:go-offline
 COPY src src
 RUN mvn --batch-mode package -DskipTests
 
-FROM eclipse-temurin:25-jre-alpine
+FROM eclipse-temurin:25-jdk-alpine
 RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app app
 WORKDIR /app
 COPY --from=build /workspace/target/account-service-1.0.0.jar app.jar

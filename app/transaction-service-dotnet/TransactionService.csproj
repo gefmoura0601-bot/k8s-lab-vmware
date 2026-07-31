@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
     <PackageReference Include="Npgsql" Version="10.0.0" />
     <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
+    <PackageReference Include="prometheus-net.DotNetRuntime" Version="4.4.1" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />

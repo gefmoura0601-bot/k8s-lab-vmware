@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-jvm-runtime-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: account-service
+data:
+  banking-jvm-runtime.json: |
+    {
+      "uid": "banking-jvm-runtime",
+      "title": "Banking / JVM Runtime",
+      "tags": ["banking", "java", "jvm"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {"from": "now-1h", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "pod",
+            "label": "Pod",
+            "type": "query",
+            "datasource": "Prometheus",
+            "query": "label_values(jvm_info{namespace=\"banking\",application=\"account-service\"}, pod)",
+            "refresh": 1,
+            "includeAll": true,
+            "allValue": ".*",
+            "current": {"text": "All", "value": "$__all"}
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "JVM Up",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "targets": [{"refId": "A", "expr": "max(up{namespace=\"banking\",pod=~\"$pod\",service=\"account-service\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}, "colorMode": "value"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []}
+        },
+        {
+          "id": 2, "type": "stat", "title": "Heap usado",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 4, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(jvm_memory_used_bytes{namespace=\"banking\",pod=~\"$pod\",area=\"heap\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 3, "type": "stat", "title": "Non-heap usado",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 9, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(jvm_memory_used_bytes{namespace=\"banking\",pod=~\"$pod\",area=\"nonheap\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 4, "type": "stat", "title": "Gap do heap",
+          "description": "Heap máximo menos heap atualmente usado.",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 14, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(jvm_memory_max_bytes{namespace=\"banking\",pod=~\"$pod\",area=\"heap\"} > 0) - sum(jvm_memory_used_bytes{namespace=\"banking\",pod=~\"$pod\",area=\"heap\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 5, "type": "stat", "title": "Threads live / peak",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 19, "y": 0},
+          "targets": [
+            {"refId": "A", "expr": "sum(jvm_threads_live_threads{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "live"},
+            {"refId": "B", "expr": "sum(jvm_threads_peak_threads{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "peak"}
+          ],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {}, "overrides": []}
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Heap e non-heap por pool",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [
+            {"refId": "A", "expr": "sum by (area,id) (jvm_memory_used_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{area}} / {{id}}"},
+            {"refId": "B", "expr": "sum(jvm_memory_max_bytes{namespace=\"banking\",pod=~\"$pod\",area=\"heap\"} > 0)", "legendFormat": "heap max"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "NMT: memória nativa por categoria",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [
+            {"refId": "A", "expr": "sum by (category) (jvm_native_memory_committed_bytes{namespace=\"banking\",pod=~\"$pod\",category!=\"Total\"})", "legendFormat": "{{category}} committed"},
+            {"refId": "B", "expr": "sum(jvm_native_memory_reserved_bytes{namespace=\"banking\",pod=~\"$pod\",category=\"Total\"})", "legendFormat": "total reserved"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "GC: pausas, overhead e alocação",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(jvm_gc_pause_seconds_sum{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "pause s/s"},
+            {"refId": "B", "expr": "avg(jvm_gc_overhead{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "overhead ratio"},
+            {"refId": "C", "expr": "sum(rate(jvm_gc_memory_allocated_bytes_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "allocated B/s"},
+            {"refId": "D", "expr": "sum(rate(jvm_gc_memory_promoted_bytes_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "promoted B/s"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 9, "type": "timeseries", "title": "Threads por estado",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [{"refId": "A", "expr": "sum by (state) (jvm_threads_states_threads{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{state}}"}],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 10, "type": "timeseries", "title": "Buffers diretos/mapeados",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 20},
+          "targets": [
+            {"refId": "A", "expr": "sum by (id) (jvm_buffer_memory_used_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{id}} used"},
+            {"refId": "B", "expr": "sum by (id) (jvm_buffer_total_capacity_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{id}} capacity"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 11, "type": "timeseries", "title": "JIT / compilação",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 20},
+          "targets": [{"refId": "A", "expr": "sum(rate(jvm_compilation_time_ms_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "compile ms/s"}],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 12, "type": "timeseries", "title": "CPU e classes carregadas",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 20},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(process_cpu_time_ns_total{namespace=\"banking\",pod=~\"$pod\"}[5m])) / 1e9", "legendFormat": "CPU cores"},
+            {"refId": "B", "expr": "sum(jvm_classes_loaded_classes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "loaded classes"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-dotnet-runtime-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: transaction-service
+data:
+  banking-dotnet-runtime.json: |
+    {
+      "uid": "banking-dotnet-runtime",
+      "title": "Banking / .NET Runtime",
+      "tags": ["banking", "dotnet", "runtime"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {"from": "now-1h", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "pod", "label": "Pod", "type": "query", "datasource": "Prometheus",
+            "query": "label_values(dotnet_build_info{namespace=\"banking\"}, pod)",
+            "refresh": 1, "includeAll": true, "allValue": ".*",
+            "current": {"text": "All", "value": "$__all"}
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": ".NET Up",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "targets": [{"refId": "A", "expr": "max(up{namespace=\"banking\",pod=~\"$pod\",service=\"transaction-service\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}, "colorMode": "value"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []}
+        },
+        {
+          "id": 2, "type": "stat", "title": "Managed heap",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 4, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 3, "type": "stat", "title": "Working set",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 9, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(process_working_set_bytes{namespace=\"banking\",pod=~\"$pod\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 4, "type": "stat", "title": "Gap managed / disponível",
+          "description": "Memória total disponibilizada pelo GC menos o managed heap.",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 14, "y": 0},
+          "targets": [{"refId": "A", "expr": "max(dotnet_gc_memory_total_available_bytes{namespace=\"banking\",pod=~\"$pod\"}) - sum(dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 5, "type": "stat", "title": "Gap nativo estimado",
+          "description": "Working set menos managed heap; inclui runtime nativo, stacks e bibliotecas.",
+          "datasource": "Prometheus", "gridPos": {"h": 4, "w": 5, "x": 19, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(process_working_set_bytes{namespace=\"banking\",pod=~\"$pod\"}) - sum(dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Heap por geração",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [{"refId": "A", "expr": "sum by (generation) (dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{generation}}"}],
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "GC: coleções e pausas",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [
+            {"refId": "A", "expr": "sum by (generation) (rate(dotnet_gc_collection_count_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "GC {{generation}} /s"},
+            {"refId": "B", "expr": "sum(rate(dotnet_gc_collection_seconds_sum{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "pause s/s"},
+            {"refId": "C", "expr": "avg(dotnet_gc_pause_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "pause ratio"},
+            {"refId": "D", "expr": "avg(dotnet_gc_cpu_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "GC CPU ratio"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "Alocação",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
+          "targets": [{"refId": "A", "expr": "sum by (type) (rate(dotnet_gc_allocated_bytes_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "{{type}} B/s"}],
+          "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 9, "type": "timeseries", "title": "JIT",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
+          "targets": [
+            {"refId": "A", "expr": "sum by (type) (rate(dotnet_jit_method_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "{{type}} methods/s"},
+            {"refId": "B", "expr": "avg(dotnet_jit_cpu_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "JIT CPU ratio"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 10, "type": "timeseries", "title": "Thread pool",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+          "targets": [
+            {"refId": "A", "expr": "sum(dotnet_threadpool_num_threads{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "threads"},
+            {"refId": "B", "expr": "sum(rate(dotnet_threadpool_queue_length_sum{namespace=\"banking\",pod=~\"$pod\"}[5m])) / clamp_min(sum(rate(dotnet_threadpool_queue_length_count{namespace=\"banking\",pod=~\"$pod\"}[5m])), 1e-9)", "legendFormat": "avg queue"},
+            {"refId": "C", "expr": "sum(dotnet_threadpool_timer_count{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "timers"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 11, "type": "timeseries", "title": "Contenção e exceções",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(dotnet_contention_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "contentions/s"},
+            {"refId": "B", "expr": "sum(rate(dotnet_contention_seconds_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "contention s/s"},
+            {"refId": "C", "expr": "sum(rate(dotnet_exceptions_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "exceptions/s"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 12, "type": "timeseries", "title": "Processo: CPU, threads e handles",
+          "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(process_cpu_seconds_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "CPU cores"},
+            {"refId": "B", "expr": "sum(process_num_threads{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "OS threads"},
+            {"refId": "C", "expr": "sum(process_open_handles{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "open handles"}
+          ],
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        }
+      ]
+    }
