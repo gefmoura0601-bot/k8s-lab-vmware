@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: account-service
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://postgres.databases.svc.cluster.local:5432/appdb}
+    username: ${DATABASE_USER:appuser}
+    password: ${DATABASE_PASSWORD:change-me}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    default-schema: account_service
+    schemas: account_service
+    create-schemas: true
+server:
+  port: 8080
+  shutdown: graceful
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}

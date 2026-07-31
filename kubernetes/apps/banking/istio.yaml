@@ -1,0 +1,111 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: banking-strict
+  namespace: banking
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: banking-services
+  namespace: banking
+spec:
+  host: "*.banking.svc.cluster.local"
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: banking
+  namespace: banking
+spec:
+  hosts:
+    - nginx.lab.local
+  gateways:
+    - nginx-lab/nginx-lab-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /bank/accounts
+      rewrite:
+        uriRegexRewrite:
+          match: ^/bank/accounts(.*)
+          rewrite: /api/v1/accounts\1
+      route:
+        - destination:
+            host: account-service.banking.svc.cluster.local
+            port:
+              number: 80
+    - match:
+        - uri:
+            prefix: /bank/transactions
+      rewrite:
+        uriRegexRewrite:
+          match: ^/bank/transactions(.*)
+          rewrite: /api/v1/transactions\1
+      route:
+        - destination:
+            host: transaction-service.banking.svc.cluster.local
+            port:
+              number: 80
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: account-service
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: account-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-system/sa/istio-ingressgateway
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: [/api/v1/accounts, /api/v1/accounts/*]
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/banking/sa/transaction-service
+      to:
+        - operation:
+            methods: [POST]
+            paths: [/internal/v1/transfers]
+    - to:
+        - operation:
+            methods: [GET]
+            paths: [/actuator/health/*, /actuator/prometheus]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: transaction-service
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: transaction-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-system/sa/istio-ingressgateway
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: [/api/v1/transactions, /api/v1/transactions/*]
+    - to:
+        - operation:
+            methods: [GET]
+            paths: [/health/*, /metrics]

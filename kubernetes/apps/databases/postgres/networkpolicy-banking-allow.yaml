@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-banking
+  namespace: databases
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: banking
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - account-service
+                  - transaction-service
+      ports:
+        - protocol: TCP
+          port: 5432

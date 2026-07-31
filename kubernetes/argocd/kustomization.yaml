@@ -27,6 +27,7 @@ resources:
   - cpu-producer-application.yaml
   - cpu-worker-application.yaml
   - postgres-api-application.yaml
+  - banking-application.yaml
 
   # Policies and quotas are applied after workload namespaces exist.
   - apps/governance.yaml

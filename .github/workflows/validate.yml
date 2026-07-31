@@ -97,3 +97,39 @@ jobs:
       - name: Test
         working-directory: ${{ matrix.module }}
         run: go test -race -coverprofile=coverage.out ./...
+
+  validate-java:
+    name: Validate Java 25
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: maven:3.9.11-eclipse-temurin-25-alpine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Test and package
+        working-directory: app/account-service-java
+        run: mvn --batch-mode verify
+
+  validate-dotnet:
+    name: Validate .NET 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0-alpine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Restore
+        working-directory: app/transaction-service-dotnet
+        run: dotnet restore
+
+      - name: Build
+        working-directory: app/transaction-service-dotnet
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        working-directory: app/transaction-service-dotnet
+        run: dotnet test tests/TransactionService.Tests --configuration Release

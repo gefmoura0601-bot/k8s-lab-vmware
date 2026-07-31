@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+  namespace: banking
+  labels:
+    app: account-service
+    team: banking
+    environment: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: account-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: account-service
+        team: banking
+        environment: lab
+    spec:
+      serviceAccountName: account-service
+      imagePullSecrets:
+        - name: ghcr-secret
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: account-service
+          image: ghcr.io/gefmoura0601-bot/account-service-java:bootstrap
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              value: jdbc:postgresql://postgres.databases.svc.cluster.local:5432/appdb
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: banking-db
+                  key: username
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-db
+                  key: password
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 750m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-service
+  namespace: banking
+  labels:
+    app: account-service
+    team: banking
+    environment: lab
+spec:
+  selector:
+    app: account-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
