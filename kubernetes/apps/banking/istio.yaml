@@ -6,6 +6,29 @@ metadata:
 spec:
   mtls:
     mode: STRICT
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: account-service-metrics
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: account-service
+  portLevelMtls:
+    "8080":
+      mode: PERMISSIVE
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: transaction-service-metrics
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: transaction-service
   portLevelMtls:
     "8080":
       mode: PERMISSIVE
