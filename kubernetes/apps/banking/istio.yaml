@@ -6,6 +6,9 @@ metadata:
 spec:
   mtls:
     mode: STRICT
+  portLevelMtls:
+    "8080":
+      mode: PERMISSIVE
 ---
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
