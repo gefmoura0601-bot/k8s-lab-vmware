@@ -12,6 +12,7 @@ resources:
   - apps/istio-ingressgateway.yaml
   - apps/metrics-server.yaml
   - apps/keda.yaml
+  - apps/kyverno.yaml
   - apps/monitoring.yaml
   - apps/vpa.yaml
 
@@ -28,3 +29,4 @@ resources:
 
   # Policies and quotas are applied after workload namespaces exist.
   - apps/governance.yaml
+  - apps/kyverno-policies.yaml

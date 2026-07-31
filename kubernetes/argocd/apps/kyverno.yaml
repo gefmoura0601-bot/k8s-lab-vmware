@@ -1,24 +1,27 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: nginx-lab
+  name: kyverno
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-wave: "-30"
 spec:
   project: default
   source:
-    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
-    targetRevision: main
-    path: kubernetes/apps/nginx-lab
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: 3.8.2
+    helm:
+      releaseName: kyverno
   destination:
     server: https://kubernetes.default.svc
-    namespace: nginx-lab
+    namespace: kyverno
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
+      - CreateNamespace=true
       - ServerSideApply=true
     retry:
       limit: 10
