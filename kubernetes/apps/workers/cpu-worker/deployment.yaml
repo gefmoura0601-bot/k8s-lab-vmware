@@ -36,7 +36,7 @@ spec:
       priorityClassName: batch-low
       containers:
         - name: cpu-worker
-          image: ghcr.io/gefmoura0601-bot/cpu-worker-go:0767f1b
+          image: ghcr.io/gefmoura0601-bot/cpu-worker-go:816e378
           imagePullPolicy: Always
           env:
             - name: RABBITMQ_URL
