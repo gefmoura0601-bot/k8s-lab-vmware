@@ -209,7 +209,7 @@ data:
         {
           "id": 6, "type": "timeseries", "title": "Heap por geração",
           "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
-          "targets": [{"refId": "A", "expr": "sum by (generation) (dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{generation}}"}],
+          "targets": [{"refId": "A", "expr": "sum by (gc_generation) (dotnet_gc_heap_size_bytes{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "{{gc_generation}}"}],
           "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
           "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
         },
@@ -217,7 +217,7 @@ data:
           "id": 7, "type": "timeseries", "title": "GC: coleções e pausas",
           "datasource": "Prometheus", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
           "targets": [
-            {"refId": "A", "expr": "sum by (generation) (rate(dotnet_gc_collection_count_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "GC {{generation}} /s"},
+            {"refId": "A", "expr": "sum by (gc_generation) (rate(dotnet_gc_collection_count_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "GC {{gc_generation}} /s"},
             {"refId": "B", "expr": "sum(rate(dotnet_gc_collection_seconds_sum{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "pause s/s"},
             {"refId": "C", "expr": "avg(dotnet_gc_pause_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "pause ratio"},
             {"refId": "D", "expr": "avg(dotnet_gc_cpu_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "GC CPU ratio"}
@@ -228,7 +228,7 @@ data:
         {
           "id": 8, "type": "timeseries", "title": "Alocação",
           "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
-          "targets": [{"refId": "A", "expr": "sum by (type) (rate(dotnet_gc_allocated_bytes_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "{{type}} B/s"}],
+          "targets": [{"refId": "A", "expr": "sum(rate(dotnet_gc_allocated_bytes_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "allocated B/s"}],
           "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
           "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
         },
@@ -236,7 +236,7 @@ data:
           "id": 9, "type": "timeseries", "title": "JIT",
           "datasource": "Prometheus", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
           "targets": [
-            {"refId": "A", "expr": "sum by (type) (rate(dotnet_jit_method_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "{{type}} methods/s"},
+            {"refId": "A", "expr": "sum(rate(dotnet_jit_method_total{namespace=\"banking\",pod=~\"$pod\"}[5m]))", "legendFormat": "methods/s"},
             {"refId": "B", "expr": "avg(dotnet_jit_cpu_ratio{namespace=\"banking\",pod=~\"$pod\"})", "legendFormat": "JIT CPU ratio"}
           ],
           "fieldConfig": {"defaults": {}, "overrides": []},

@@ -38,14 +38,15 @@ final class NativeMemoryMetrics {
     void collect() {
         Process process = null;
         try {
-            process = new ProcessBuilder(
+            ProcessBuilder processBuilder = new ProcessBuilder(
                     "jcmd",
                     Long.toString(ProcessHandle.current().pid()),
                     "VM.native_memory",
                     "summary",
                     "scale=KB")
-                .redirectErrorStream(true)
-                .start();
+                .redirectErrorStream(true);
+            processBuilder.environment().remove("JAVA_TOOL_OPTIONS");
+            process = processBuilder.start();
 
             if (!process.waitFor(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly();
