@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 public record TransferRequest(
     Guid SourceAccountId,
     Guid DestinationAccountId,
