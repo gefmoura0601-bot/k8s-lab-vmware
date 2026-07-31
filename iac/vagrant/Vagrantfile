@@ -1,168 +1,51 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+KUBERNETES_MINOR = ENV.fetch("KUBERNETES_MINOR", "v1.35")
+FLANNEL_VERSION = ENV.fetch("FLANNEL_VERSION", "v0.28.4")
+ARGOCD_VERSION = ENV.fetch("ARGOCD_VERSION", "v3.4.2")
+
 NODES = {
-  "k8s-master"    => { ip: "192.168.109.151", cpus: "4", mem: "4096" },
-  "k8s-worker-01" => { ip: "192.168.109.153", cpus: "4", mem: "4096" },
-  "k8s-worker-02" => { ip: "192.168.109.155", cpus: "4", mem: "4096" }
-}
-
-$prep_script = <<-SCRIPT
-set -e
-
-swapoff -a
-sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
-
-setenforce 0 || true
-sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
-
-systemctl disable --now firewalld || true
-SCRIPT
-
-$k8s_install_script = <<-SCRIPT
-set -e
-
-dnf install -y dnf-plugins-core
-
-cat <<EOF | tee /etc/modules-load.d/containerd.conf
-overlay
-br_netfilter
-EOF
-
-modprobe overlay
-modprobe br_netfilter
-
-cat <<EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf
-net.bridge.bridge-nf-call-iptables=1
-net.ipv4.ip_forward=1
-net.bridge.bridge-nf-call-ip6tables=1
-EOF
-
-sysctl --system
-
-dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-dnf install -y containerd.io
-
-mkdir -p /etc/containerd
-containerd config default | tee /etc/containerd/config.toml >/dev/null
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-systemctl enable --now containerd
-
-cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
-enabled=1
-gpgcheck=1
-gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
-EOF
-
-dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
-systemctl enable --now kubelet
-SCRIPT
-
-$hosts_script = <<-SCRIPT
-set -e
-
-cat <<EOF >/etc/hosts
-127.0.0.1   localhost localhost.localdomain
-::1         localhost localhost.localdomain
-192.168.109.151 k8s-master
-192.168.109.153 k8s-worker-01
-192.168.109.155 k8s-worker-02
-EOF
-SCRIPT
-
-$network_script = <<-SCRIPT
-set -e
-
-echo "NODE_IP recebido: ${NODE_IP}"
-
-TARGET_DEV=$(ip -o -4 addr show | awk '$4 ~ /^192\\.168\\.109\\./ {print $2; exit}')
-
-if [ -z "$TARGET_DEV" ]; then
-  TARGET_DEV=$(ip route | awk '/default/ {print $5; exit}')
-fi
-
-TARGET_CON=$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v dev="$TARGET_DEV" '$2==dev{print $1; exit}')
-
-if [ -z "$TARGET_DEV" ] || [ -z "$TARGET_CON" ]; then
-  echo "Nao foi possivel identificar a interface principal"
-  echo "==== ip addr ===="
-  ip addr
-  echo "==== nmcli device status ===="
-  nmcli device status
-  echo "==== nmcli connection show --active ===="
-  nmcli connection show --active
-  exit 1
-fi
-
-echo "Interface principal detectada: $TARGET_DEV"
-echo "Conexao principal detectada: $TARGET_CON"
-
-nmcli con mod "$TARGET_CON" connection.autoconnect yes
-nmcli con mod "$TARGET_CON" ipv4.addresses "${NODE_IP}/24"
-nmcli con mod "$TARGET_CON" ipv4.gateway "192.168.109.2"
-nmcli con mod "$TARGET_CON" ipv4.dns "8.8.8.8 1.1.1.1"
-nmcli con mod "$TARGET_CON" ipv6.method ignore
-nmcli con mod "$TARGET_CON" ipv4.method manual
-
-for conn in $(nmcli -t -f NAME,TYPE,DEVICE connection show --active | awk -F: '$2=="802-3-ethernet"{print $1 "|" $3}'); do
-  CONN_NAME=$(echo "$conn" | cut -d'|' -f1)
-  CONN_DEV=$(echo "$conn" | cut -d'|' -f2)
-
-  if [ "$CONN_DEV" != "$TARGET_DEV" ]; then
-    echo "Desativando conexao secundaria: $CONN_NAME ($CONN_DEV)"
-    nmcli con mod "$CONN_NAME" connection.autoconnect no || true
-    nmcli con down "$CONN_NAME" || true
-  fi
-done
-
-nmcli con up "$TARGET_CON" || nmcli device reapply "$TARGET_DEV" || true
-SCRIPT
-
-$kubelet_ip_script = <<-SCRIPT
-set -e
-
-cat <<EOF >/etc/sysconfig/kubelet
-KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}
-EOF
-
-systemctl daemon-reload
-systemctl restart kubelet || true
-SCRIPT
+  "k8s-master"    => { ip: "192.168.109.151", cpus: 4, mem: 4096, role: "control-plane" },
+  "k8s-worker-01" => { ip: "192.168.109.153", cpus: 4, mem: 4096, role: "worker" },
+  "k8s-worker-02" => { ip: "192.168.109.155", cpus: 4, mem: 4096, role: "worker" }
+}.freeze
 
 Vagrant.configure("2") do |config|
   config.vm.box = "almalinux/9"
+  config.vm.box_version = "9.7.20260111"
   config.vm.boot_timeout = 600
-  config.ssh.insert_key = false
+  config.ssh.insert_key = true
+  config.vm.synced_folder "../..", "/workspace"
 
   NODES.each do |name, spec|
     config.vm.define name do |node|
       node.vm.hostname = name
 
-      node.vm.provider "vmware_desktop" do |v|
-        v.gui = true
-        v.vmx["numvcpus"] = spec[:cpus]
-        v.vmx["memsize"] = spec[:mem]
-
-        # Forca apenas a NIC principal na vmnet8
-        v.vmx["ethernet0.present"] = "TRUE"
-        v.vmx["ethernet0.connectiontype"] = "custom"
-        v.vmx["ethernet0.vnet"] = "vmnet8"
-
-        # Desabilita NICs extras
-        v.vmx["ethernet1.present"] = "FALSE"
-        v.vmx["ethernet2.present"] = "FALSE"
-        v.vmx["ethernet3.present"] = "FALSE"
+      node.vm.provider "vmware_desktop" do |provider|
+        provider.gui = false
+        provider.vmx["numvcpus"] = spec[:cpus].to_s
+        provider.vmx["memsize"] = spec[:mem].to_s
+        provider.vmx["ethernet0.present"] = "TRUE"
+        provider.vmx["ethernet0.connectiontype"] = "custom"
+        provider.vmx["ethernet0.vnet"] = "vmnet8"
+        provider.vmx["ethernet1.present"] = "FALSE"
+        provider.vmx["ethernet2.present"] = "FALSE"
+        provider.vmx["ethernet3.present"] = "FALSE"
       end
 
-      node.vm.provision "shell", inline: $prep_script
-      node.vm.provision "shell", inline: $k8s_install_script
-      node.vm.provision "shell", inline: $hosts_script
-      node.vm.provision "shell", env: { "NODE_IP" => spec[:ip] }, inline: $network_script
-      node.vm.provision "shell", env: { "NODE_IP" => spec[:ip] }, inline: $kubelet_ip_script
+      node.vm.provision "shell",
+        path: "scripts/common.sh",
+        args: [spec[:ip], KUBERNETES_MINOR]
+
+      if spec[:role] == "control-plane"
+        node.vm.provision "shell",
+          path: "scripts/control-plane.sh",
+          args: [spec[:ip], FLANNEL_VERSION, ARGOCD_VERSION]
+      else
+        node.vm.provision "shell",
+          path: "scripts/worker.sh"
+      end
     end
   end
 end

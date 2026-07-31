@@ -14,11 +14,15 @@ spec:
         valueFiles:
           - $values/kubernetes/logging/loki-values.yaml
     - repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
-      targetRevision: HEAD
+      targetRevision: main
       ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: logging
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
