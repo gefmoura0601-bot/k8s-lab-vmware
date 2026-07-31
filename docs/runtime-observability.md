@@ -1,5 +1,8 @@
 # Runtime observability
 
+> Para abrir o Grafana e recuperar a credencial administrativa, consulte
+> [access.md](access.md).
+
 The banking workloads expose continuous, low-overhead runtime metrics to
 Prometheus and keep expensive diagnostic captures bounded and on demand.
 

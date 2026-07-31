@@ -1,90 +1,57 @@
 # Kubernetes VMware Lab
 
-Laboratório Kubernetes reproduzível com Vagrant, VMware, kubeadm e Argo CD.
+Laboratório Kubernetes reproduzível em VMs VMware, provisionado por Vagrant e
+operado por GitOps com Argo CD. A WSL é usada apenas como terminal e workspace;
+o cluster executa nas VMs.
 
-## Arquitetura
+## Visão rápida
 
-- 1 control plane: `192.168.109.151`
-- 2 workers: `192.168.109.153` e `192.168.109.155`
-- Kubernetes 1.35 com containerd
-- Flannel como CNI
-- local-path-provisioner para volumes do laboratório
-- Argo CD com padrão App of Apps
-- Workloads e componentes de plataforma reconciliados a partir da branch `main`
+| Camada | Implementação |
+|---|---|
+| Virtualização | VMware Workstation + Vagrant |
+| Sistema operacional | AlmaLinux 9 |
+| Kubernetes | kubeadm 1.35, containerd e Flannel |
+| GitOps | Argo CD 3.4, padrão App of Apps |
+| Rede de aplicações | Istio, mTLS e NetworkPolicy |
+| Observabilidade | Prometheus, Grafana, Loki e Promtail |
+| Segurança | Sealed Secrets, Kyverno, RBAC e containers restritos |
+| Aplicações | Java 25, .NET 10 e serviços Go |
 
-## Pré-requisitos
+### Topologia
 
-- VMware Workstation
-- Vagrant 2.4+ com provider VMware
-- Rede `vmnet8` em `192.168.109.0/24`
-- 12 vCPUs e 12 GiB de RAM disponíveis
-- Deploy key de leitura cadastrada no repositório privado
+| Nó | IP de gerenciamento | Função | Recursos |
+|---|---:|---|---:|
+| `k8s-master` | `192.168.109.151` | control plane | 4 vCPU / 4 GiB |
+| `k8s-worker-01` | `192.168.109.153` | worker | 4 vCPU / 4 GiB |
+| `k8s-worker-02` | `192.168.109.155` | worker | 4 vCPU / 8 GiB |
 
-## Criação
+O endpoint público do laboratório é
+`https://nginx.lab.local:31882`, com certificado autoassinado.
 
-```powershell
-Set-Location iac\vagrant
-vagrant validate
-vagrant up
+## Comece aqui
+
+- [Índice completo da documentação](docs/README.md)
+- [Preparação e provisionamento](docs/getting-started.md)
+- [Acesso ao cluster, Argo CD, Grafana e RabbitMQ](docs/access.md)
+- [Arquitetura e catálogo de componentes](docs/architecture.md)
+- [Operação GitOps e CI/CD](docs/gitops-cicd.md)
+- [Runbook operacional](docs/operations.md)
+- [Segurança e gestão de segredos](docs/security.md)
+- [Backup, reconstrução e recuperação](docs/disaster-recovery.md)
+- [Solução de problemas](docs/troubleshooting.md)
+- [Observabilidade de runtime Java e .NET](docs/runtime-observability.md)
+- [Aplicação bancária de exemplo](app/README-banking.md)
+
+## Estado saudável esperado
+
+```text
+kubectl get nodes
+# três nós em Ready
+
+kubectl get applications -n argocd
+# todas as aplicações em Synced e Healthy
 ```
 
-O provisionamento cria o control plane, adiciona os workers e instala Flannel,
-storage local e Argo CD. O kubeconfig fica em
-`/home/vagrant/.kube/config` no `k8s-master`.
-
-```powershell
-vagrant ssh k8s-master -c "kubectl get nodes"
-vagrant ssh k8s-master -c "kubectl get applications -n argocd"
-```
-
-## Repositório privado no Argo CD
-
-O root app usa SSH. Cadastre uma deploy key somente leitura no GitHub e crie um
-Secret de repositório no namespace `argocd`:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: repo-k8s-lab-vmware
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  type: git
-  url: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
-  sshPrivateKey: |
-    <CHAVE_PRIVADA_DA_DEPLOY_KEY>
-```
-
-Nunca versione o Secret preenchido ou a chave privada.
-
-## Fluxo GitHub
-
-Mudanças devem entrar por Pull Request. O workflow `Validate IaC` verifica
-Vagrant, todos os shell scripts, referências mutáveis, artefatos gerados, sintaxe
-YAML, árvores Kustomize e os três módulos Go (`gofmt`, `vet` e testes com race
-detector).
-O workflow `Reconcile Argo CD` é manual e usa o Environment protegido `lab`.
-
-## Validação local
-
-Com Go, ShellCheck e kubectl instalados:
-
-```bash
-make validate-local
-```
-
-As validações que dependem do cluster permanecem separadas:
-
-```bash
-make validate-platform-smoke
-make validate-cpu-pipeline-e2e
-```
-
-## Limitações
-
-Este é um laboratório single-control-plane. O storage `local-path` não oferece
-alta disponibilidade. Para produção, use control plane HA, storage CSI
-distribuído, firewall e SELinux gerenciados, secrets criptografados e backup
-externo de etcd.
+Mudanças permanentes devem ser feitas neste repositório por Pull Request. Evite
+editar recursos administrados pelo Argo CD diretamente no cluster: a
+reconciliação substituirá essas alterações.
