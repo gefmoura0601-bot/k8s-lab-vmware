@@ -9,7 +9,7 @@
              ],
     "timezone":  "browser",
     "schemaVersion":  39,
-    "version":  3,
+    "version":  4,
     "refresh":  "30s",
     "time":  {
                  "from":  "now-6h",
@@ -1106,6 +1106,215 @@
                                                             "min":  0
                                                         }
                                        }
+                   },
+                   {
+                       "id":  38,
+                       "type":  "row",
+                       "title":  "Alertas e Incidentes",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  114
+                                   },
+                       "collapsed":  false,
+                       "panels":  [
+
+                                  ]
+                   },
+                   {
+                       "id":  39,
+                       "type":  "stat",
+                       "title":  "Incidentes ativos (Firing)",
+                       "description":  "Regras Prometheus atualmente em estado firing. Cada série ativa representa um incidente operacional a investigar.",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  0,
+                                       "y":  115
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(ALERTS{alertstate=\"firing\"}) or vector(0)",
+                                           "instant":  true
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "short",
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  1
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "center",
+                                       "textMode":  "value_and_name"
+                                   }
+                   },
+                   {
+                       "id":  40,
+                       "type":  "stat",
+                       "title":  "Alertas pendentes",
+                       "description":  "Condições detectadas que ainda não completaram a janela `for` da regra.",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  6,
+                                       "y":  115
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(ALERTS{alertstate=\"pending\"}) or vector(0)",
+                                           "instant":  true
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "short",
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green"
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  1
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "center",
+                                       "textMode":  "value_and_name"
+                                   }
+                   },
+                   {
+                       "id":  41,
+                       "type":  "alertlist",
+                       "title":  "Alertas do Grafana",
+                       "description":  "Visão nativa do Grafana Alerting. As regras Prometheus continuam sendo a fonte oficial.",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  115
+                                   },
+                       "options":  {
+                                       "alertName":  "",
+                                       "dashboardAlerts":  false,
+                                       "groupBy":  [
+
+                                                   ],
+                                       "groupMode":  "default",
+                                       "maxItems":  20,
+                                       "sortOrder":  1,
+                                       "stateFilter":  {
+                                                           "alerting":  true,
+                                                           "error":  true,
+                                                           "noData":  true,
+                                                           "normal":  false,
+                                                           "pending":  true
+                                                       }
+                                   }
+                   },
+                   {
+                       "id":  42,
+                       "type":  "table",
+                       "title":  "Incidentes ativos detalhados",
+                       "description":  "Lista alertname, severity, namespace, pod, container, node e instance fornecidos pelas regras em firing.",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  10,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  121
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "ALERTS{alertstate=\"firing\"} == 1",
+                                           "format":  "table",
+                                           "instant":  true
+                                       }
+                                   ],
+                       "options":  {
+                                       "showHeader":  true,
+                                       "cellHeight":  "sm",
+                                       "footer":  {
+                                                      "show":  false
+                                                  }
+                                   },
+                       "fieldConfig":  {
+                                           "defaults":  {
+
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  43,
+                       "type":  "timeseries",
+                       "title":  "Histórico de alertas por nome e severidade",
+                       "description":  "Linha do tempo dos estados firing e pending observados pelo Prometheus.",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  10,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  121
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (alertname,severity,alertstate) (ALERTS)",
+                                           "legendFormat":  "{{severity}} / {{alertname}} / {{alertstate}}"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "short",
+                                                            "min":  0
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "placement":  "bottom",
+                                                      "calcs":  [
+                                                                    "lastNotNull",
+                                                                    "max"
+                                                                ]
+                                                  },
+                                       "tooltip":  {
+                                                       "mode":  "multi",
+                                                       "sort":  "desc"
+                                                   }
+                                   }
                    }
                ]
 }

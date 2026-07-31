@@ -81,7 +81,9 @@ kubectl -n monitoring get secret <SECRET_GRAFANA> \
 ```
 
 Abra um túnel da porta local `3000` para a porta HTTP `80` do ClusterIP e acesse
-`http://localhost:3000`. Os dashboards ficam na pasta `Banking`:
+`http://localhost:3000`. O dashboard `Kubernetes Complete Overview` reúne
+capacidade, workloads, Calico, Typha e a seção `Alertas e Incidentes`, alimentada
+pelas regras do Prometheus. Os dashboards de runtime ficam na pasta `Banking`:
 
 - `JVM Runtime`;
 - `.NET Runtime`.
