@@ -10,8 +10,13 @@ kubeconfig*
 *.tmp
 
 # local build artifacts
+app/cpu-producer-go/cpu-producer-go
+app/cpu-worker-go/cpu-worker-go
 app/postgres-api-go/postgres-api-go
+*.test
+coverage.out
 
 # local backups
 backups/
+*.bak
 *.bkp.*

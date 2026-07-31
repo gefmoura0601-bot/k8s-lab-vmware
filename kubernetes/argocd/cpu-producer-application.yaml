@@ -1,20 +1,28 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: apps
+  name: cpu-producer
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
   source:
     repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
     targetRevision: main
-    path: kubernetes/apps
+    path: kubernetes/apps/workers/cpu-producer
   destination:
     server: https://kubernetes.default.svc
-    namespace: default
+    namespace: workers
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

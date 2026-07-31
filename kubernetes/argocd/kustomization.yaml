@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # CRDs and controllers
+  - apps/sealed-secrets.yaml
+  - apps/istio-base.yaml
+  - apps/istiod.yaml
+  - apps/istio-ingressgateway.yaml
+  - apps/metrics-server.yaml
+  - apps/keda.yaml
+  - apps/monitoring.yaml
+  - apps/vpa.yaml
+
+  # Shared infrastructure
+  - databases-application.yaml
+  - messaging-application.yaml
+  - logging-app.yaml
+
+  # Workloads
+  - nginx-application.yaml
+  - cpu-producer-application.yaml
+  - cpu-worker-application.yaml
+  - postgres-api-application.yaml
+
+  # Policies and quotas are applied after workload namespaces exist.
+  - apps/governance.yaml

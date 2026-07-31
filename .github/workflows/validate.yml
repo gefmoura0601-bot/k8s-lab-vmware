@@ -5,23 +5,31 @@ on:
   push:
     branches: ["main"]
 
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  validate:
+  validate-iac:
+    name: Validate IaC
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Validate Vagrantfile syntax
         run: ruby -c iac/vagrant/Vagrantfile
 
       - name: Validate shell scripts
-        run: shellcheck iac/vagrant/scripts/*.sh
+        run: |
+          mapfile -t scripts < <(git ls-files '*.sh')
+          shellcheck "${scripts[@]}"
 
-      - name: Reject mutable references and merge markers
+      - name: Reject mutable references, artifacts, and merge markers
         shell: bash
         run: |
           matches="$(
@@ -35,6 +43,17 @@ jobs:
             exit 1
           fi
 
+          artifacts="$(
+            git ls-files |
+              grep -E '(^|/)(coverage\.out|[^/]+\.test|[^/]+\.bak)$|^app/[^/]+-go/[^/.]+-go$' ||
+              true
+          )"
+          if [[ -n "${artifacts}" ]]; then
+            echo "${artifacts}"
+            echo "Generated or backup artifacts must not be committed." >&2
+            exit 1
+          fi
+
       - name: Validate YAML syntax
         run: |
           ruby -e 'require "yaml"; ARGV.each { |file| YAML.parse_stream(File.read(file)) }' \
@@ -45,3 +64,36 @@ jobs:
           for file in $(git ls-files 'kubernetes/**/kustomization.yaml'); do
             kubectl kustomize "$(dirname "$file")" >/dev/null
           done
+
+  validate-go:
+    name: Validate Go (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - app/cpu-producer-go
+          - app/cpu-worker-go
+          - app/postgres-api-go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Check formatting
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test -race -coverprofile=coverage.out ./...
