@@ -29,6 +29,7 @@ POSTGRES_USER="${POSTGRES_USER:-appuser}"
 
 RABBIT_POD="${RABBIT_POD:-rabbitmq-0}"
 RABBIT_QUEUE="${RABBIT_QUEUE:-cpu-jobs}"
+CPU_WORKER_SCALEDOBJECT="${CPU_WORKER_SCALEDOBJECT:-cpu-worker-rabbitmq}"
 
 REQUIRED_APPS=(
   "postgres-api"
@@ -189,15 +190,23 @@ printf '%s\n' "$RABBIT_OUTPUT" | grep -q "^${RABBIT_QUEUE}[[:space:]]" \
 pass "Fila ${RABBIT_QUEUE} encontrada no RabbitMQ"
 
 # ============================================================
-# 7) HPA
+# 7) KEDA e HPA gerado
 # ============================================================
-info "7) Validando HPA do cpu-worker"
+info "7) Validando autoscaling KEDA do cpu-worker"
 
-kubectl get hpa cpu-worker -n "$WORKERS_NS" -o wide >/dev/null \
-  || fail "HPA/cpu-worker não encontrado no namespace ${WORKERS_NS}"
+kubectl get scaledobject "$CPU_WORKER_SCALEDOBJECT" -n "$WORKERS_NS" >/dev/null \
+  || fail "ScaledObject/${CPU_WORKER_SCALEDOBJECT} não encontrado no namespace ${WORKERS_NS}"
 
-kubectl get hpa cpu-worker -n "$WORKERS_NS"
-pass "HPA/cpu-worker encontrado"
+CPU_WORKER_HPA="$(
+  kubectl get scaledobject "$CPU_WORKER_SCALEDOBJECT" -n "$WORKERS_NS" \
+    -o jsonpath='{.status.hpaName}'
+)"
+
+[[ -n "$CPU_WORKER_HPA" ]] \
+  || fail "ScaledObject/${CPU_WORKER_SCALEDOBJECT} ainda não publicou status.hpaName"
+
+kubectl get hpa "$CPU_WORKER_HPA" -n "$WORKERS_NS"
+pass "ScaledObject/${CPU_WORKER_SCALEDOBJECT} e HPA/${CPU_WORKER_HPA} encontrados"
 
 # ============================================================
 # 8) Kyverno
@@ -222,5 +231,5 @@ echo "- rollouts principais OK"
 echo "- mesh/mTLS da postgres-api OK"
 echo "- PostgreSQL respondendo"
 echo "- RabbitMQ com fila ${RABBIT_QUEUE}"
-echo "- HPA do cpu-worker presente"
+echo "- autoscaling KEDA do cpu-worker presente"
 echo "- ClusterPolicies do Kyverno Ready"
