@@ -17,10 +17,10 @@ mkdir -p "$output_dir"
 remote_jfr="/diagnostics/account-service-profile-${timestamp}.jfr"
 
 kubectl exec -n "$namespace" "$pod" -c account-service -- \
-  jcmd 1 JFR.start name=on-demand-profile settings=profile \
+  env -u JAVA_TOOL_OPTIONS jcmd 1 JFR.start name=on-demand-profile settings=profile \
     "duration=$duration" "filename=$remote_jfr"
 kubectl exec -n "$namespace" "$pod" -c account-service -- \
-  jcmd 1 VM.native_memory summary scale=MB \
+  env -u JAVA_TOOL_OPTIONS jcmd 1 VM.native_memory summary scale=MB \
   >"$output_dir/account-service-nmt-${timestamp}.txt"
 
 echo "JFR is recording for $duration. Copy it after the recording finishes:"
