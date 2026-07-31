@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - secret.yaml
+  - sealed-secret.yaml
   - service.yaml
   - statefulset.yaml
   - pdb.yaml
