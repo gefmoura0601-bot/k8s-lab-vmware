@@ -17,6 +17,29 @@ spec:
           query: |
             (sum(rate(istio_requests_total{reporter="destination",destination_service_name="postgres-api-canary",response_code!~"5.."}[1m]))
             / clamp_min(sum(rate(istio_requests_total{reporter="destination",destination_service_name="postgres-api-canary"}[1m])), 0.001)) or vector(1)
+    - name: trace-derived-success-rate
+      interval: 15s
+      count: 2
+      failureLimit: 0
+      successCondition: result[0] >= 0.99
+      failureCondition: result[0] < 0.99
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (1 - sum(rate(traces_spanmetrics_calls_total{service="postgres-api",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}[2m]))
+            / clamp_min(sum(rate(traces_spanmetrics_calls_total{service="postgres-api",span_kind="SPAN_KIND_SERVER"}[2m])), 0.001)) or vector(1)
+    - name: trace-derived-p95-latency
+      interval: 15s
+      count: 2
+      failureLimit: 0
+      successCondition: result[0] <= 1
+      failureCondition: result[0] > 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="postgres-api",span_kind="SPAN_KIND_SERVER"}[2m]))) or vector(0)
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate

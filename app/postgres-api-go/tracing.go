@@ -56,5 +56,12 @@ func startDBSpan(ctx context.Context, operation string) (context.Context, trace.
 }
 
 func tracedHTTPHandler(next http.Handler) http.Handler {
-	return otelhttp.NewHandler(next, "postgres-api.http")
+	return otelhttp.NewHandler(next, "postgres-api.http", otelhttp.WithFilter(func(request *http.Request) bool {
+		switch request.URL.Path {
+		case "/health", "/healthz", "/readyz":
+			return false
+		default:
+			return true
+		}
+	}))
 }

@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tempo-derived-metrics
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: tempo-derived-metrics
+      rules:
+        - alert: TempoSpanMetricsAbsent
+          expr: absent(traces_spanmetrics_calls_total{service="postgres-api"})
+          for: 10m
+          labels: {severity: warning, team: platform}
+          annotations: {summary: Métricas derivadas da postgres-api estão ausentes}
+        - alert: PostgresAPITraceErrorRateHigh
+          expr: |
+            sum(rate(traces_spanmetrics_calls_total{service="postgres-api",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}[5m]))
+            / clamp_min(sum(rate(traces_spanmetrics_calls_total{service="postgres-api",span_kind="SPAN_KIND_SERVER"}[5m])), 0.001) > 0.05
+          for: 5m
+          labels: {severity: critical, team: platform}
+          annotations: {summary: Taxa de erros da postgres-api acima de 5%}
+        - alert: PostgresAPITraceP95LatencyHigh
+          expr: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service="postgres-api",span_kind="SPAN_KIND_SERVER"}[5m]))) > 1
+          for: 10m
+          labels: {severity: warning, team: platform}
+          annotations: {summary: Latência p95 da postgres-api acima de 1 segundo}
+        - alert: TempoMetricsGeneratorRemoteWriteFailures
+          expr: rate(prometheus_remote_storage_samples_failed_total[5m]) > 0
+          for: 5m
+          labels: {severity: warning, team: platform}
+          annotations: {summary: Falhas no remote write do Tempo}

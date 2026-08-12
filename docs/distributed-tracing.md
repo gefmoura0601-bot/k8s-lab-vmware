@@ -62,6 +62,19 @@ Uma NetworkPolicy separada permite somente TCP/4317 da `postgres-api` para pods
 O ConfigMap `grafana-tempo-datasource` é descoberto pelo sidecar do Grafana.
 Abra Grafana conforme [access.md](access.md), vá a **Explore**, escolha
 **Tempo**, selecione **Search** e filtre `service.name = postgres-api`.
+
+## Métricas derivadas e rollout
+
+O `metrics-generator` do Tempo converte os spans em métricas RED e as envia
+ao Prometheus por remote write. O dashboard **Tempo / Métricas derivadas**
+mostra volume, taxa de sucesso, latência e o estado das análises do Argo
+Rollouts. As rotas `/health`, `/healthz` e `/readyz` são excluídas na
+instrumentação para que probes não distorçam traces, métricas ou alertas.
+
+A análise canary mantém a taxa de sucesso do Istio, específica da revisão, e
+adiciona guardrails globais derivados dos traces: sucesso mínimo de 99% e
+latência p95 máxima de um segundo. Ausência de métricas, erro acima de 5%,
+latência elevada e falhas de remote write também geram alertas no Prometheus.
 Ao abrir um trace, o Node Graph mostra as relações e a integração
 `tracesToLogsV2` permite saltar para logs próximos ao span.
 

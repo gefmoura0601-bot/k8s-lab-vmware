@@ -17,6 +17,22 @@ data:
         wal: {path: /var/tempo/wal}
     compactor:
       compaction: {block_retention: 6h}
+    metrics_generator:
+      registry:
+        external_labels: {cluster: k8s-lab, source: tempo}
+        collection_interval: 15s
+      storage:
+        path: /var/tempo/generator/wal
+        remote_write:
+          - url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+            send_exemplars: true
+      processor:
+        span_metrics:
+          histogram_buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
+    overrides:
+      defaults:
+        metrics_generator:
+          processors: [span-metrics]
     usage_report: {reporting_enabled: false}
 ---
 apiVersion: v1

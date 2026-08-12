@@ -1,3 +1,3 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: [namespace.yaml, tempo.yaml, otel-collector.yaml, grafana-datasource.yaml]
+resources: [namespace.yaml, tempo.yaml, otel-collector.yaml, grafana-datasource.yaml, dashboard-configmap.yaml, prometheusrule.yaml]
