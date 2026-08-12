@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memory-worker-script
+  namespace: memory-lab
+data:
+  worker.sh: |
+    #!/bin/sh
+    set -eu
+    api="http://rabbitmq.messaging.svc.cluster.local:15672/api"
+    vhost="%2F"
+    while true; do
+      response="$(curl -fsS -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" -H 'content-type: application/json' -X POST "${api}/queues/${vhost}/${QUEUE_NAME}/get" -d '{"count":1,"ackmode":"ack_requeue_false","encoding":"auto","truncate":50000}')"
+      payload="$(printf '%s' "$response" | sed -n 's/.*"payload":"\([0-9][0-9]*\)".*/\1/p')"
+      if [ -z "$payload" ]; then sleep 2; continue; fi
+      echo "processing allocation=${payload}Mi"
+      bytes=$((payload * 1024 * 1024))
+      allocation="$(head -c "${bytes}" /dev/zero | base64)"
+      sleep "${HOLD_SECONDS}"
+      unset allocation
+      echo "processed allocation=${payload}Mi"
+    done

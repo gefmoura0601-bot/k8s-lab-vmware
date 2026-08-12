@@ -12,4 +12,5 @@ resources:
   - statefulset.yaml
   - pdb.yaml
   - networkpolicy.yaml
+  - networkpolicy-memory-lab.yaml
   - networkpolicy-allow-keda-rabbitmq.yaml

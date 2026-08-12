@@ -1,0 +1,20 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: memory-worker-rabbitmq
+  namespace: memory-lab
+spec:
+  scaleTargetRef:
+    name: memory-worker
+  pollingInterval: 5
+  cooldownPeriod: 90
+  minReplicaCount: 0
+  maxReplicaCount: 2
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: memory-jobs
+        mode: QueueLength
+        value: "2"
+        hostFromEnv: RABBITMQ_URL

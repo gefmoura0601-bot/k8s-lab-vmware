@@ -29,6 +29,7 @@ resources:
   - nginx-application.yaml
   - cpu-producer-application.yaml
   - cpu-worker-application.yaml
+  - memory-lab-application.yaml
   - postgres-api-application.yaml
   - banking-application.yaml
 

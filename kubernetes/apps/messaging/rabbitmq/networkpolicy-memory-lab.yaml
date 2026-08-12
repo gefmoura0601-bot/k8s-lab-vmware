@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rabbitmq-management-from-memory-lab
+  namespace: messaging
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: memory-lab
+          podSelector:
+            matchLabels:
+              app: memory-worker
+      ports:
+        - protocol: TCP
+          port: 15672
