@@ -2,14 +2,17 @@
 set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-apps}"
-SERVICE="${SERVICE:-postgres-api}"
+INGRESS_URL="${INGRESS_URL:-https://192.168.109.151:31882}"
+HOST_HEADER="${HOST_HEADER:-nginx.lab.local}"
 
 kubectl -n tracing rollout status deployment/tempo --timeout=180s
 kubectl -n tracing rollout status deployment/otel-collector --timeout=180s
 
+INGRESS_AUTHORITY="${INGRESS_URL#https://}"
+INGRESS_IP="${INGRESS_AUTHORITY%%:*}"
+INGRESS_PORT="${INGRESS_AUTHORITY##*:}"
 for _ in $(seq 1 10); do
-  kubectl -n "${NAMESPACE}" run trace-client --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet \
-    --command -- curl -fsS "http://${SERVICE}/users" >/dev/null
+  curl -ksS --resolve "${HOST_HEADER}:${INGRESS_PORT}:${INGRESS_IP}" "https://${HOST_HEADER}:${INGRESS_PORT}/postgres-api/users" >/dev/null
 done
 
 sleep 10

@@ -41,6 +41,7 @@ spec:
         sidecar.istio.io/proxyCPULimit: 200m
         sidecar.istio.io/proxyMemory: 64Mi
         sidecar.istio.io/proxyMemoryLimit: 128Mi
+        traffic.sidecar.istio.io/excludeOutboundPorts: "4317"
       labels: {app: postgres-api, team: platform, environment: lab}
     spec:
       securityContext:
