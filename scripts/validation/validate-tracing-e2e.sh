@@ -16,7 +16,7 @@ for _ in $(seq 1 10); do
 done
 
 sleep 10
-search="$(kubectl -n tracing run tempo-query --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS 'http://tempo:3200/api/search?tags=service.name%3Dpostgres-api&limit=5')"
+search="$(kubectl -n tracing run tempo-query --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS 'http://tempo:3200/api/search?q=%7Bresource.service.name%3D%22postgres-api%22%7D')"
 trace_id="$(grep -oE '[0-9a-f]{32}' <<<"${search}" | head -n 1)"
 
 [[ -n "${trace_id}" ]] || { echo "Nenhum trace da postgres-api encontrado no Tempo" >&2; exit 1; }
