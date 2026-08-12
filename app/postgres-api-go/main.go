@@ -79,6 +79,18 @@ func main() {
 
 	log.Println("conectado ao PostgreSQL com sucesso")
 
+	shutdownTracing, err := setupTracing(context.Background())
+	if err != nil {
+		log.Fatalf("erro ao iniciar OpenTelemetry: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			log.Printf("erro ao finalizar OpenTelemetry: %v", err)
+		}
+	}()
+
 	app := &App{db: db}
 
 	mux := http.NewServeMux()
@@ -91,7 +103,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              listenAddr,
-		Handler:           loggingMiddleware(mux),
+		Handler:           tracedHTTPHandler(loggingMiddleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -185,6 +197,9 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
+	ctx, span := startDBSpan(r.Context(), "select")
+	defer span.End()
+	r = r.WithContext(ctx)
 	ctx, cancel := context.WithTimeout(r.Context(), dbRequestTimeout)
 	defer cancel()
 
@@ -228,6 +243,9 @@ func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
+	ctx, span := startDBSpan(r.Context(), "insert")
+	defer span.End()
+	r = r.WithContext(ctx)
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	defer r.Body.Close()
 

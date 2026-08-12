@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: tempo-config, namespace: tracing}
+data:
+  tempo.yaml: |
+    server: {http_listen_port: 3200}
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc: {endpoint: 0.0.0.0:4317}
+            http: {endpoint: 0.0.0.0:4318}
+    storage:
+      trace:
+        backend: local
+        local: {path: /var/tempo/traces}
+        wal: {path: /var/tempo/wal}
+    compactor:
+      compaction: {block_retention: 6h}
+    usage_report: {reporting_enabled: false}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: tempo-data, namespace: tracing}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tempo, namespace: tracing, labels: {app: tempo, team: platform, environment: lab}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: tempo}}
+  strategy: {type: Recreate}
+  template:
+    metadata: {labels: {app: tempo, team: platform, environment: lab}}
+    spec:
+      securityContext: {fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.10.7
+          args: [-config.file=/etc/tempo/tempo.yaml]
+          ports: [{name: http, containerPort: 3200}, {name: otlp-grpc, containerPort: 4317}, {name: otlp-http, containerPort: 4318}]
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
+          resources: {requests: {cpu: 50m, memory: 192Mi}, limits: {cpu: 500m, memory: 384Mi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: config, mountPath: /etc/tempo}, {name: data, mountPath: /var/tempo}]
+      volumes:
+        - {name: config, configMap: {name: tempo-config}}
+        - {name: data, persistentVolumeClaim: {claimName: tempo-data}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tempo, namespace: tracing, labels: {app: tempo}}
+spec:
+  selector: {app: tempo}
+  ports: [{name: http, port: 3200, targetPort: http}, {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}, {name: otlp-http, port: 4318, targetPort: otlp-http}]

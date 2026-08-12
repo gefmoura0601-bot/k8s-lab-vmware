@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tracing
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-9"}
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+    targetRevision: main
+    path: kubernetes/platform/tracing
+  destination: {server: https://kubernetes.default.svc, namespace: tracing}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
