@@ -1,0 +1,112 @@
+{
+  "uid": "kubernetes-memory-health",
+  "title": "Kubernetes / Memory Health",
+  "tags": ["kubernetes", "memory", "capacity", "oom", "lab"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Menor memória disponível em nó",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "min(100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [{ "color": "red" }, { "color": "yellow", "value": 15 }, { "color": "green", "value": 25 }] } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Nós com MemoryPressure",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"})" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value" },
+      "fieldConfig": { "defaults": { "decimals": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }, { "color": "red", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "OOMKilled na última hora",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(max_over_time(kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"}[1h])) or vector(0)" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value" },
+      "fieldConfig": { "defaults": { "decimals": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }, { "color": "red", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Containers acima de 80% do limite",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "count((max by (namespace,pod,container) (container_memory_working_set_bytes{container!=\"\",image!=\"\"}) / on(namespace,pod,container) max by (namespace,pod,container) (kube_pod_container_resource_limits{resource=\"memory\"} > 0)) > 0.8) or vector(0)" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "colorMode": "value" },
+      "fieldConfig": { "defaults": { "decimals": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }, { "color": "red", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Memória disponível por nó",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "refId": "A", "expr": "100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes", "legendFormat": "{{instance}}" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Uso de memória por nó",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [{ "refId": "A", "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "{{instance}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Top 10 containers por working set",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "refId": "A", "expr": "topk(10, sum by (namespace,pod,container) (max by (namespace,pod,container) (container_memory_working_set_bytes{container!=\"\",image!=\"\"})))", "legendFormat": "{{namespace}}/{{pod}}/{{container}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Uso por namespace",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "refId": "A", "expr": "sum by (namespace) (max by (namespace,pod,container) (container_memory_working_set_bytes{container!=\"\",image!=\"\"}))", "legendFormat": "{{namespace}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Requests de memória por nó",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 21 },
+      "targets": [{ "refId": "A", "expr": "sum by (node) (kube_pod_container_resource_requests{resource=\"memory\"} * on(namespace,pod) group_left(node) kube_pod_info)", "legendFormat": "{{node}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Top containers: uso / limite",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 21 },
+      "targets": [{ "refId": "A", "expr": "topk(10, max by (namespace,pod,container) (container_memory_working_set_bytes{container!=\"\",image!=\"\"}) / on(namespace,pod,container) max by (namespace,pod,container) (kube_pod_container_resource_limits{resource=\"memory\"} > 0))", "legendFormat": "{{namespace}}/{{pod}}/{{container}}" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}
