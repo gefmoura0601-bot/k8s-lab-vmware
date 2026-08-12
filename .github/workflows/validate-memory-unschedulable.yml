@@ -1,4 +1,5 @@
 name: Validate Memory Unschedulable
+run-name: Memory scheduling capacity test by @${{ github.actor }}
 
 on:
   workflow_dispatch:
