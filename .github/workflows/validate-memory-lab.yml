@@ -2,6 +2,20 @@ name: Validate Memory Lab
 
 on:
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: Cenário de memória a executar
+        required: true
+        default: keda-oom
+        type: choice
+        options:
+          - keda-oom
+          - insufficient-memory
+          - both
+      confirmation:
+        description: Para insufficient-memory/both, digite TEST-INSUFFICIENT-MEMORY
+        required: false
+        type: string
 
 concurrency:
   group: validate-memory-lab
@@ -12,19 +26,34 @@ permissions:
 
 jobs:
   validate-memory-lab:
-    name: Validate KEDA memory and OOM recovery
+    name: Validate memory lab (${{ inputs.scenario }})
     runs-on: [self-hosted, master]
     environment: lab
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
+      - name: Confirm insufficient memory experiment
+        if: ${{ inputs.scenario == 'insufficient-memory' || inputs.scenario == 'both' }}
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "${CONFIRMATION}" = "TEST-INSUFFICIENT-MEMORY"
+
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Run memory lab E2E
+      - name: Run KEDA memory and OOM recovery
+        if: ${{ inputs.scenario == 'keda-oom' || inputs.scenario == 'both' }}
         shell: bash
         run: |
           set -o pipefail
           bash scripts/validation/validate-memory-keda-e2e.sh 2>&1 | tee memory-lab-result.txt
+
+      - name: Run insufficient memory scheduling
+        if: ${{ inputs.scenario == 'insufficient-memory' || inputs.scenario == 'both' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/validation/validate-memory-unschedulable.sh 2>&1 | tee -a memory-lab-result.txt
 
       - name: Capture final state
         if: ${{ always() }}
@@ -34,6 +63,8 @@ jobs:
             echo
             echo "=== Final state ==="
             kubectl -n memory-lab get deployment,scaledobject,hpa,pods
+            kubectl get namespace memory-scheduling-lab 2>/dev/null || true
+            kubectl -n memory-scheduling-lab get pod,events 2>/dev/null || true
             kubectl top nodes
             kubectl get nodes
           } >> memory-lab-result.txt 2>&1
@@ -42,7 +73,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: memory-lab-${{ github.run_id }}
+          name: memory-lab-${{ inputs.scenario }}-${{ github.run_id }}
           path: memory-lab-result.txt
           if-no-files-found: error
           retention-days: 14

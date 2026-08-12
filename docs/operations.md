@@ -126,7 +126,7 @@ O guia com a explicação de cada parâmetro, etapa e critério de aceite está 
 [lab-completo-passo-a-passo.md](lab-completo-passo-a-passo.md).
 ## Laboratório de memória insuficiente no scheduler
 
-O workflow manual `Validate Memory Unschedulable` exige a confirmação
+No workflow manual `Validate Memory Lab`, selecione `insufficient-memory` e informe a confirmação
 `TEST-INSUFFICIENT-MEMORY`. Ele cria temporariamente um namespace isolado e um
 pod com request de 8 GiB, restrito aos workers. Como nenhum worker oferece essa
 capacidade, o pod permanece `Pending` e o scheduler emite `FailedScheduling`

@@ -377,8 +377,8 @@ seu próprio artefato.
 
 ### 10.4 Memória insuficiente para o scheduler
 
-O workflow `Validate Memory Unschedulable`, protegido pela confirmação
-`TEST-INSUFFICIENT-MEMORY`, cria um pod efêmero que solicita 8 GiB e aceita
+No workflow `Validate Memory Lab`, selecione o cenário `insufficient-memory` e
+informe `TEST-INSUFFICIENT-MEMORY`. O teste cria um pod efêmero que solicita 8 GiB e aceita
 somente workers. Como o maior worker possui 6 GiB brutos e menos memória
 alocável, o scheduler mantém o pod `Pending` e registra `FailedScheduling` com
 `Insufficient memory`.
