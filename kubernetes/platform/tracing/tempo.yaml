@@ -42,9 +42,10 @@ spec:
         - name: tempo
           image: grafana/tempo:2.10.7
           args: [-config.file=/etc/tempo/tempo.yaml]
+          env: [{name: GOMEMLIMIT, value: 400MiB}]
           ports: [{name: http, containerPort: 3200}, {name: otlp-grpc, containerPort: 4317}, {name: otlp-http, containerPort: 4318}]
           readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
-          resources: {requests: {cpu: 50m, memory: 192Mi}, limits: {cpu: 500m, memory: 384Mi}}
+          resources: {requests: {cpu: 50m, memory: 192Mi}, limits: {cpu: 500m, memory: 512Mi}}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
           volumeMounts: [{name: config, mountPath: /etc/tempo}, {name: data, mountPath: /var/tempo}]
       volumes:
