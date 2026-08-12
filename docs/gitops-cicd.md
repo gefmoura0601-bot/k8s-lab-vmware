@@ -95,6 +95,8 @@ novo. Uma instalação já registrada apenas tem o serviço validado e iniciado.
 ## Teste de resiliência do worker
 
 O workflow manual `Validate Memory Node Resilience` exige a confirmação
-`FAIL-WORKER-01`. Ele interrompe kubelet e containerd no `k8s-worker-01`, força
-o reagendamento do memory-worker no segundo worker e sempre recupera e
-descordona o nó por meio de um trap. Execute somente no environment `lab`.
+`FAIL-BOTH-WORKERS`. Uma matriz sequencial interrompe kubelet e containerd
+primeiro no `k8s-worker-01` e depois no `k8s-worker-02`, validando o
+reagendamento do memory-worker no nó alternativo. Cada execução sempre recupera
+e descordona o nó por meio de um trap antes de iniciar a próxima. Execute
+somente no environment `lab`.
