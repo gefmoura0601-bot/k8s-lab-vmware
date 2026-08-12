@@ -29,6 +29,60 @@ kubectl -n databases exec <postgres-pod> -- \
 Valide o arquivo com `pg_restore --list postgres.dump`. Não mantenha o dump no
 repositório.
 
+## Backup automatizado e validação isolada
+
+O workflow manual `Validate Disaster Recovery` exige a confirmação
+`CREATE-AND-VALIDATE-DR-BACKUP` e o secret `DR_BACKUP_PASSPHRASE` no environment
+GitHub `lab`. A passphrase deve ter pelo menos 20 caracteres e possuir uma cópia
+em cofre externo ao GitHub e ao cluster.
+
+O workflow coleta dump PostgreSQL, representação lógica dos dados, definitions
+do RabbitMQ, chave privada do Sealed Secrets, Secrets de repositório do Argo CD,
+inventário sanitizado e checksums SHA-256.
+
+O pacote usa AES-256-CBC, PBKDF2 e 200.000 iterações. O `.enc` fica em
+`/workspace/.dr-backups`, no disco compartilhado do Windows, e o diretório está
+no `.gitignore`. Apenas evidência sanitizada vai para o Actions; dumps, chaves e
+Secrets nunca são publicados como artefato.
+
+Depois, o workflow descriptografa em diretório temporário, valida checksums,
+cria `dr-restore-validation`, restaura o PostgreSQL com `emptyDir` e compara o
+SHA-256 lógico dos dados. Um `trap` remove namespace e temporários mesmo em
+falha. A passphrase deve ser guardada também em cofre externo; sem ela, o pacote
+é irrecuperável.
+
+Execução manual:
+
+```bash
+cd /workspace
+export DR_BACKUP_PASSPHRASE='<obtida do cofre>'
+bash scripts/validation/create-dr-backup.sh
+bash scripts/validation/validate-postgres-dr-restore.sh \
+  /workspace/.dr-backups/<bundle>.tar.gz.enc
+unset DR_BACKUP_PASSPHRASE
+```
+
+Não informe a passphrase como argumento de linha de comando.
+
+Neste host, a cópia de custódia fica em
+`.dr-backups/dr-backup-passphrase.dpapi.xml`, protegida pelo DPAPI. Ela só pode
+ser aberta pelo mesmo usuário Windows no mesmo perfil. Para recuperar e
+reconfigurar o secret sem imprimir o valor:
+
+```powershell
+$secure = Import-Clixml .\.dr-backups\dr-backup-passphrase.dpapi.xml
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+    [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) |
+        gh.exe secret set DR_BACKUP_PASSPHRASE --env lab
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+```
+
+Copie o arquivo DPAPI e os bundles `.enc` para mídia externa protegida. DPAPI
+não substitui um cofre corporativo e não sobrevive à perda do perfil Windows.
 ## Sealed Secrets
 
 Sem a chave privada do controller, os `SealedSecret` existentes não podem ser

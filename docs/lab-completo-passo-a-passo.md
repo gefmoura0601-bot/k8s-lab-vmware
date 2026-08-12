@@ -542,6 +542,11 @@ Git recupera manifests, mas não recupera automaticamente:
 - Secret da deploy key Argo CD;
 - registro do runner.
 
+Antes da destruição, execute `Validate Disaster Recovery`. Ele cria um pacote
+criptografado no disco compartilhado do Windows e valida o restore PostgreSQL
+em namespace isolado. Apenas relatório sanitizado vai ao Actions. Guarde a
+`DR_BACKUP_PASSPHRASE` em cofre externo e copie `.dr-backups` para outra mídia.
+
 Siga [disaster-recovery.md](disaster-recovery.md) antes de executar
 `vagrant destroy`. A reconstrução termina somente depois de restaurar dados e
 segredos e repetir a ordem de validação da seção 14.
