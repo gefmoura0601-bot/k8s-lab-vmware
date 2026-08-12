@@ -549,6 +549,13 @@ Secrets e os Secrets de repositório do Argo CD. Ao final, conserva os cinco
 bundles mais recentes. Apenas relatório sanitizado vai ao Actions. Guarde a
 `DR_BACKUP_PASSPHRASE` em cofre externo e copie `.dr-backups` para outra mídia.
 
+A restauração pós-`vagrant up` é automatizada por
+`scripts/validation/restore-dr-backup.sh`: primeiro execute em modo `verify`;
+depois use o modo `restore` com
+`DR_RESTORE_CONFIRMATION=RESTORE-DR-BACKUP`. O script também recompõe os membros
+votantes das filas quorum, etapa que a importação de definitions do RabbitMQ
+não realiza sozinha.
+
 Siga [disaster-recovery.md](disaster-recovery.md) antes de executar
 `vagrant destroy`. A reconstrução termina somente depois de restaurar dados e
 segredos e repetir a ordem de validação da seção 14.
