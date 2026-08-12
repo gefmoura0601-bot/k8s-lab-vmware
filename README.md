@@ -30,6 +30,8 @@ O endpoint público do laboratório é
 
 ## Comece aqui
 
+- [Guia completo passo a passo](docs/lab-completo-passo-a-passo.md) — comece
+  por este documento se nunca trabalhou com Kubernetes;
 - [Índice completo da documentação](docs/README.md)
 - [Preparação e provisionamento](docs/getting-started.md)
 - [Acesso ao cluster, Argo CD, Grafana e RabbitMQ](docs/access.md)

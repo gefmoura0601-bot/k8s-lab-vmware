@@ -81,12 +81,20 @@ kubectl -n monitoring get secret <SECRET_GRAFANA> \
 ```
 
 Abra um túnel da porta local `3000` para a porta HTTP `80` do ClusterIP e acesse
-`http://localhost:3000`. O dashboard `Kubernetes Complete Overview` reúne
-capacidade, workloads, Calico, Typha e a seção `Alertas e Incidentes`, alimentada
-pelas regras do Prometheus. Os dashboards de runtime ficam na pasta `Banking`:
+`http://localhost:3000`. O dashboard `Kubernetes Complete Overview` reúne capacidade, workloads, Calico,
+Typha e a seção `Alertas e Incidentes`, alimentada pelas regras do Prometheus.
+Os demais dashboards principais são:
 
+- `Kubernetes / Memory Health`;
+- `Memory Lab / KEDA and OOM`;
+- dashboard de escala do CPU worker/KEDA;
+- dashboard da `postgres-api`;
 - `JVM Runtime`;
 - `.NET Runtime`.
+
+No dashboard do memory lab, use a janela `Last 15 minutes` durante os workflows
+de validação. Os painéis `Pods por node`, `Nodes Ready`, `Pods pendentes` e
+`Tempo pendente para reagendamento` mostram o teste de falha dos workers.
 
 ## RabbitMQ
 
