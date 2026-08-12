@@ -6,6 +6,11 @@ NAMESPACE="${DR_PLATFORM_NAMESPACE:-dr-platform-validation}"
 WORK_DIR="$(mktemp -d)"
 
 cleanup() {
+  status=$?
+  if (( status != 0 )); then
+    kubectl -n "${NAMESPACE}" describe pod rabbitmq-restore >&2 2>/dev/null || true
+    kubectl -n "${NAMESPACE}" logs rabbitmq-restore >&2 2>/dev/null || true
+  fi
   kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   find "${WORK_DIR}" -type f -exec shred -u {} + 2>/dev/null || true
   rm -rf "${WORK_DIR}"
@@ -53,12 +58,16 @@ spec:
       image: docker.io/library/rabbitmq:3.13-management-alpine
       env:
         - {name: RABBITMQ_ERLANG_COOKIE, value: dr-validation-cookie}
+        - {name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS, value: "+S 2:2 +A 4"}
+      readinessProbe:
+        exec:
+          command: [rabbitmq-diagnostics, -q, check_running]
+        initialDelaySeconds: 5
+        periodSeconds: 2
+        timeoutSeconds: 5
+        failureThreshold: 90
 EOF
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod/rabbitmq-restore --timeout=180s
-for _ in $(seq 1 60); do
-  kubectl -n "${NAMESPACE}" exec rabbitmq-restore -- rabbitmqctl await_startup >/dev/null 2>&1 && break
-  sleep 2
-done
 kubectl -n "${NAMESPACE}" exec rabbitmq-restore -- rabbitmqctl await_startup >/dev/null
 kubectl -n "${NAMESPACE}" cp "${WORK_DIR}/rabbitmq-definitions.json" rabbitmq-restore:/tmp/source-definitions.json
 if ! jq -e '.users[] | select(.name == "guest")' "${WORK_DIR}/rabbitmq-definitions.json" >/dev/null; then

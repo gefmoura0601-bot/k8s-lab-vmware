@@ -88,7 +88,9 @@ não substitui um cofre corporativo e não sobrevive à perda do perfil Windows.
 
 O namespace temporário `dr-platform-validation` recebe uma instância RabbitMQ e
 cópias dos Secrets de repositório do Argo CD. As definitions RabbitMQ são
-importadas, exportadas e comparadas de forma canônica. Cada certificado Sealed
+importadas, exportadas e comparadas de forma canônica. O pod só fica pronto
+após abbitmq-diagnostics check_running; os schedulers Erlang são limitados para
+reduzir consumo e variação de memória durante o teste. Cada certificado Sealed
 Secrets tem sua chave pública comparada à chave privada com OpenSSL, sem alterar
 o controller atual. Os Secrets Argo CD são verificados sem conexão externa.
 
