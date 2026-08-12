@@ -37,7 +37,7 @@ spec:
     metadata: {labels: {app: postgres-api, component: migration, team: platform, environment: lab}}
     spec:
       restartPolicy: Never
-      securityContext: {runAsNonRoot: true, runAsUser: 999, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 70, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: migrate
           image: postgres:17-alpine
