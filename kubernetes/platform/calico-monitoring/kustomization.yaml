@@ -17,6 +17,14 @@ configMapGenerator:
       labels:
         grafana_dashboard: "1"
         app: kubernetes-monitoring
+  - name: kubernetes-memory-health-dashboard
+    namespace: monitoring
+    files:
+      - memory-health-dashboard.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+        app: kubernetes-memory-health
 
 generatorOptions:
   disableNameSuffixHash: true

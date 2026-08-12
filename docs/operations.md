@@ -44,6 +44,17 @@ kubectl get scaledobject -A
 original de 4 GiB. Trate requests próximos de 80% da memória alocável de um nó
 como sinal para rebalancear ou ampliar.
 
+Para gerar um inventário reproduzível de memória, execute no `k8s-master`:
+
+```bash
+cd /workspace
+bash scripts/validation/report-memory-capacity.sh
+```
+
+No Grafana, o dashboard `Kubernetes / Memory Health` apresenta disponibilidade
+por nó, `MemoryPressure`, OOMs recentes, maiores consumidores, requests e uso em
+relação aos limites.
+
 ## Reiniciar com segurança
 
 Para um Deployment:
