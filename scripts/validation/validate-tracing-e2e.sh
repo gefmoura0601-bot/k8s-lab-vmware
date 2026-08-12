@@ -24,5 +24,8 @@ trace_id="$(grep -oE '[0-9a-f]{32}' <<<"${search}" | head -n 1)"
 trace="$(kubectl -n tracing run tempo-trace --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS "http://tempo:3200/api/traces/${trace_id}")"
 grep -q 'postgres-api' <<<"${trace}"
 grep -q 'postgresql.users.select' <<<"${trace}"
-! grep -q 'STATUS_CODE_ERROR' <<<"${trace}"
+if grep -q 'STATUS_CODE_ERROR' <<<"${trace}"; then
+  echo "Trace PostgreSQL contém STATUS_CODE_ERROR" >&2
+  exit 1
+fi
 echo "Trace HTTP -> postgres-api -> PostgreSQL validado: ${trace_id}"
