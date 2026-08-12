@@ -10,11 +10,15 @@ TIMEOUT="${TIMEOUT:-240}"
 fail() { echo "ERRO: $*" >&2; exit 1; }
 replicas() { kubectl -n "${NAMESPACE}" get deploy "${DEPLOYMENT}" -o jsonpath='{.spec.replicas}'; }
 queue_messages() {
+  # As variáveis são expandidas pelo shell dentro do pod RabbitMQ.
+  # shellcheck disable=SC2016
   kubectl -n messaging exec rabbitmq-0 -- sh -c \
     'rabbitmqadmin -u "$RABBITMQ_DEFAULT_USER" -p "$RABBITMQ_DEFAULT_PASS" -V / list queues name messages --format=tsv' 2>/dev/null |
     awk -v queue="${QUEUE}" '$1 == queue {print $2}'
 }
 rabbit_admin() {
+  # As variáveis são expandidas pelo shell dentro do pod RabbitMQ.
+  # shellcheck disable=SC2016
   kubectl -n messaging exec rabbitmq-0 -- sh -c \
     'rabbitmqadmin -u "$RABBITMQ_DEFAULT_USER" -p "$RABBITMQ_DEFAULT_PASS" -V / '"$*"
 }
