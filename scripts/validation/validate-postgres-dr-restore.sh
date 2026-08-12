@@ -61,17 +61,25 @@ EOF
 
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod/postgres-restore --timeout=180s
 for _ in $(seq 1 60); do
+  # Variáveis expandidas dentro do pod restaurado.
+  # shellcheck disable=SC2016
   kubectl -n "${NAMESPACE}" exec postgres-restore -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1 && break
   sleep 2
 done
+# Variáveis expandidas dentro do pod restaurado.
+# shellcheck disable=SC2016
 kubectl -n "${NAMESPACE}" exec postgres-restore -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
+# shellcheck disable=SC2016
 kubectl -n "${NAMESPACE}" exec -i postgres-restore -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges' <"${WORK_DIR}/postgres.dump"
+# Variáveis expandidas dentro do pod restaurado.
+# shellcheck disable=SC2016
 kubectl -n "${NAMESPACE}" exec postgres-restore -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --data-only --inserts --no-owner --no-privileges' >"${WORK_DIR}/restored-data.sql"
 
 EXPECTED="$(cat "${WORK_DIR}/postgres-data.sha256")"
 ACTUAL="$(sed -e '/^--/d' -e '/^\\restrict /d' -e '/^\\unrestrict /d' -e '/^[[:space:]]*$/d' "${WORK_DIR}/restored-data.sql" | sha256sum | awk '{print $1}')"
 [[ "${ACTUAL}" == "${EXPECTED}" ]] || fail "hash lógico dos dados restaurados diverge"
 
+# shellcheck disable=SC2016
 TABLES="$(kubectl -n "${NAMESPACE}" exec postgres-restore -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from pg_stat_user_tables"')"
 echo "RESTORE_STATUS=success"
 echo "RESTORE_NAMESPACE=${NAMESPACE}"

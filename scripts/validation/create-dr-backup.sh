@@ -20,8 +20,12 @@ POSTGRES_POD="$(kubectl -n databases get pod -l app=postgres -o jsonpath='{.item
 RABBIT_POD="$(kubectl -n messaging get pod -l app=rabbitmq -o jsonpath='{.items[0].metadata.name}')"
 [[ -n "${POSTGRES_POD}" && -n "${RABBIT_POD}" ]] || fail "pods de dados não encontrados"
 
+# Variáveis expandidas dentro do container PostgreSQL.
+# shellcheck disable=SC2016
 kubectl -n databases exec "${POSTGRES_POD}" -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"${WORK_DIR}/postgres.dump"
 kubectl -n databases exec "${POSTGRES_POD}" -i -- pg_restore --list <"${WORK_DIR}/postgres.dump" >/dev/null
+# Variáveis expandidas dentro do container PostgreSQL.
+# shellcheck disable=SC2016
 kubectl -n databases exec "${POSTGRES_POD}" -- sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --data-only --inserts --no-owner --no-privileges' >"${WORK_DIR}/postgres-data.sql"
 sed -e '/^--/d' -e '/^\\restrict /d' -e '/^\\unrestrict /d' -e '/^[[:space:]]*$/d' "${WORK_DIR}/postgres-data.sql" | sha256sum | awk '{print $1}' >"${WORK_DIR}/postgres-data.sha256"
 kubectl -n databases get secret postgres-secret -o json >"${WORK_DIR}/postgres-secret.json"
