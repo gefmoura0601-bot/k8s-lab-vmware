@@ -8,3 +8,5 @@ resources:
   - scaledobject.yaml
   - networkpolicy.yaml
   - quota.yaml
+  - dashboard-configmap.yaml
+  - prometheusrule.yaml
