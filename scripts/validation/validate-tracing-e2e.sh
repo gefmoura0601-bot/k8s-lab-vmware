@@ -16,9 +16,13 @@ for _ in $(seq 1 10); do
   [[ "${status}" == "200" ]] || { echo "GET /users retornou HTTP ${status}" >&2; exit 1; }
 done
 
-sleep 10
-search="$(kubectl -n tracing run tempo-search --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS 'http://tempo:3200/api/search?q=%7Bname%3D%22postgresql.users.select%22%7D')"
-trace_id="$(grep -oE '[0-9a-f]{32}' <<<"${search}" | head -n 1)"
+trace_id=""
+for attempt in $(seq 1 9); do
+  search="$(kubectl -n tracing run "tempo-search-${attempt}" --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS 'http://tempo:3200/api/search?q=%7Bname%3D%22postgresql.users.select%22%7D')"
+  trace_id="$(grep -oE '[0-9a-f]{32}' <<<"${search}" | head -n 1 || true)"
+  [[ -n "${trace_id}" ]] && break
+  sleep 10
+done
 
 [[ -n "${trace_id}" ]] || { echo "Nenhum trace da postgres-api encontrado no Tempo" >&2; exit 1; }
 trace="$(kubectl -n tracing run tempo-trace --image=curlimages/curl:8.10.1 --restart=Never --rm -i --quiet --command -- curl -fsS "http://tempo:3200/api/traces/${trace_id}")"
