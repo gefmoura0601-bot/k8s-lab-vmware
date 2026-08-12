@@ -21,9 +21,9 @@ administrar o ambiente; o cluster e o `kubectl` executam nas VMs.
 
 | Nó | IP de gerenciamento | Função | Recursos |
 |---|---:|---|---:|
-| `k8s-master` | `192.168.109.151` | control plane | 4 vCPU / 4 GiB |
+| `k8s-master` | `192.168.109.151` | control plane | 4 vCPU / 6 GiB |
 | `k8s-worker-01` | `192.168.109.153` | worker | 4 vCPU / 4 GiB |
-| `k8s-worker-02` | `192.168.109.155` | worker | 4 vCPU / 8 GiB |
+| `k8s-worker-02` | `192.168.109.155` | worker | 4 vCPU / 6 GiB |
 
 O endpoint público do laboratório é
 `https://nginx.lab.local:31882`, com certificado autoassinado.

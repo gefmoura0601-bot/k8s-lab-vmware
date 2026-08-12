@@ -6,9 +6,9 @@ CALICO_VERSION = ENV.fetch("CALICO_VERSION", "v3.32.1")
 ARGOCD_VERSION = ENV.fetch("ARGOCD_VERSION", "v3.4.2")
 
 NODES = {
-  "k8s-master"    => { ip: "192.168.109.151", cpus: 4, mem: 4096, role: "control-plane" },
+  "k8s-master"    => { ip: "192.168.109.151", cpus: 4, mem: 6144, role: "control-plane" },
   "k8s-worker-01" => { ip: "192.168.109.153", cpus: 4, mem: 4096, role: "worker" },
-  "k8s-worker-02" => { ip: "192.168.109.155", cpus: 4, mem: 8192, role: "worker" }
+  "k8s-worker-02" => { ip: "192.168.109.155", cpus: 4, mem: 6144, role: "worker" }
 }.freeze
 
 Vagrant.configure("2") do |config|

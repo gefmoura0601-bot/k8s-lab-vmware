@@ -40,9 +40,10 @@ kubectl get vpa -A
 kubectl get scaledobject -A
 ```
 
-`k8s-worker-02` possui 8 GiB porque concentra cargas que excediam a capacidade
-original de 4 GiB. Trate requests próximos de 80% da memória alocável de um nó
-como sinal para rebalancear ou ampliar.
+O `k8s-master` e o `k8s-worker-02` possuem 6 GiB. A distribuição mantém 16 GiB
+no total e reserva mais memória ao control plane, que concentra API server,
+etcd e os watches dos operadores. Trate requests próximos de 80% da memória
+alocável de um nó como sinal para rebalancear ou ampliar.
 
 Para gerar um inventário reproduzível de memória, execute no `k8s-master`:
 
