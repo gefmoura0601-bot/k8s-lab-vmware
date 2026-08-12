@@ -143,6 +143,28 @@ cluster reconstruído.
 
 ## Reconstrução total
 
+Depois de `vagrant up`, use o restaurador em duas fases. `verify` apenas abre o
+bundle, confere todos os checksums e inspeciona seu conteúdo obrigatório. O modo
+`restore` é destrutivo para os dados atuais e exige confirmação explícita:
+
+```bash
+export DR_BACKUP_PASSPHRASE='<obtida do cofre>'
+DR_RESTORE_MODE=verify \
+  bash scripts/validation/restore-dr-backup.sh /workspace/.dr-backups/<bundle>.enc
+
+DR_RESTORE_MODE=restore \
+DR_RESTORE_CONFIRMATION=RESTORE-DR-BACKUP \
+  bash scripts/validation/restore-dr-backup.sh /workspace/.dr-backups/<bundle>.enc
+unset DR_BACKUP_PASSPHRASE
+```
+
+O script restaura as chaves do Sealed Secrets e o Secret de repositório do
+Argo CD, aguarda os workloads de dados, restaura e valida o PostgreSQL, importa
+as definitions RabbitMQ e recompõe todas as filas quorum com um membro votante
+por réplica do StatefulSet. Ao final, exige KEDA pronto, aplicações
+`Synced/Healthy` e nenhum nó com `MemoryPressure`. Não passe a passphrase como
+argumento.
+
 1. restaure/clone a branch `main`;
 2. valide rede VMware e recursos;
 3. execute `vagrant up`;
