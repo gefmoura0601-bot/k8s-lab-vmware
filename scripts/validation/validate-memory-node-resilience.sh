@@ -6,8 +6,12 @@ DEPLOYMENT="${DEPLOYMENT:-memory-worker}"
 SCALEDOBJECT="${SCALEDOBJECT:-memory-worker-rabbitmq}"
 QUEUE="${QUEUE:-memory-jobs}"
 TARGET_NODE="${TARGET_NODE:-k8s-worker-01}"
-OTHER_NODE="${OTHER_NODE:-k8s-worker-02}"
-KEY_SOURCE="${KEY_SOURCE:-/workspace/iac/vagrant/.vagrant/machines/k8s-worker-01/vmware_desktop/private_key}"
+case "${TARGET_NODE}" in
+  k8s-worker-01) OTHER_NODE="k8s-worker-02" ;;
+  k8s-worker-02) OTHER_NODE="k8s-worker-01" ;;
+  *) echo "ERRO: TARGET_NODE deve ser k8s-worker-01 ou k8s-worker-02" >&2; exit 1 ;;
+esac
+KEY_SOURCE="${KEY_SOURCE:-/workspace/iac/vagrant/.vagrant/machines/${TARGET_NODE}/vmware_desktop/private_key}"
 KEY_FILE="$(mktemp)"
 NODE_RECOVERY_REQUIRED=false
 

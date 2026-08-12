@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Digite FAIL-WORKER-01 para confirmar a falha controlada
+        description: Digite FAIL-BOTH-WORKERS para confirmar as falhas controladas
         required: true
         type: string
 
@@ -17,22 +17,31 @@ permissions:
 
 jobs:
   validate-node-resilience:
-    name: Validate worker failure and recovery
+    name: Validate failure and recovery (${{ matrix.target-node }})
     runs-on: [self-hosted, master]
     environment: lab
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        target-node:
+          - k8s-worker-01
+          - k8s-worker-02
     steps:
       - name: Confirm disruptive test
         shell: bash
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
-        run: test "${CONFIRMATION}" = "FAIL-WORKER-01"
+        run: test "${CONFIRMATION}" = "FAIL-BOTH-WORKERS"
 
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Run controlled node failure
         shell: bash
+        env:
+          TARGET_NODE: ${{ matrix.target-node }}
         run: |
           set -o pipefail
           bash scripts/validation/validate-memory-node-resilience.sh 2>&1 | tee memory-node-resilience.txt
@@ -53,7 +62,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: memory-node-resilience-${{ github.run_id }}
+          name: memory-node-resilience-${{ matrix.target-node }}-${{ github.run_id }}
           path: memory-node-resilience.txt
           if-no-files-found: error
           retention-days: 14
