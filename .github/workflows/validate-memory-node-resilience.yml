@@ -1,0 +1,59 @@
+name: Validate Memory Node Resilience
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite FAIL-WORKER-01 para confirmar a falha controlada
+        required: true
+        type: string
+
+concurrency:
+  group: validate-memory-lab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-node-resilience:
+    name: Validate worker failure and recovery
+    runs-on: [self-hosted, master]
+    environment: lab
+    timeout-minutes: 15
+    steps:
+      - name: Confirm disruptive test
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "${CONFIRMATION}" = "FAIL-WORKER-01"
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run controlled node failure
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/validation/validate-memory-node-resilience.sh 2>&1 | tee memory-node-resilience.txt
+
+      - name: Capture final state
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo
+            echo "=== Final state ==="
+            kubectl get nodes
+            kubectl -n memory-lab get deployment,scaledobject,hpa,pods -o wide
+            kubectl top nodes
+          } >> memory-node-resilience.txt 2>&1
+
+      - name: Upload evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: memory-node-resilience-${{ github.run_id }}
+          path: memory-node-resilience.txt
+          if-no-files-found: error
+          retention-days: 14

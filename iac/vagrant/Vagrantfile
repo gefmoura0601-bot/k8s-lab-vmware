@@ -4,6 +4,9 @@
 KUBERNETES_MINOR = ENV.fetch("KUBERNETES_MINOR", "v1.35")
 CALICO_VERSION = ENV.fetch("CALICO_VERSION", "v3.32.1")
 ARGOCD_VERSION = ENV.fetch("ARGOCD_VERSION", "v3.4.2")
+ACTIONS_RUNNER_VERSION = "2.334.0"
+ACTIONS_RUNNER_SHA256 = "048024cd2c848eb6f14d5646d56c13a4def2ae7ee3ad12122bee960c56f3d271"
+ACTIONS_RUNNER_REPOSITORY = "https://github.com/gefmoura0601-bot/k8s-lab-vmware"
 
 NODES = {
   "k8s-master"    => { ip: "192.168.109.151", cpus: 4, mem: 6144, role: "control-plane" },
@@ -48,6 +51,11 @@ Vagrant.configure("2") do |config|
         node.vm.provision "shell",
           path: "scripts/control-plane.sh",
           args: [spec[:ip], CALICO_VERSION, ARGOCD_VERSION]
+        node.vm.provision "actions-runner",
+          type: "shell",
+          path: "scripts/actions-runner.sh",
+          args: [ACTIONS_RUNNER_VERSION, ACTIONS_RUNNER_SHA256, ACTIONS_RUNNER_REPOSITORY, "k8s-master", "master"],
+          env: { "ACTIONS_RUNNER_TOKEN" => ENV.fetch("ACTIONS_RUNNER_TOKEN", "") }
       else
         node.vm.provision "shell",
           path: "scripts/worker.sh"
