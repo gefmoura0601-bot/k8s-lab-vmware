@@ -7,4 +7,5 @@ resources:
   - sealed-secret-rabbitmq.yaml
   - deployment.yaml
   - dashboard-configmap.yaml
+  - prometheusrule.yaml
   - networkpolicy.yaml
