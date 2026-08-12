@@ -543,8 +543,10 @@ Git recupera manifests, mas não recupera automaticamente:
 - registro do runner.
 
 Antes da destruição, execute `Validate Disaster Recovery`. Ele cria um pacote
-criptografado no disco compartilhado do Windows e valida o restore PostgreSQL
-em namespace isolado. Apenas relatório sanitizado vai ao Actions. Guarde a
+criptografado no disco compartilhado do Windows e valida, em namespaces isolados,
+o restore PostgreSQL, as definitions RabbitMQ, o par certificado/chave do Sealed
+Secrets e os Secrets de repositório do Argo CD. Ao final, conserva os cinco
+bundles mais recentes. Apenas relatório sanitizado vai ao Actions. Guarde a
 `DR_BACKUP_PASSPHRASE` em cofre externo e copie `.dr-backups` para outra mídia.
 
 Siga [disaster-recovery.md](disaster-recovery.md) antes de executar

@@ -83,6 +83,47 @@ finally {
 
 Copie o arquivo DPAPI e os bundles `.enc` para mídia externa protegida. DPAPI
 não substitui um cofre corporativo e não sobrevive à perda do perfil Windows.
+
+## Validações de plataforma e retenção
+
+O namespace temporário `dr-platform-validation` recebe uma instância RabbitMQ e
+cópias dos Secrets de repositório do Argo CD. As definitions RabbitMQ são
+importadas, exportadas e comparadas de forma canônica. Cada certificado Sealed
+Secrets tem sua chave pública comparada à chave privada com OpenSSL, sem alterar
+o controller atual. Os Secrets Argo CD são verificados sem conexão externa.
+
+A retenção roda somente depois de todas as validações. Mantém os cinco bundles
+mais recentes, nunca remove o bundle corrente e apaga em conjunto o relatório
+correspondente. Os nomes removidos aparecem na evidência sanitizada. O
+padrão é cinco cópias; para outro valor, defina `DR_BACKUP_RETENTION` com um
+inteiro positivo.
+
+Execução manual das validações adicionais:
+
+```bash
+export DR_BACKUP_PASSPHRASE='<obtida do cofre>'
+bash scripts/validation/validate-dr-platform-components.sh \
+  /workspace/.dr-backups/<bundle>.tar.gz.enc
+# Execute somente depois de todos os restores passarem:
+bash scripts/validation/prune-dr-backups.sh \
+  /workspace/.dr-backups/<bundle>.tar.gz.enc
+unset DR_BACKUP_PASSPHRASE
+```
+
+O pod e o namespace usados no teste são descartáveis. A validação não importa
+Secrets no namespace real do Argo CD, não substitui as chaves do controller e
+não altera o RabbitMQ de produção do lab.
+
+## Checklist curta antes de reconstruir
+
+- [ ] `Validate Disaster Recovery` concluído com sucesso;
+- [ ] bundle, relatório e SHA-256 conferidos;
+- [ ] bundle e arquivo DPAPI copiados para mídia externa;
+- [ ] passphrase recuperável por operador autorizado;
+- [ ] PostgreSQL, RabbitMQ, Sealed Secrets e Argo CD validados;
+- [ ] três nós `Ready` e aplicações `Synced/Healthy`;
+- [ ] janela de indisponibilidade e rollback registrados;
+- [ ] nenhum `vagrant destroy` antes de cumprir todos os itens.
 ## Sealed Secrets
 
 Sem a chave privada do controller, os `SealedSecret` existentes não podem ser
