@@ -6,6 +6,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - postgres-api-secret-sealed.yaml
+  - migration-v1-users.yaml
   - rollout.yaml
   - analysis-template.yaml
   - pdb.yaml
