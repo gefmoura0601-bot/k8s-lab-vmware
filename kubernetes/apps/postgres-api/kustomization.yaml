@@ -11,6 +11,7 @@ resources:
   - pdb.yaml
   - service.yaml
   - networkpolicy-egress.yaml
+  - networkpolicy-tracing-egress.yaml
   - networkpolicy-db-allow.yaml
   - virtualservice.yaml
   - servicemonitor.yaml

@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres-api-tracing-egress, namespace: apps}
+spec:
+  podSelector: {matchLabels: {app: postgres-api}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: tracing}}
+          podSelector: {matchLabels: {app: otel-collector}}
+      ports: [{protocol: TCP, port: 4317}]
