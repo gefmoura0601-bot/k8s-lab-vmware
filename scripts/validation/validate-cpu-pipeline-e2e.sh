@@ -3,15 +3,17 @@ set -euo pipefail
 
 WORKERS_NS="${WORKERS_NS:-workers}"
 MESSAGING_NS="${MESSAGING_NS:-messaging}"
-RABBIT_POD="${RABBIT_POD:-rabbitmq-0}"
 QUEUE_NAME="${QUEUE_NAME:-cpu-jobs}"
 CPU_WORKER_SCALEDOBJECT="${CPU_WORKER_SCALEDOBJECT:-cpu-worker-rabbitmq}"
+PROMETHEUS_NS="${PROMETHEUS_NS:-monitoring}"
+PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-kube-prometheus-stack-prometheus}"
 
 OBSERVE_SECONDS="${OBSERVE_SECONDS:-180}"
 INTERVAL="${INTERVAL:-10}"
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-300}"
 
 CPU_THRESHOLD_M="${CPU_THRESHOLD_M:-200}"
+MEMORY_THRESHOLD_MIB="${MEMORY_THRESHOLD_MIB:-115}"
 
 info() { printf '\n[INFO] %s\n' "$*"; }
 pass() { printf '[ OK ] %s\n' "$*"; }
@@ -30,10 +32,21 @@ cpu_to_millicores() {
   fi
 }
 
+prometheus_scalar() {
+  local query="$1" encoded response value
+  encoded="$(jq -nr --arg query "${query}" '$query | @uri')"
+  response="$(kubectl get --raw "/api/v1/namespaces/${PROMETHEUS_NS}/services/http:${PROMETHEUS_SERVICE}:9090/proxy/api/v1/query?query=${encoded}")"
+  value="$(jq -r '.data.result[0].value[1] // empty' <<< "${response}")"
+  [[ -n "${value}" ]] || fail "Prometheus não retornou valor para: ${query}"
+  printf '%s\n' "${value}"
+}
+
 get_queue_metrics() {
-  kubectl exec -n "${MESSAGING_NS}" "${RABBIT_POD}" -- \
-    rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers 2>/dev/null \
-    | awk -v q="${QUEUE_NAME}" '$1==q {print $2 "|" $3 "|" $4}'
+  local ready unacked consumers
+  ready="$(prometheus_scalar "max(rabbitmq_queue_messages_ready{namespace=\"${MESSAGING_NS}\",queue=\"${QUEUE_NAME}\"})")"
+  unacked="$(prometheus_scalar "max(rabbitmq_queue_messages_unacked{namespace=\"${MESSAGING_NS}\",queue=\"${QUEUE_NAME}\"})")"
+  consumers="$(prometheus_scalar "max(rabbitmq_queue_consumers{namespace=\"${MESSAGING_NS}\",queue=\"${QUEUE_NAME}\"})")"
+  printf '%.0f|%.0f|%.0f\n' "${ready}" "${unacked}" "${consumers}"
 }
 
 get_worker_ready_replicas() {
@@ -60,6 +73,33 @@ get_hpa_condition_status() {
 get_hpa_condition_reason() {
   local condition="$1"
   kubectl get hpa "${CPU_WORKER_HPA}" -n "${WORKERS_NS}" -o jsonpath="{range .status.conditions[?(@.type==\"${condition}\")]}{.reason}{end}" 2>/dev/null || true
+}
+
+get_max_worker_memory_mib() {
+  local top_output
+  top_output="$(kubectl top pods -n "${WORKERS_NS}" -l app=cpu-worker --no-headers 2>/dev/null || true)"
+
+  if [[ -z "${top_output}" ]]; then
+    echo "0"
+    return
+  fi
+
+  awk '
+    function memory_to_mib(v) {
+      if (v ~ /Ki$/) { sub(/Ki$/, "", v); return (v + 0) / 1024 }
+      if (v ~ /Mi$/) { sub(/Mi$/, "", v); return v + 0 }
+      if (v ~ /Gi$/) { sub(/Gi$/, "", v); return (v + 0) * 1024 }
+      return (v + 0) / 1024 / 1024
+    }
+    {
+      mib = memory_to_mib($3)
+      if (mib > max) max = mib
+    }
+    END {
+      if (max == "") max = 0
+      printf "%.0f\n", max
+    }
+  ' <<< "${top_output}"
 }
 
 get_max_worker_cpu_m() {
@@ -94,12 +134,12 @@ require_cmd kubectl
 require_cmd awk
 require_cmd grep
 require_cmd date
+require_cmd jq
 
 info "Estado inicial"
 kubectl get deploy,po,hpa -n "${WORKERS_NS}" -o wide
 echo
-kubectl exec -n "${MESSAGING_NS}" "${RABBIT_POD}" -- \
-  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+echo "Fila ${QUEUE_NAME}: ready|unacked|consumers=$(get_queue_metrics)"
 
 INITIAL_REPLICAS="$(get_worker_ready_replicas)"
 CPU_WORKER_HPA="$(
@@ -118,6 +158,7 @@ MAX_CONSUMERS=0
 MAX_WORKER_REPLICAS="${INITIAL_REPLICAS}"
 MAX_DESIRED_REPLICAS=0
 MAX_WORKER_CPU_M=0
+MAX_WORKER_MEMORY_MIB=0
 
 OBSERVED_BACKLOG="false"
 OBSERVED_SCALING_ACTIVE="false"
@@ -150,6 +191,7 @@ while [ "$(date +%s)" -lt "${END_TS}" ]; do
   HPA_SCALING_LIMITED="$(get_hpa_condition_status "ScalingLimited")"
   HPA_SCALING_LIMITED_REASON="$(get_hpa_condition_reason "ScalingLimited")"
   CURRENT_MAX_CPU_M="$(get_max_worker_cpu_m)"
+  CURRENT_MAX_MEMORY_MIB="$(get_max_worker_memory_mib)"
 
   (( READY_MSGS > MAX_READY_MSGS )) && MAX_READY_MSGS="${READY_MSGS}"
   (( UNACK_MSGS > MAX_UNACK_MSGS )) && MAX_UNACK_MSGS="${UNACK_MSGS}"
@@ -157,6 +199,7 @@ while [ "$(date +%s)" -lt "${END_TS}" ]; do
   (( WORKER_REPLICAS > MAX_WORKER_REPLICAS )) && MAX_WORKER_REPLICAS="${WORKER_REPLICAS}"
   (( DESIRED_REPLICAS > MAX_DESIRED_REPLICAS )) && MAX_DESIRED_REPLICAS="${DESIRED_REPLICAS}"
   (( CURRENT_MAX_CPU_M > MAX_WORKER_CPU_M )) && MAX_WORKER_CPU_M="${CURRENT_MAX_CPU_M}"
+  (( CURRENT_MAX_MEMORY_MIB > MAX_WORKER_MEMORY_MIB )) && MAX_WORKER_MEMORY_MIB="${CURRENT_MAX_MEMORY_MIB}"
 
   if (( READY_MSGS > 0 || UNACK_MSGS > 0 )); then
     OBSERVED_BACKLOG="true"
@@ -173,7 +216,7 @@ while [ "$(date +%s)" -lt "${END_TS}" ]; do
   echo "Fila: ready=${READY_MSGS} unacked=${UNACK_MSGS} consumers=${CONSUMERS}"
   echo "Workers: readyReplicas=${WORKER_REPLICAS}"
   echo "HPA: desired=${DESIRED_REPLICAS} scalingActive=${HPA_SCALING_ACTIVE:-<vazio>} scalingLimited=${HPA_SCALING_LIMITED:-<vazio>} reason=${HPA_SCALING_LIMITED_REASON:-<vazio>}"
-  echo "Top CPU worker: maxPodCPU=${CURRENT_MAX_CPU_M}m"
+  echo "Recursos worker: maxPodCPU=${CURRENT_MAX_CPU_M}m maxPodMemory=${CURRENT_MAX_MEMORY_MIB}Mi"
 
   SAMPLE=$((SAMPLE + 1))
   sleep "${INTERVAL}"
@@ -200,8 +243,7 @@ kubectl get deploy,po,hpa -n "${WORKERS_NS}" -o wide
 echo
 kubectl describe hpa "${CPU_WORKER_HPA}" -n "${WORKERS_NS}" | sed -n '/Metrics:/,/Events:/p'
 echo
-kubectl exec -n "${MESSAGING_NS}" "${RABBIT_POD}" -- \
-  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+echo "Fila ${QUEUE_NAME}: ready|unacked|consumers=$(get_queue_metrics)"
 
 echo
 info "Critérios de validação"
@@ -225,6 +267,12 @@ if (( MAX_WORKER_CPU_M >= CPU_THRESHOLD_M )); then
   pass "Houve carga real de CPU nos workers (maxPodCPU=${MAX_WORKER_CPU_M}m)"
 else
   fail "Carga de CPU insuficiente nos workers; maxPodCPU=${MAX_WORKER_CPU_M}m e threshold=${CPU_THRESHOLD_M}m"
+fi
+
+if (( MAX_WORKER_MEMORY_MIB < MEMORY_THRESHOLD_MIB )); then
+  pass "Workers permaneceram abaixo de 90% do limite de memória (maxPodMemory=${MAX_WORKER_MEMORY_MIB}Mi, threshold=${MEMORY_THRESHOLD_MIB}Mi)"
+else
+  fail "Worker próximo do limite de memória; maxPodMemory=${MAX_WORKER_MEMORY_MIB}Mi e threshold=${MEMORY_THRESHOLD_MIB}Mi"
 fi
 
 (( FINAL_READY_MSGS == 0 && FINAL_UNACK_MSGS == 0 )) \
@@ -256,6 +304,7 @@ echo "maxConsumers=${MAX_CONSUMERS}"
 echo "maxWorkerReadyReplicas=${MAX_WORKER_REPLICAS}"
 echo "maxDesiredReplicas=${MAX_DESIRED_REPLICAS}"
 echo "maxWorkerCpu=${MAX_WORKER_CPU_M}m"
+echo "maxWorkerMemory=${MAX_WORKER_MEMORY_MIB}Mi"
 echo "finalReadyMessages=${FINAL_READY_MSGS}"
 echo "finalUnackedMessages=${FINAL_UNACK_MSGS}"
 

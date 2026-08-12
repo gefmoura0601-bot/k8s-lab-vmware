@@ -1,0 +1,58 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cpu-worker-memory-and-scaling
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: cpu-worker-memory-and-scaling
+      rules:
+        - alert: CpuWorkerNearMemoryLimit
+          expr: |
+            max by (namespace, pod, container) (
+              container_memory_working_set_bytes{namespace="workers",pod=~"cpu-worker-.*",container="cpu-worker"}
+              / on(namespace, pod, container)
+              kube_pod_container_resource_limits{namespace="workers",pod=~"cpu-worker-.*",container="cpu-worker",resource="memory"}
+            ) > 0.80
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: CPU worker próximo do limite de memória
+            description: O pod {{ $labels.namespace }}/{{ $labels.pod }} usa mais de 80% do limite de memória há 5 minutos.
+        - alert: KubernetesContainerOOMKilled
+          expr: max_over_time(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[10m]) >= 1
+          labels:
+            severity: critical
+          annotations:
+            summary: Container finalizado por falta de memória
+            description: O container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} foi encerrado por OOMKilled nos últimos 10 minutos.
+        - alert: KubernetesNodeMemoryPressure
+          expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Nó Kubernetes sob pressão de memória
+            description: O nó {{ $labels.node }} reporta MemoryPressure há pelo menos 2 minutos.
+        - alert: KubernetesNodeLowAvailableMemory
+          expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.15
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Nó Kubernetes com pouca memória disponível
+            description: O nó {{ $labels.instance }} mantém menos de 15% da memória disponível há 10 minutos.
+        - alert: CpuJobsBacklogWithoutConsumers
+          expr: |
+            max(rabbitmq_queue_messages_ready{namespace="messaging",queue="cpu-jobs"}) > 0
+            and
+            max(rabbitmq_queue_consumers{namespace="messaging",queue="cpu-jobs"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Fila cpu-jobs possui backlog sem consumidores
+            description: Há mensagens prontas na fila cpu-jobs, mas nenhum cpu-worker está consumindo há 2 minutos.
