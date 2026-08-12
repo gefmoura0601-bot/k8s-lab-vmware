@@ -60,3 +60,19 @@ spec:
           annotations:
             summary: Fila memory-jobs não foi drenada
             description: A fila mantém mensagens ready ou unacked há mais de 5 minutos.
+        - alert: MemoryLabPodPendingTooLong
+          expr: kube_pod_status_phase{namespace="memory-scheduling-lab",phase="Pending"} == 1
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Pod do laboratório sem capacidade para agendamento
+            description: O pod {{ $labels.pod }} permanece Pending há mais de 1 minuto.
+        - alert: MemoryLabPodUnschedulable
+          expr: kube_pod_status_unschedulable{namespace="memory-scheduling-lab"} == 1
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Scheduler não encontrou memória suficiente
+            description: O pod {{ $labels.pod }} está marcado como unschedulable há mais de 1 minuto.

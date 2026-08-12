@@ -124,3 +124,15 @@ testado após a recuperação completa do primeiro.
 
 O guia com a explicação de cada parâmetro, etapa e critério de aceite está em
 [lab-completo-passo-a-passo.md](lab-completo-passo-a-passo.md).
+## Laboratório de memória insuficiente no scheduler
+
+O workflow manual `Validate Memory Unschedulable` exige a confirmação
+`TEST-INSUFFICIENT-MEMORY`. Ele cria temporariamente um namespace isolado e um
+pod com request de 8 GiB, restrito aos workers. Como nenhum worker oferece essa
+capacidade, o pod permanece `Pending` e o scheduler emite `FailedScheduling`
+com `Insufficient memory`.
+
+O request influencia apenas a decisão do scheduler: como o container nunca
+inicia, não há alocação real de 8 GiB. O teste mantém o pod por 105 segundos para
+Prometheus e alertas, confirma que os nós não entraram em `MemoryPressure` e
+remove o namespace automaticamente por meio de um `trap`.
