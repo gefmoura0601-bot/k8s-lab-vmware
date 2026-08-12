@@ -45,8 +45,8 @@ spec:
           args:
             - |
               until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do sleep 2; done
-              psql -v ON_ERROR_STOP=1 -f /migrations/V1__create_users.sql
-              test "$(psql -v ON_ERROR_STOP=1 -Atc 'SELECT version FROM schema_migrations WHERE version = 1')" = "1"
+              psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /migrations/V1__create_users.sql
+              test "$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atc 'SELECT version FROM schema_migrations WHERE version = 1')" = "1"
           envFrom: [{configMapRef: {name: postgres-api-config}}, {secretRef: {name: postgres-api-secret}}]
           env:
             - name: PGPASSWORD
