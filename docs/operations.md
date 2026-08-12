@@ -115,3 +115,12 @@ bash scripts/validation/validate-memory-keda-e2e.sh
 
 Execute somente em ambiente de laboratório. O teste confirma que nenhum nó entra
 em `MemoryPressure` e não interfere nas filas usadas pelo pipeline de CPU.
+
+O workflow manual `Validate Memory Lab` executa o mesmo cenário no runner do
+master e preserva o relatório como artefato por 14 dias. Para validar também a
+perda dos dois workers, um por vez, execute `Validate Memory Node Resilience` e
+digite `FAIL-BOTH-WORKERS`. A matriz usa `max-parallel: 1`: o segundo nó só é
+testado após a recuperação completa do primeiro.
+
+O guia com a explicação de cada parâmetro, etapa e critério de aceite está em
+[lab-completo-passo-a-passo.md](lab-completo-passo-a-passo.md).

@@ -100,3 +100,9 @@ primeiro no `k8s-worker-01` e depois no `k8s-worker-02`, validando o
 reagendamento do memory-worker no nó alternativo. Cada execução sempre recupera
 e descordona o nó por meio de um trap antes de iniciar a próxima. Execute
 somente no environment `lab`.
+
+Cada job publica um artefato separado, nomeado com o worker e o ID da execução,
+com retenção de 14 dias. O script aceita somente `k8s-worker-01` e
+`k8s-worker-02`, escolhe automaticamente o nó alternativo e usa a chave Vagrant
+correspondente. A configuração e o fluxo completo estão documentados no
+[guia principal](lab-completo-passo-a-passo.md).
