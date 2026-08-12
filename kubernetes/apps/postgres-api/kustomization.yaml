@@ -6,7 +6,8 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - postgres-api-secret-sealed.yaml
-  - deployment.yaml
+  - rollout.yaml
+  - analysis-template.yaml
   - pdb.yaml
   - service.yaml
   - networkpolicy-egress.yaml

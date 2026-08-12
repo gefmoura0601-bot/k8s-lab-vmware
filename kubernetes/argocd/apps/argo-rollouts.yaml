@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.41.1
+    helm:
+      releaseName: argo-rollouts
+      values: |
+        controller:
+          replicas: 1
+          resources:
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {cpu: 300m, memory: 192Mi}
+        dashboard:
+          enabled: true
+          replicas: 1
+          service:
+            type: ClusterIP
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 96Mi}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]

@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: postgres-api-success-rate
+  namespace: apps
+spec:
+  metrics:
+    - name: canary-http-success-rate
+      interval: 15s
+      count: 2
+      failureLimit: 0
+      successCondition: result[0] >= 0.99
+      failureCondition: result[0] < 0.99
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (sum(rate(istio_requests_total{reporter="destination",destination_service_name="postgres-api-canary",response_code!~"5.."}[1m]))
+            / clamp_min(sum(rate(istio_requests_total{reporter="destination",destination_service_name="postgres-api-canary"}[1m])), 0.001)) or vector(1)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: postgres-api-forced-failure
+  namespace: apps
+spec:
+  metrics:
+    - name: controlled-failure
+      count: 1
+      failureLimit: 0
+      successCondition: result[0] == 1
+      failureCondition: result[0] == 0
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: vector(0)

@@ -14,6 +14,7 @@ resources:
   - apps/istio-ingressgateway.yaml
   - apps/nginx-lab-tls.yaml
   - apps/metrics-server.yaml
+  - apps/argo-rollouts.yaml
   - apps/keda.yaml
   - apps/kyverno.yaml
   - apps/monitoring.yaml
