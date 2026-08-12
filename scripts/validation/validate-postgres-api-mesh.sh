@@ -76,8 +76,13 @@ require_cmd sed
 # 1) Aplicação disponível
 # ============================================================
 info "1) Validando rollout da aplicação"
-kubectl rollout status deployment/"${APP_NAME}" -n "${APP_NAMESPACE}" --timeout=120s >/dev/null
-pass "Deployment/${APP_NAME} está disponível"
+for _ in $(seq 1 60); do
+  PHASE="$(kubectl -n "${APP_NAMESPACE}" get rollout "${APP_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  [[ "${PHASE}" == Healthy ]] && break
+  sleep 2
+done
+[[ "${PHASE}" == Healthy ]] || fail "Rollout/${APP_NAME} não ficou Healthy"
+pass "Rollout/${APP_NAME} está Healthy"
 
 # ============================================================
 # 2) Sidecar Istio presente nos pods

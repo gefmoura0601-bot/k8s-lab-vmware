@@ -1,0 +1,40 @@
+name: Validate Argo Rollouts rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite TEST-POSTGRES-API-ROLLBACK
+        required: true
+        type: string
+
+concurrency:
+  group: validate-argo-rollouts-lab
+  cancel-in-progress: false
+
+jobs:
+  rollback-test:
+    if: inputs.confirmation == 'TEST-POSTGRES-API-ROLLBACK'
+    runs-on: [self-hosted, master]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar rollback automatico
+        shell: bash
+        run: bash scripts/validation/validate-postgres-api-rollout.sh
+      - name: Coletar evidencias
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          kubectl -n apps get rollout postgres-api -o yaml > evidence/rollout.yaml
+          kubectl -n apps get analysisrun -o yaml > evidence/analysisruns.yaml
+          kubectl -n apps get virtualservice postgres-api -o yaml > evidence/virtualservice.yaml
+          kubectl -n apps get pods -l app=postgres-api -o wide > evidence/pods.txt
+      - name: Publicar evidencias
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: argo-rollouts-evidence
+          path: evidence
+          retention-days: 14

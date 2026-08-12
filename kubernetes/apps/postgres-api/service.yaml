@@ -17,3 +17,25 @@ spec:
     - name: metrics
       port: 15020
       targetPort: 15020
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-api-stable
+  namespace: apps
+  labels: {app: postgres-api, role: stable}
+spec:
+  selector: {app: postgres-api}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-api-canary
+  namespace: apps
+  labels: {app: postgres-api, role: canary}
+spec:
+  selector: {app: postgres-api}
+  ports:
+    - {name: http, port: 80, targetPort: http}

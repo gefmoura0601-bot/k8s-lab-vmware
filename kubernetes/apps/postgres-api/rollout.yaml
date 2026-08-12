@@ -1,0 +1,82 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: postgres-api
+  namespace: apps
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels: {app: postgres-api, team: platform, environment: lab}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app: postgres-api}
+  strategy:
+    canary:
+      stableService: postgres-api-stable
+      canaryService: postgres-api-canary
+      maxSurge: 1
+      maxUnavailable: 0
+      trafficRouting:
+        istio:
+          virtualService:
+            name: postgres-api
+            routes: [primary]
+      steps:
+        - {setWeight: 10}
+        - pause: {duration: 30s}
+        - analysis: {templates: [{templateName: postgres-api-success-rate}]}
+        - {setWeight: 25}
+        - pause: {duration: 30s}
+        - analysis: {templates: [{templateName: postgres-api-success-rate}]}
+        - {setWeight: 50}
+        - pause: {duration: 30s}
+        - analysis: {templates: [{templateName: postgres-api-success-rate}]}
+        - {setWeight: 100}
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "true"
+        sidecar.istio.io/proxyCPU: 25m
+        sidecar.istio.io/proxyCPULimit: 200m
+        sidecar.istio.io/proxyMemory: 64Mi
+        sidecar.istio.io/proxyMemoryLimit: 128Mi
+      labels: {app: postgres-api, team: platform, environment: lab}
+    spec:
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      imagePullSecrets: [{name: ghcr-secret}]
+      priorityClassName: app-standard
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: {app: postgres-api}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: postgres-api
+          image: ghcr.io/gefmoura0601-bot/k8s-lab-vmware-postgres-api-go:8f05f41
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: {name: postgres-api-config}
+            - secretRef: {name: postgres-api-secret}
+          ports: [{name: http, containerPort: 8080, protocol: TCP}]
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 25m, memory: 160Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities: {drop: [ALL]}

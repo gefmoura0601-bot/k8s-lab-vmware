@@ -7,6 +7,18 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
+  ignoreDifferences:
+    - group: networking.istio.io
+      kind: VirtualService
+      name: postgres-api
+      namespace: apps
+      jqPathExpressions:
+        - .spec.http[].route[].weight
+    - group: ""
+      kind: Service
+      namespace: apps
+      jqPathExpressions:
+        - .spec.selector."rollouts-pod-template-hash"
   source:
     repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
     targetRevision: main
@@ -20,6 +32,8 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
     retry:
       limit: 10
       backoff:
