@@ -101,3 +101,17 @@ Atualize uma camada por PR, preservando referências fixas. Ordem recomendada:
 
 Registre versões anteriores, plano de rollback e evidências de smoke test.
 
+## Laboratório de pressão de memória
+
+O namespace `memory-lab` contém um worker isolado, escalado pelo KEDA entre zero
+e duas réplicas. O teste faz alocação anônima com limit de 128 MiB,
+provoca um OOMKilled controlado e valida recuperação, drenagem da fila e retorno
+a zero:
+
+```bash
+cd /workspace
+bash scripts/validation/validate-memory-keda-e2e.sh
+```
+
+Execute somente em ambiente de laboratório. O teste confirma que nenhum nó entra
+em `MemoryPressure` e não interfere nas filas usadas pelo pipeline de CPU.
