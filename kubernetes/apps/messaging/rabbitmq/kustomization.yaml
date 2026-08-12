@@ -8,6 +8,7 @@ resources:
   - configmap.yaml
   - rbac.yaml
   - service.yaml
+  - servicemonitor.yaml
   - statefulset.yaml
   - pdb.yaml
   - networkpolicy.yaml

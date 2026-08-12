@@ -6,4 +6,5 @@ resources:
   - namespace.yaml
   - sealed-secret-rabbitmq.yaml
   - deployment.yaml
+  - dashboard-configmap.yaml
   - networkpolicy.yaml

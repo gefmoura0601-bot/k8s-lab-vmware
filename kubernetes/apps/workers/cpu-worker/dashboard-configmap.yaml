@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-worker-keda-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: cpu-worker
+    team: platform
+data:
+  cpu-worker-keda-dashboard.json: |
+    {
+      "uid": "cpu-worker-keda",
+      "title": "CPU Worker / KEDA Scaling",
+      "tags": ["keda", "rabbitmq", "workers", "lab"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "5s",
+      "time": { "from": "now-15m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Mensagens prontas",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+          "targets": [{ "refId": "A", "expr": "sum(rabbitmq_queue_messages_ready{namespace=\"messaging\",queue=\"cpu-jobs\"})" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value" },
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Consumidores",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+          "targets": [{ "refId": "A", "expr": "sum(rabbitmq_queue_consumers{namespace=\"messaging\",queue=\"cpu-jobs\"})" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value" },
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Réplicas desejadas",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+          "targets": [{ "refId": "A", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"workers\",horizontalpodautoscaler=\"keda-hpa-cpu-worker-rabbitmq\"}" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value" },
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Workers prontos",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+          "targets": [{ "refId": "A", "expr": "kube_deployment_status_replicas_ready{namespace=\"workers\",deployment=\"cpu-worker\"}" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value" },
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Backlog RabbitMQ",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rabbitmq_queue_messages_ready{namespace=\"messaging\",queue=\"cpu-jobs\"})", "legendFormat": "ready" },
+            { "refId": "B", "expr": "sum(rabbitmq_queue_messages_unacked{namespace=\"messaging\",queue=\"cpu-jobs\"})", "legendFormat": "unacked" }
+          ],
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Scale-up / scale-down",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "targets": [
+            { "refId": "A", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"workers\",horizontalpodautoscaler=\"keda-hpa-cpu-worker-rabbitmq\"}", "legendFormat": "desejadas" },
+            { "refId": "B", "expr": "kube_deployment_status_replicas_ready{namespace=\"workers\",deployment=\"cpu-worker\"}", "legendFormat": "prontas" },
+            { "refId": "C", "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"workers\",horizontalpodautoscaler=\"keda-hpa-cpu-worker-rabbitmq\"}", "legendFormat": "máximo" }
+          ],
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "CPU por worker",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "targets": [{ "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"workers\",pod=~\"cpu-worker-.*\",container=\"cpu-worker\"}[1m]))", "legendFormat": "{{pod}}" }],
+          "fieldConfig": { "defaults": { "unit": "cores" }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Workers por nó",
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "targets": [{ "refId": "A", "expr": "count by (node) (kube_pod_info{namespace=\"workers\",pod=~\"cpu-worker-.*\"})", "legendFormat": "{{node}}" }],
+          "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        }
+      ]
+    }
