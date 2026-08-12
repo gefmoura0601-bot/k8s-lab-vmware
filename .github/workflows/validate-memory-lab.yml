@@ -1,0 +1,48 @@
+name: Validate Memory Lab
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: validate-memory-lab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-memory-lab:
+    name: Validate KEDA memory and OOM recovery
+    runs-on: [self-hosted, master]
+    environment: lab
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run memory lab E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/validation/validate-memory-keda-e2e.sh 2>&1 | tee memory-lab-result.txt
+
+      - name: Capture final state
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo
+            echo "=== Final state ==="
+            kubectl -n memory-lab get deployment,scaledobject,hpa,pods
+            kubectl top nodes
+            kubectl get nodes
+          } >> memory-lab-result.txt 2>&1
+
+      - name: Upload evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: memory-lab-${{ github.run_id }}
+          path: memory-lab-result.txt
+          if-no-files-found: error
+          retention-days: 14

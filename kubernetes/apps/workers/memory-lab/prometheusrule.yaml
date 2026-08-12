@@ -1,0 +1,62 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: memory-lab
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: memory-lab
+      rules:
+        - alert: MemoryWorkerOOMKilled
+          expr: max_over_time(kube_pod_container_status_last_terminated_reason{namespace="memory-lab",container="memory-worker",reason="OOMKilled"}[10m]) >= 1
+          labels:
+            severity: warning
+          annotations:
+            summary: Memory worker finalizado por OOMKilled
+            description: O pod {{ $labels.pod }} sofreu OOMKilled nos últimos 10 minutos.
+        - alert: MemoryWorkerNearLimit
+          expr: |
+            max by (pod) (container_memory_working_set_bytes{namespace="memory-lab",container="memory-worker"})
+            / on(pod)
+            max by (pod) (kube_pod_container_resource_limits{namespace="memory-lab",container="memory-worker",resource="memory"} > 0) > 0.80
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Memory worker próximo do limite
+            description: O pod {{ $labels.pod }} usa mais de 80% do limit há 1 minuto.
+        - alert: MemoryJobsBacklogWithoutConsumers
+          expr: |
+            (max(rabbitmq_queue_messages_ready{namespace="messaging",queue="memory-jobs"}) or vector(0)) > 0
+            and
+            (max(rabbitmq_queue_consumers{namespace="messaging",queue="memory-jobs"}) or vector(0)) == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: Fila memory-jobs sem consumidores
+            description: A fila possui backlog, mas nenhum memory-worker consome mensagens há 1 minuto.
+        - alert: MemoryWorkerKedaNotScaling
+          expr: |
+            (max(rabbitmq_queue_messages_ready{namespace="messaging",queue="memory-jobs"}) or vector(0)) > 0
+            and
+            kube_horizontalpodautoscaler_status_desired_replicas{namespace="memory-lab",horizontalpodautoscaler="keda-hpa-memory-worker-rabbitmq"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: KEDA não escalou o memory-worker
+            description: Há backlog na fila, mas o HPA continua desejando zero réplicas há 1 minuto.
+        - alert: MemoryJobsQueueNotDrained
+          expr: |
+            (max(rabbitmq_queue_messages_ready{namespace="messaging",queue="memory-jobs"}) or vector(0))
+            +
+            (max(rabbitmq_queue_messages_unacked{namespace="messaging",queue="memory-jobs"}) or vector(0)) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Fila memory-jobs não foi drenada
+            description: A fila mantém mensagens ready ou unacked há mais de 5 minutos.
