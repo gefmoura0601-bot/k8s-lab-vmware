@@ -20,3 +20,4 @@ coverage.out
 backups/
 *.bak
 *.bkp.*
+.dr-backups/

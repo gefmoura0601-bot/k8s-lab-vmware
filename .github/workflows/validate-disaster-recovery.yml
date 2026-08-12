@@ -1,0 +1,76 @@
+name: Validate Disaster Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite CREATE-AND-VALIDATE-DR-BACKUP
+        required: true
+        type: string
+
+concurrency:
+  group: validate-disaster-recovery
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-disaster-recovery:
+    name: Create encrypted backup and validate PostgreSQL restore
+    runs-on: [self-hosted, master]
+    environment: lab
+    timeout-minutes: 15
+    steps:
+      - name: Confirm protected operation
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PASSPHRASE: ${{ secrets.DR_BACKUP_PASSPHRASE }}
+        run: |
+          test "${CONFIRMATION}" = "CREATE-AND-VALIDATE-DR-BACKUP"
+          test "${#PASSPHRASE}" -ge 20
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Create encrypted backup
+        id: backup
+        shell: bash
+        env:
+          DR_BACKUP_PASSPHRASE: ${{ secrets.DR_BACKUP_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          bash scripts/validation/create-dr-backup.sh | tee dr-evidence.txt
+          bundle="$(sed -n 's/^BACKUP_BUNDLE=//p' dr-evidence.txt)"
+          test -r "${bundle}"
+          echo "bundle=${bundle}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate isolated PostgreSQL restore
+        shell: bash
+        env:
+          DR_BACKUP_PASSPHRASE: ${{ secrets.DR_BACKUP_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          bash scripts/validation/validate-postgres-dr-restore.sh "${{ steps.backup.outputs.bundle }}" | tee -a dr-evidence.txt
+
+      - name: Capture sanitized final state
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo
+            echo "=== Final state ==="
+            kubectl get nodes
+            kubectl get namespace dr-restore-validation 2>/dev/null || true
+            ls -l /workspace/.dr-backups/*.enc /workspace/.dr-backups/*.report.txt 2>/dev/null || true
+          } >> dr-evidence.txt 2>&1
+
+      - name: Upload sanitized evidence only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: disaster-recovery-validation-${{ github.run_id }}
+          path: dr-evidence.txt
+          if-no-files-found: error
+          retention-days: 14
