@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   validate-disaster-recovery:
-    name: Create encrypted backup and validate PostgreSQL restore
+    name: Create encrypted backup and validate isolated restores
     runs-on: [self-hosted, master]
     environment: lab
     timeout-minutes: 15
@@ -54,6 +54,17 @@ jobs:
           set -o pipefail
           bash scripts/validation/validate-postgres-dr-restore.sh "${{ steps.backup.outputs.bundle }}" | tee -a dr-evidence.txt
 
+      - name: Validate RabbitMQ, Sealed Secrets, and Argo CD
+        shell: bash
+        env:
+          DR_BACKUP_PASSPHRASE: ${{ secrets.DR_BACKUP_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          bash scripts/validation/validate-dr-platform-components.sh "${{ steps.backup.outputs.bundle }}" | tee -a dr-evidence.txt
+
+      - name: Apply backup retention
+        shell: bash
+        run: bash scripts/validation/prune-dr-backups.sh "${{ steps.backup.outputs.bundle }}" | tee -a dr-evidence.txt
       - name: Capture sanitized final state
         if: ${{ always() }}
         shell: bash
@@ -63,6 +74,7 @@ jobs:
             echo "=== Final state ==="
             kubectl get nodes
             kubectl get namespace dr-restore-validation 2>/dev/null || true
+            kubectl get namespace dr-platform-validation 2>/dev/null || true
             ls -l /workspace/.dr-backups/*.enc /workspace/.dr-backups/*.report.txt 2>/dev/null || true
           } >> dr-evidence.txt 2>&1
 
