@@ -375,6 +375,26 @@ O nome do alvo aceita somente `k8s-worker-01` ou `k8s-worker-02`, evitando que
 uma variável incorreta direcione SSH para outra máquina. Cada cenário publica
 seu próprio artefato.
 
+### 10.4 Memória insuficiente para o scheduler
+
+O workflow `Validate Memory Unschedulable`, protegido pela confirmação
+`TEST-INSUFFICIENT-MEMORY`, cria um pod efêmero que solicita 8 GiB e aceita
+somente workers. Como o maior worker possui 6 GiB brutos e menos memória
+alocável, o scheduler mantém o pod `Pending` e registra `FailedScheduling` com
+`Insufficient memory`.
+
+Esse teste é seguro porque **request não é alocação**: o container não inicia e
+nenhuma memória é consumida. O pod permanece por 105 segundos para que Prometheus
+colete as métricas e avalie `MemoryLabPodPendingTooLong` e
+`MemoryLabPodUnschedulable`. Um `trap` remove o namespace mesmo em falha.
+
+Validações demonstradas:
+
+1. o scheduler usa requests, não o uso instantâneo;
+2. KEDA/HPA podem pedir pods, mas não criam capacidade de nó;
+3. sem AWS não há Karpenter para criar uma máquina maior;
+4. falta de capacidade gera Pending, não OOM;
+5. nenhum nó deve entrar em `MemoryPressure`.
 ## 11. Observabilidade
 
 Prometheus coleta métricas do Kubernetes, nós, Calico, RabbitMQ e aplicações.
@@ -390,10 +410,10 @@ Dashboards versionados relevantes:
 - `Banking / .NET Runtime`;
 - dashboard da `postgres-api`.
 
-O dashboard de memória do lab tem 16 painéis: mensagens, consumidores, réplicas
+O dashboard de memória do lab tem 19 painéis: mensagens, consumidores, réplicas
 desejadas/prontas, OOM, atividade KEDA, fila, scale KEDA, working set, uso do
-limit, reinícios, memória dos nós, pods por nó, nós Ready, pods Pending e tempo
-pendente.
+limit, reinícios, memória dos nós, pods por nó, nós Ready, pods Pending, tempo
+pendente, estado Pending do experimento, duração do Pending e memória solicitada.
 
 Alertas específicos do memory lab:
 
@@ -401,7 +421,9 @@ Alertas específicos do memory lab:
 - `MemoryWorkerNearLimit` acima de 80% por um minuto;
 - `MemoryJobsBacklogWithoutConsumers`;
 - `MemoryWorkerKedaNotScaling`;
-- `MemoryJobsQueueNotDrained` por cinco minutos.
+- `MemoryJobsQueueNotDrained` por cinco minutos;
+- `MemoryLabPodPendingTooLong`;
+- `MemoryLabPodUnschedulable`.
 
 Há ainda alertas globais para NodeNotReady, CrashLoopBackOff, throttling de CPU,
 container próximo do limit, filesystem, Calico/Typha e MemoryPressure.
