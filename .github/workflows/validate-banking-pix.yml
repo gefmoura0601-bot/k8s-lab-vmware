@@ -1,0 +1,37 @@
+name: Validate Banking PIX
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite TEST-BANKING-PIX
+        required: true
+        type: string
+
+jobs:
+  banking-pix-e2e:
+    if: inputs.confirmation == 'TEST-BANKING-PIX'
+    runs-on: [self-hosted, master]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Validar fluxo PIX ponta a ponta
+        shell: bash
+        run: bash scripts/validation/validate-banking-pix-e2e.sh
+      - name: Coletar evidências
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          kubectl -n banking get deploy,pod,svc -o wide > evidence/resources.txt
+          kubectl -n banking get authorizationpolicy account-service -o yaml > evidence/account-service-policy.yaml
+          kubectl -n banking get prometheusrule banking-ledger -o yaml > evidence/banking-alerts.yaml
+          kubectl -n monitoring get configmap banking-pix-dashboard -o yaml > evidence/banking-pix-dashboard.yaml
+          kubectl -n banking logs deployment/account-service -c account-service --tail=200 > evidence/account-service.log
+          kubectl -n banking logs deployment/transaction-service -c transaction-service --tail=200 > evidence/transaction-service.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: banking-pix-evidence
+          path: evidence
+          retention-days: 14
