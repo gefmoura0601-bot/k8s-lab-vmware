@@ -90,6 +90,18 @@ PR atualizando as referências GitOps.
 Para métricas, profiling e coleta de JFR/EventPipe, consulte
 [`docs/runtime-observability.md`](../docs/runtime-observability.md).
 
+O fluxo PIX completo pode ser validado em um cluster de laboratório com:
+
+```bash
+bash scripts/validation/validate-banking-pix-e2e.sh
+```
+
+O script cria contas temporárias, aplica um crédito contábil balanceado, testa
+transferência por chave PIX, retry idempotente, estorno e métricas. Um `trap`
+remove as contas e os lançamentos temporários mesmo quando alguma etapa falha.
+No GitHub Actions, o workflow manual `Validate Banking PIX` exige a confirmação
+`TEST-BANKING-PIX` antes de executar o mesmo teste no runner do control plane.
+
 ## Ledger contábil
 
 Novas contas começam com saldo zero. Cada transferência grava, na mesma transação do saldo, um débito e um crédito com o mesmo `journal_id`; um constraint trigger rejeita journals cuja soma não seja zero. Saldos legados são migrados como crédito de abertura e contrapartida sistêmica. A métrica `banking_ledger_divergent_accounts` e o alerta `BankingLedgerDivergence` detectam divergência entre o saldo materializado e os lançamentos. O campo `reversal_of` reserva estornos compensatórios sem apagar o histórico; a operação administrativa de estorno não é exposta ao cliente.
