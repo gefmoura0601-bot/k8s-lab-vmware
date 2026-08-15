@@ -18,6 +18,7 @@ class AccountServiceTest {
     @Mock AccountRepository accounts;
     @Mock TransferRecordRepository transfers;
     @Mock LedgerEntryRepository ledger;
+    @Mock PixKeyRepository pixKeys;
     @InjectMocks AccountService service;
 
     @Test
@@ -49,5 +50,37 @@ class AccountServiceTest {
         assertThatThrownBy(() -> service.transfer(
             UUID.randomUUID(), source.getId(), destination.getId(), new BigDecimal("11.00")
         )).isInstanceOf(InsufficientFundsException.class);
+    }
+
+    @Test
+    void createsOnePixKeyPerAccount() {
+        var account = new Account(UUID.randomUUID(), "Alice", BigDecimal.ZERO.setScale(2));
+        var key = new PixKey(UUID.randomUUID(), account.getId());
+        when(accounts.findById(account.getId())).thenReturn(Optional.of(account));
+        when(pixKeys.findByAccountId(account.getId())).thenReturn(Optional.of(key));
+
+        assertThat(service.getOrCreatePixKey(account.getId())).isSameAs(key);
+    }
+
+    @Test
+    void reversesTransferWithCompensatingBalances() {
+        var originalId = UUID.randomUUID();
+        var reversalId = UUID.randomUUID();
+        var source = new Account(UUID.randomUUID(), "Alice", new BigDecimal("75.00"));
+        var destination = new Account(UUID.randomUUID(), "Bob", new BigDecimal("45.00"));
+        var original = new TransferRecord(originalId, source.getId(), destination.getId(), new BigDecimal("25.00"));
+        var first = source.getId().compareTo(destination.getId()) < 0 ? source : destination;
+        var second = first == source ? destination : source;
+        when(transfers.findById(reversalId)).thenReturn(Optional.empty());
+        when(transfers.findByReversalOf(originalId)).thenReturn(Optional.empty());
+        when(transfers.findById(originalId)).thenReturn(Optional.of(original));
+        when(accounts.findByIdForUpdate(first.getId())).thenReturn(Optional.of(first));
+        when(accounts.findByIdForUpdate(second.getId())).thenReturn(Optional.of(second));
+
+        var result = service.reverse(reversalId, originalId);
+
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(source.getBalance()).isEqualByComparingTo("100.00");
+        assertThat(destination.getBalance()).isEqualByComparingTo("20.00");
     }
 }
