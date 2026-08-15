@@ -19,6 +19,11 @@ spring:
 server:
   port: 8080
   shutdown: graceful
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 management:
   endpoints:
     web:
