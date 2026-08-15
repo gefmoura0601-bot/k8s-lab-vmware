@@ -18,7 +18,10 @@ public class LedgerEntry {
     @Column(nullable = false, updatable = false) private Instant createdAt;
     protected LedgerEntry() {}
     LedgerEntry(UUID journalId, UUID accountId, BigDecimal amount, String type) {
+        this(journalId, accountId, amount, type, null);
+    }
+    LedgerEntry(UUID journalId, UUID accountId, BigDecimal amount, String type, UUID reversalOf) {
         this.journalId=journalId; this.accountId=accountId; this.signedAmount=amount;
-        this.entryType=type; this.createdAt=Instant.now();
+        this.entryType=type; this.reversalOf=reversalOf; this.createdAt=Instant.now();
     }
 }

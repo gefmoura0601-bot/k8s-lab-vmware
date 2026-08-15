@@ -49,6 +49,16 @@ class AccountController {
         return accounts.directory().stream().map(DirectoryEntry::from).toList();
     }
 
+    @GetMapping("/accounts/me/pix-key")
+    PixKeyResponse pixKey(@CookieValue(name = AuthService.COOKIE_NAME, defaultValue = "") String token) {
+        return PixKeyResponse.from(accounts.getPixKey(auth.authenticate(token).getId()));
+    }
+
+    @PutMapping("/accounts/me/pix-key")
+    PixKeyResponse createPixKey(@CookieValue(name = AuthService.COOKIE_NAME, defaultValue = "") String token) {
+        return PixKeyResponse.from(accounts.getOrCreatePixKey(auth.authenticate(token).getId()));
+    }
+
     private static ResponseCookie session(String token) {
         return ResponseCookie.from(AuthService.COOKIE_NAME, token).httpOnly(true).secure(true)
             .sameSite("Strict").path("/").maxAge(Duration.ofMinutes(15)).build();
@@ -61,6 +71,9 @@ class AccountController {
     }
     record DirectoryEntry(UUID id, String accountNumber, String ownerName) {
         static DirectoryEntry from(Account a) { return new DirectoryEntry(a.getId(),a.getAccountNumber(),a.getOwnerName()); }
+    }
+    record PixKeyResponse(UUID pixKey, UUID accountId) {
+        static PixKeyResponse from(PixKey key) { return new PixKeyResponse(key.getPixKey(), key.getAccountId()); }
     }
 }
 
@@ -87,8 +100,20 @@ class InternalController {
     AccountService.TransferResult transfer(@Valid @RequestBody TransferRequest r) {
         return accounts.transfer(r.transactionId(),r.sourceAccountId(),r.destinationAccountId(),r.amount());
     }
+
+    @GetMapping("/pix-keys/{pixKey}")
+    AccountController.DirectoryEntry resolvePixKey(@PathVariable UUID pixKey) {
+        return AccountController.DirectoryEntry.from(accounts.resolvePixKey(pixKey));
+    }
+
+    @PostMapping("/transfers/{transactionId}/reversals")
+    AccountService.TransferResult reverse(@PathVariable UUID transactionId,
+                                           @Valid @RequestBody ReversalRequest request) {
+        return accounts.reverse(request.reversalId(), transactionId);
+    }
     record AuthorizeRequest(UUID sourceAccountId) {}
     record ConfirmRequest(UUID sourceAccountId, String password) {}
     record TransferRequest(@NotNull UUID transactionId,@NotNull UUID sourceAccountId,
         @NotNull UUID destinationAccountId,@NotNull @DecimalMin("0.01") BigDecimal amount) {}
+    record ReversalRequest(@NotNull UUID reversalId) {}
 }

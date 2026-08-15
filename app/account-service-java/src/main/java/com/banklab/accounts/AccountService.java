@@ -12,11 +12,14 @@ public class AccountService {
     private final AccountRepository accounts;
     private final TransferRecordRepository transfers;
     private final LedgerEntryRepository ledger;
+    private final PixKeyRepository pixKeys;
 
-    AccountService(AccountRepository accounts, TransferRecordRepository transfers, LedgerEntryRepository ledger) {
+    AccountService(AccountRepository accounts, TransferRecordRepository transfers,
+                   LedgerEntryRepository ledger, PixKeyRepository pixKeys) {
         this.accounts = accounts;
         this.transfers = transfers;
         this.ledger = ledger;
+        this.pixKeys = pixKeys;
     }
 
     @Transactional
@@ -57,6 +60,24 @@ public class AccountService {
     }
 
     @Transactional
+    public PixKey getOrCreatePixKey(UUID accountId) {
+        accounts.findById(accountId).orElseThrow(AccountNotFoundException::new);
+        return pixKeys.findByAccountId(accountId)
+            .orElseGet(() -> pixKeys.save(new PixKey(UUID.randomUUID(), accountId)));
+    }
+
+    @Transactional(readOnly = true)
+    public PixKey getPixKey(UUID accountId) {
+        return pixKeys.findByAccountId(accountId).orElseThrow(PixKeyNotFoundException::new);
+    }
+
+    @Transactional(readOnly = true)
+    public Account resolvePixKey(UUID pixKey) {
+        var key = pixKeys.findById(pixKey).orElseThrow(PixKeyNotFoundException::new);
+        return accounts.findById(key.getAccountId()).orElseThrow(AccountNotFoundException::new);
+    }
+
+    @Transactional
     public TransferResult transfer(UUID transactionId, UUID sourceId, UUID destinationId, BigDecimal rawAmount) {
         var amount = money(rawAmount);
         if (sourceId.equals(destinationId) || amount.signum() <= 0) {
@@ -79,6 +100,47 @@ public class AccountService {
         ledger.save(new LedgerEntry(transactionId, destinationId, amount, "TRANSFER_CREDIT"));
         transfers.save(new TransferRecord(transactionId, sourceId, destinationId, amount));
         return new TransferResult(transactionId, "COMPLETED", false);
+    }
+
+    @Transactional
+    public TransferResult reverse(UUID reversalId, UUID originalId) {
+        var existing = transfers.findById(reversalId);
+        if (existing.isPresent()) {
+            if (!originalId.equals(existing.get().getReversalOf())) throw new IdempotencyConflictException();
+            return new TransferResult(reversalId, "COMPLETED", true);
+        }
+        var prior = transfers.findByReversalOf(originalId);
+        if (prior.isPresent()) return new TransferResult(prior.get().getTransactionId(), "COMPLETED", true);
+        var original = transfers.findById(originalId).orElseThrow(TransferNotFoundException::new);
+        if (original.getReversalOf() != null) throw new InvalidTransferException("a reversal cannot be reversed");
+        return reverseLocked(reversalId, originalId, original);
+    }
+
+    private TransferResult reverseLocked(UUID reversalId, UUID originalId, TransferRecord original) {
+        var sourceId = original.getDestinationAccountId();
+        var destinationId = original.getSourceAccountId();
+        var firstId = sourceId.compareTo(destinationId) < 0 ? sourceId : destinationId;
+        var secondId = firstId.equals(sourceId) ? destinationId : sourceId;
+        var first = accounts.findByIdForUpdate(firstId).orElseThrow(AccountNotFoundException::new);
+        var second = accounts.findByIdForUpdate(secondId).orElseThrow(AccountNotFoundException::new);
+        return completeReversal(reversalId, originalId, original, sourceId, destinationId, first, second);
+    }
+
+    private TransferResult completeReversal(UUID reversalId, UUID originalId, TransferRecord original,
+                                            UUID sourceId, UUID destinationId, Account first, Account second) {
+        var source = first.getId().equals(sourceId) ? first : second;
+        var destination = first.getId().equals(destinationId) ? first : second;
+        source.debit(original.getAmount());
+        destination.credit(original.getAmount());
+        return saveReversal(reversalId, originalId, original, sourceId, destinationId);
+    }
+
+    private TransferResult saveReversal(UUID reversalId, UUID originalId, TransferRecord original,
+                                        UUID sourceId, UUID destinationId) {
+        ledger.save(new LedgerEntry(reversalId, sourceId, original.getAmount().negate(), "REVERSAL_DEBIT", originalId));
+        ledger.save(new LedgerEntry(reversalId, destinationId, original.getAmount(), "REVERSAL_CREDIT", originalId));
+        transfers.save(new TransferRecord(reversalId, sourceId, destinationId, original.getAmount(), originalId));
+        return new TransferResult(reversalId, "COMPLETED", false);
     }
 
     private static BigDecimal money(BigDecimal value) {
