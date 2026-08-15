@@ -34,8 +34,9 @@ conciliação ou trilha regulatória.
 | `POST` | `/bank/auth/register` | Cria conta e sessão segura |
 | `POST` | `/bank/auth/login` | Autentica por conta e senha |
 | `GET` | `/bank/accounts/me` | Consulta somente a conta autenticada |
-| `POST` | `/bank/transactions` | Executa transferência |
-| `GET` | `/bank/transactions/{id}` | Consulta transferência |
+| `POST` | `/bank/transactions` | Executa transferência após confirmar a senha |
+| `GET` | `/bank/transactions?sourceAccountId={id}` | Extrato persistente da conta autenticada |
+| `GET` | `/bank/transactions/{id}` | Consulta transferência da conta autenticada |
 
 Crie duas contas:
 

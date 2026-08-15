@@ -126,7 +126,7 @@ spec:
       to:
         - operation:
             methods: [POST]
-            paths: [/internal/v1/transfers, /internal/v1/auth/authorize]
+            paths: [/internal/v1/transfers, /internal/v1/auth/authorize, /internal/v1/auth/confirm]
     - to:
         - operation:
             methods: [GET]

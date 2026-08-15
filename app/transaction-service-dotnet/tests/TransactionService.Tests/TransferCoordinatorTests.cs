@@ -43,6 +43,8 @@ public sealed class TransferCoordinatorTests
     {
         public Task AuthorizeAsync(Guid sourceAccountId, string sessionCookie, CancellationToken cancellationToken)
             => Task.CompletedTask;
+        public Task ConfirmAsync(Guid sourceAccountId, string password, string sessionCookie, CancellationToken cancellationToken)
+            => Task.CompletedTask;
 
         public int CallCount { get; private set; }
         public Task ApplyTransferAsync(Guid transactionId, TransferRequest request, CancellationToken cancellationToken)
@@ -56,6 +58,8 @@ public sealed class TransferCoordinatorTests
     {
         private Transaction? value = existing;
         public Task<Transaction?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(value);
+        public Task<IReadOnlyList<Transaction>> ListBySourceAsync(Guid sourceAccountId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Transaction>>(value is null ? [] : [value]);
         public Task<Transaction> CreateOrGetAsync(Guid id, TransferRequest request, CancellationToken cancellationToken)
         {
             value ??= new(

@@ -6,7 +6,8 @@ export const api={
  login:(accountNumber:string,password:string)=>request<Account>("/bank/auth/login",{method:"POST",body:JSON.stringify({accountNumber,password})}),
  register:(ownerName:string,password:string,initialBalance:number)=>request<Account>("/bank/auth/register",{method:"POST",body:JSON.stringify({ownerName,password,initialBalance})}),
  logout:()=>request<void>("/bank/auth/logout",{method:"POST"}),
- transfer:(sourceAccountId:string,destinationAccountId:string,amount:number,description:string)=>request<Transaction>("/bank/transactions",{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({sourceAccountId,destinationAccountId,amount,description})}),
+ statement:(sourceAccountId:string)=>request<Transaction[]>(`/bank/transactions?sourceAccountId=${sourceAccountId}`),
+ transfer:(sourceAccountId:string,destinationAccountId:string,amount:number,description:string,password:string)=>request<Transaction>("/bank/transactions",{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({sourceAccountId,destinationAccountId,amount,description,password})}),
  transaction:(id:string)=>request<Transaction>(`/bank/transactions/${id}`)
 };
 export const money=(v:number)=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v);
