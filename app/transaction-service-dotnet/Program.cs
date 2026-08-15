@@ -38,7 +38,7 @@ app.MapMetrics();
 
 app.MapPost("/api/v1/transactions", async (
     HttpRequest httpRequest,
-    TransferRequest request,
+    CreateTransactionRequest input,
     IAccountClient accountClient,
     TransferCoordinator coordinator,
     CancellationToken cancellationToken) =>
@@ -48,12 +48,13 @@ app.MapPost("/api/v1/transactions", async (
     {
         return Results.BadRequest(new ApiError("invalid_idempotency_key", "Idempotency-Key must be a UUID"));
     }
+    var request = new TransferRequest(input.SourceAccountId, input.DestinationAccountId, input.Amount, input.Description);
     var validation = Validate(request);
     if (validation is not null) return Results.BadRequest(validation);
 
     try
     {
-        await accountClient.AuthorizeAsync(request.SourceAccountId, httpRequest.Headers.Cookie.ToString(), cancellationToken);
+        await accountClient.ConfirmAsync(request.SourceAccountId, input.Password, httpRequest.Headers.Cookie.ToString(), cancellationToken);
         var transaction = await coordinator.ExecuteAsync(idempotencyKey, request, cancellationToken);
         return transaction.Status == TransactionStatus.Completed
             ? Results.Ok(transaction)
@@ -72,6 +73,26 @@ app.MapPost("/api/v1/transactions", async (
 .Produces<ApiError>(StatusCodes.Status400BadRequest)
 .Produces<ApiError>(StatusCodes.Status422UnprocessableEntity);
 
+app.MapGet("/api/v1/transactions", async (
+    Guid sourceAccountId,
+    HttpRequest httpRequest,
+    IAccountClient accountClient,
+    ITransactionRepository repository,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await accountClient.AuthorizeAsync(sourceAccountId, httpRequest.Headers.Cookie.ToString(), cancellationToken);
+        return Results.Ok(await repository.ListBySourceAsync(sourceAccountId, cancellationToken));
+    }
+    catch (AccountTransferException exception)
+    {
+        return Results.Json(new ApiError(exception.Code, exception.Message), statusCode: exception.StatusCode);
+    }
+})
+.WithName("ListTransactions")
+.Produces<IReadOnlyList<Transaction>>()
+.Produces<ApiError>(StatusCodes.Status401Unauthorized);
 app.MapGet("/api/v1/transactions/{id:guid}", async (
     Guid id,
     HttpRequest httpRequest,

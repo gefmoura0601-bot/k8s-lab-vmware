@@ -15,6 +15,23 @@ public sealed class PostgresTransactionRepository(NpgsqlDataSource dataSource) :
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
+    public async Task<IReadOnlyList<Transaction>> ListBySourceAsync(Guid sourceAccountId, CancellationToken cancellationToken)
+    {
+        await using var command = dataSource.CreateCommand(
+            """
+            SELECT id, source_account_id, destination_account_id, amount, description,
+                   status, created_at, completed_at, failure_code
+            FROM transaction_service.transactions
+            WHERE source_account_id = $1
+            ORDER BY created_at DESC
+            LIMIT 100
+            """);
+        command.Parameters.AddWithValue(sourceAccountId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var transactions = new List<Transaction>();
+        while (await reader.ReadAsync(cancellationToken)) transactions.Add(Read(reader));
+        return transactions;
+    }
     public async Task<Transaction> CreateOrGetAsync(
         Guid id,
         TransferRequest request,

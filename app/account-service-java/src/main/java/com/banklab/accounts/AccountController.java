@@ -78,11 +78,18 @@ class InternalController {
         if (!auth.authenticate(token).getId().equals(request.sourceAccountId())) throw new UnauthorizedException();
     }
 
+    @PostMapping("/auth/confirm")
+    void confirm(@CookieValue(name=AuthService.COOKIE_NAME,defaultValue="") String token,
+                 @RequestBody ConfirmRequest request) {
+        auth.confirm(token, request.sourceAccountId(), request.password());
+    }
+
     @PostMapping("/transfers")
     AccountService.TransferResult transfer(@Valid @RequestBody TransferRequest r) {
         return accounts.transfer(r.transactionId(),r.sourceAccountId(),r.destinationAccountId(),r.amount());
     }
     record AuthorizeRequest(UUID sourceAccountId) {}
+    record ConfirmRequest(UUID sourceAccountId, String password) {}
     record TransferRequest(@NotNull UUID transactionId,@NotNull UUID sourceAccountId,
         @NotNull UUID destinationAccountId,@NotNull @DecimalMin("0.01") BigDecimal amount) {}
 }
