@@ -117,7 +117,7 @@ spec:
               - cluster.local/ns/istio-system/sa/istio-ingressgateway
       to:
         - operation:
-            methods: [GET, POST]
+            methods: [GET, POST, PUT]
             paths: [/api/v1/auth/*, /api/v1/accounts/*]
     - from:
         - source:
@@ -125,8 +125,8 @@ spec:
               - cluster.local/ns/banking/sa/transaction-service
       to:
         - operation:
-            methods: [POST]
-            paths: [/internal/v1/transfers, /internal/v1/auth/authorize, /internal/v1/auth/confirm]
+            methods: [GET, POST]
+            paths: [/internal/v1/transfers, /internal/v1/auth/authorize, /internal/v1/auth/confirm, /internal/v1/pix-keys/*]
     - to:
         - operation:
             methods: [GET]
