@@ -13,13 +13,15 @@ public class AccountService {
     private final TransferRecordRepository transfers;
     private final LedgerEntryRepository ledger;
     private final PixKeyRepository pixKeys;
+    private final PixMetrics pixMetrics;
 
     AccountService(AccountRepository accounts, TransferRecordRepository transfers,
-                   LedgerEntryRepository ledger, PixKeyRepository pixKeys) {
+                   LedgerEntryRepository ledger, PixKeyRepository pixKeys, PixMetrics pixMetrics) {
         this.accounts = accounts;
         this.transfers = transfers;
         this.ledger = ledger;
         this.pixKeys = pixKeys;
+        this.pixMetrics = pixMetrics;
     }
 
     @Transactional
@@ -63,7 +65,11 @@ public class AccountService {
     public PixKey getOrCreatePixKey(UUID accountId) {
         accounts.findById(accountId).orElseThrow(AccountNotFoundException::new);
         return pixKeys.findByAccountId(accountId)
-            .orElseGet(() -> pixKeys.save(new PixKey(UUID.randomUUID(), accountId)));
+            .orElseGet(() -> {
+                var key = pixKeys.save(new PixKey(UUID.randomUUID(), accountId));
+                pixMetrics.keyCreated();
+                return key;
+            });
     }
 
     @Transactional(readOnly = true)
@@ -74,7 +80,9 @@ public class AccountService {
     @Transactional(readOnly = true)
     public Account resolvePixKey(UUID pixKey) {
         var key = pixKeys.findById(pixKey).orElseThrow(PixKeyNotFoundException::new);
-        return accounts.findById(key.getAccountId()).orElseThrow(AccountNotFoundException::new);
+        var account = accounts.findById(key.getAccountId()).orElseThrow(AccountNotFoundException::new);
+        pixMetrics.keyResolved();
+        return account;
     }
 
     @Transactional
@@ -140,6 +148,7 @@ public class AccountService {
         ledger.save(new LedgerEntry(reversalId, sourceId, original.getAmount().negate(), "REVERSAL_DEBIT", originalId));
         ledger.save(new LedgerEntry(reversalId, destinationId, original.getAmount(), "REVERSAL_CREDIT", originalId));
         transfers.save(new TransferRecord(reversalId, sourceId, destinationId, original.getAmount(), originalId));
+        pixMetrics.reversalCompleted();
         return new TransferResult(reversalId, "COMPLETED", false);
     }
 

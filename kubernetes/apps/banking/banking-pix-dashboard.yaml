@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-pix-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: banking
+data:
+  banking-pix.json: |
+    {
+      "uid": "banking-pix",
+      "title": "Banking / PIX",
+      "tags": ["banking", "pix"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "panels": [
+        {"id":1,"type":"stat","title":"Chaves criadas","gridPos":{"h":4,"w":6,"x":0,"y":0},"targets":[{"refId":"A","expr":"sum(banking_pix_keys_created_total) or vector(0)"}]},
+        {"id":2,"type":"stat","title":"Chaves resolvidas","gridPos":{"h":4,"w":6,"x":6,"y":0},"targets":[{"refId":"A","expr":"sum(banking_pix_keys_resolved_total) or vector(0)"}]},
+        {"id":3,"type":"stat","title":"PIX concluídos","gridPos":{"h":4,"w":6,"x":12,"y":0},"targets":[{"refId":"A","expr":"sum(banking_pix_transfers_total{outcome=\u0022completed\u0022}) or vector(0)"}]},
+        {"id":4,"type":"stat","title":"Estornos concluídos","gridPos":{"h":4,"w":6,"x":18,"y":0},"targets":[{"refId":"A","expr":"sum(banking_pix_reversals_completed_total) or vector(0)"}]},
+        {"id":5,"type":"timeseries","title":"Transferências PIX por resultado","gridPos":{"h":8,"w":12,"x":0,"y":4},"targets":[{"refId":"A","expr":"sum by(outcome)(rate(banking_pix_transfers_total[5m]))","legendFormat":"{{outcome}}"}]},
+        {"id":6,"type":"timeseries","title":"Operações de chave e estorno","gridPos":{"h":8,"w":12,"x":12,"y":4},"targets":[{"refId":"A","expr":"sum(rate(banking_pix_keys_created_total[5m]))","legendFormat":"chaves criadas"},{"refId":"B","expr":"sum(rate(banking_pix_keys_resolved_total[5m]))","legendFormat":"chaves resolvidas"},{"refId":"C","expr":"sum(rate(banking_pix_reversals_completed_total[5m]))","legendFormat":"estornos"}]}
+      ]
+    }

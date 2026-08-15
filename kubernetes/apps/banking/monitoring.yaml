@@ -56,3 +56,13 @@ spec:
           annotations:
             summary: "Saldo de conta diverge do ledger"
             description: "Uma ou mais contas possuem saldo diferente da soma dos lancamentos."
+    - name: banking-pix
+      rules:
+        - alert: BankingPixHighFailureRatio
+          expr: sum(rate(banking_pix_transfers_total{outcome=~"failed|rejected"}[10m])) / clamp_min(sum(rate(banking_pix_transfers_total[10m])), 0.001) > 0.20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Taxa elevada de falhas PIX"
+            description: "Mais de 20% das requisicoes PIX falharam ou foram rejeitadas nos ultimos 10 minutos."
