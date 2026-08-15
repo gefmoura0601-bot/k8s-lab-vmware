@@ -19,6 +19,7 @@ class AccountServiceTest {
     @Mock TransferRecordRepository transfers;
     @Mock LedgerEntryRepository ledger;
     @Mock PixKeyRepository pixKeys;
+    @Mock PixMetrics pixMetrics;
     @InjectMocks AccountService service;
 
     @Test

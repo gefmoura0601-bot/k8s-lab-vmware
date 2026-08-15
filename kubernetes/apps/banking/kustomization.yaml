@@ -15,6 +15,7 @@ resources:
   - monitoring.yaml
   - runtime-dashboards.yaml
   - banking-web-dashboard.yaml
+  - banking-pix-dashboard.yaml
 
 images:
   - name: ghcr.io/gefmoura0601-bot/banking-web

@@ -30,6 +30,10 @@ builder.Services.AddHttpClient<IAccountClient, AccountClient>(client =>
 builder.Services.AddHostedService<DatabaseInitializer>();
 
 var app = builder.Build();
+var pixTransfers = Metrics.CreateCounter(
+    "banking_pix_transfers_total",
+    "PIX transfer requests grouped by final outcome",
+    new CounterConfiguration { LabelNames = ["outcome"] });
 app.UseHttpMetrics();
 app.MapOpenApi();
 app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
@@ -49,7 +53,10 @@ app.MapPost("/api/v1/transactions", async (
         return Results.BadRequest(new ApiError("invalid_idempotency_key", "Idempotency-Key must be a UUID"));
     }
     if ((input.DestinationAccountId is null) == (input.PixKey is null))
+    {
+        if (input.PixKey is not null) pixTransfers.WithLabels("rejected").Inc();
         return Results.BadRequest(new ApiError("invalid_destination", "Provide either destinationAccountId or pixKey"));
+    }
 
     try
     {
@@ -59,14 +66,21 @@ app.MapPost("/api/v1/transactions", async (
             : input.DestinationAccountId!.Value;
         var request = new TransferRequest(input.SourceAccountId, destinationId, input.Amount, input.Description);
         var validation = Validate(request);
-        if (validation is not null) return Results.BadRequest(validation);
+        if (validation is not null)
+        {
+            if (input.PixKey is not null) pixTransfers.WithLabels("rejected").Inc();
+            return Results.BadRequest(validation);
+        }
         var transaction = await coordinator.ExecuteAsync(idempotencyKey, request, cancellationToken);
+        if (input.PixKey is not null)
+            pixTransfers.WithLabels(transaction.Status.ToString().ToLowerInvariant()).Inc();
         return transaction.Status == TransactionStatus.Completed
             ? Results.Ok(transaction)
             : Results.Accepted($"/api/v1/transactions/{transaction.Id}", transaction);
     }
     catch (AccountTransferException exception)
     {
+        if (input.PixKey is not null) pixTransfers.WithLabels("failed").Inc();
         return Results.Json(
             new ApiError(exception.Code, exception.Message),
             statusCode: exception.StatusCode);
