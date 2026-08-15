@@ -18,4 +18,4 @@ resources:
 images:
   - name: ghcr.io/gefmoura0601-bot/banking-web
     newName: ghcr.io/gefmoura0601-bot/banking-web
-    newTag: bootstrap
+    newTag: cd35535
