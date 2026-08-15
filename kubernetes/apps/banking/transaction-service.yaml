@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: transaction-service
-          image: ghcr.io/gefmoura0601-bot/transaction-service-dotnet:5a68af0
+          image: ghcr.io/gefmoura0601-bot/transaction-service-dotnet:3e0168a
           imagePullPolicy: IfNotPresent
           env:
             - name: DOTNET_EnableDiagnostics
