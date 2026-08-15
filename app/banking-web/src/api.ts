@@ -4,7 +4,7 @@ export const api={
  me:()=>request<Account>("/bank/accounts/me"),
  directory:()=>request<DirectoryEntry[]>("/bank/accounts/directory"),
  login:(accountNumber:string,password:string)=>request<Account>("/bank/auth/login",{method:"POST",body:JSON.stringify({accountNumber,password})}),
- register:(ownerName:string,password:string,initialBalance:number)=>request<Account>("/bank/auth/register",{method:"POST",body:JSON.stringify({ownerName,password,initialBalance})}),
+ register:(ownerName:string,password:string)=>request<Account>("/bank/auth/register",{method:"POST",body:JSON.stringify({ownerName,password})}),
  logout:()=>request<void>("/bank/auth/logout",{method:"POST"}),
  statement:(sourceAccountId:string)=>request<Transaction[]>(`/bank/transactions?sourceAccountId=${sourceAccountId}`),
  transfer:(sourceAccountId:string,destinationAccountId:string,amount:number,description:string,password:string)=>request<Transaction>("/bank/transactions",{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({sourceAccountId,destinationAccountId,amount,description,password})}),

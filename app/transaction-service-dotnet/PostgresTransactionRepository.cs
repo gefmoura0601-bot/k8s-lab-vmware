@@ -22,7 +22,7 @@ public sealed class PostgresTransactionRepository(NpgsqlDataSource dataSource) :
             SELECT id, source_account_id, destination_account_id, amount, description,
                    status, created_at, completed_at, failure_code
             FROM transaction_service.transactions
-            WHERE source_account_id = $1
+            WHERE source_account_id = $1 OR destination_account_id = $1
             ORDER BY created_at DESC
             LIMIT 100
             """);

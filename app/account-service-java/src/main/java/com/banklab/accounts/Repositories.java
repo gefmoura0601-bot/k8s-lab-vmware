@@ -17,3 +17,7 @@ interface AccountRepository extends JpaRepository<Account, UUID> {
 }
 
 interface TransferRecordRepository extends JpaRepository<TransferRecord, UUID> {}
+interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {
+    @Query(value = "SELECT count(*) FROM account_service.accounts a WHERE a.balance <> COALESCE((SELECT sum(l.signed_amount) FROM account_service.ledger_entries l WHERE l.account_id = a.id), 0)", nativeQuery = true)
+    long countDivergentAccounts();
+}

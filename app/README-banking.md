@@ -82,3 +82,7 @@ PR atualizando as referências GitOps.
 
 Para métricas, profiling e coleta de JFR/EventPipe, consulte
 [`docs/runtime-observability.md`](../docs/runtime-observability.md).
+
+## Ledger contábil
+
+Novas contas começam com saldo zero. Cada transferência grava, na mesma transação do saldo, um débito e um crédito com o mesmo `journal_id`; um constraint trigger rejeita journals cuja soma não seja zero. Saldos legados são migrados como crédito de abertura e contrapartida sistêmica. A métrica `banking_ledger_divergent_accounts` e o alerta `BankingLedgerDivergence` detectam divergência entre o saldo materializado e os lançamentos. O campo `reversal_of` reserva estornos compensatórios sem apagar o histórico; a operação administrativa de estorno não é exposta ao cliente.
