@@ -26,6 +26,18 @@ public class AccountService {
         return accounts.save(new Account(UUID.randomUUID(), ownerName.trim(), balance));
     }
 
+    @Transactional
+    public Account create(String number, String owner, String passwordHash, BigDecimal initialBalance) {
+        var balance = money(initialBalance);
+        if (balance.signum() < 0) throw new InvalidTransferException("initialBalance must not be negative");
+        return accounts.save(new Account(UUID.randomUUID(), number, owner.trim(), passwordHash, balance));
+    }
+
+    @Transactional(readOnly = true)
+    public List<Account> directory() {
+        return accounts.findAll().stream().filter(Account::hasCredentials).toList();
+    }
+
     @Transactional(readOnly = true)
     public Account get(UUID id) {
         return accounts.findById(id).orElseThrow(AccountNotFoundException::new);

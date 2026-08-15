@@ -41,6 +41,9 @@ public sealed class TransferCoordinatorTests
 
     private sealed class FakeAccountClient : IAccountClient
     {
+        public Task AuthorizeAsync(Guid sourceAccountId, string sessionCookie, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
         public int CallCount { get; private set; }
         public Task ApplyTransferAsync(Guid transactionId, TransferRequest request, CancellationToken cancellationToken)
         {

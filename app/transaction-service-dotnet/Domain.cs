@@ -39,5 +39,6 @@ public interface ITransactionRepository
 
 public interface IAccountClient
 {
+    Task AuthorizeAsync(Guid sourceAccountId, string sessionCookie, CancellationToken cancellationToken);
     Task ApplyTransferAsync(Guid transactionId, TransferRequest request, CancellationToken cancellationToken);
 }

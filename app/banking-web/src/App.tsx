@@ -1,104 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { api, money } from "./api";
-import type { Account, Transaction } from "./types";
-
-type View = "overview" | "accounts" | "transfer" | "history";
-const HISTORY_KEY = "atlas-banking-transactions";
-
-function initials(name: string) {
-  return name.split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
-}
-
-export function App() {
-  const [view, setView] = useState<View>("overview");
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [busy, setBusy] = useState(true);
-  const [message, setMessage] = useState("");
-
-  const load = useCallback(async () => {
-    setBusy(true);
-    try {
-      const nextAccounts = await api.listAccounts();
-      const ids = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]") as string[];
-      const settled = await Promise.allSettled(ids.map(api.getTransaction));
-      setAccounts(nextAccounts);
-      setTransactions(settled.flatMap(item => item.status === "fulfilled" ? [item.value] : []));
-      setMessage("");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "NÃ£o foi possÃ­vel carregar os dados.");
-    } finally { setBusy(false); }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-  const total = useMemo(() => accounts.reduce((sum, account) => sum + Number(account.balance), 0), [accounts]);
-
-  async function createAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    try {
-      await api.createAccount(String(data.get("ownerName")), Number(data.get("initialBalance")));
-      event.currentTarget.reset();
-      setMessage("Conta criada com sucesso.");
-      await load();
-    } catch (error) { setMessage((error as Error).message); }
-  }
-
-  async function transfer(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    try {
-      const transaction = await api.createTransaction(
-        String(data.get("source")), String(data.get("destination")),
-        Number(data.get("amount")), String(data.get("description"))
-      );
-      const ids = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]") as string[];
-      localStorage.setItem(HISTORY_KEY, JSON.stringify([transaction.id, ...ids.filter(id => id !== transaction.id)].slice(0, 20)));
-      form.reset();
-      setMessage("TransferÃªncia processada.");
-      await load();
-      setView("history");
-    } catch (error) { setMessage((error as Error).message); }
-  }
-
-  const nav: [View, string][] = [["overview", "VisÃ£o geral"], ["accounts", "Contas"], ["transfer", "Transferir"], ["history", "HistÃ³rico"]];
-  return <div className="shell">
-    <aside>
-      <div className="brand"><span>A</span><div><strong>Atlas</strong><small>Banking Lab</small></div></div>
-      <nav>{nav.map(([id, label]) => <button className={view === id ? "active" : ""} onClick={() => setView(id)} key={id}>{label}</button>)}</nav>
-      <div className="platform"><i />Plataforma operacional</div>
-    </aside>
-    <main>
-      <header><div><p>AMBIENTE DE LABORATÃ“RIO</p><h1>{nav.find(([id]) => id === view)?.[1]}</h1></div><button className="refresh" onClick={() => void load()}>Atualizar</button></header>
-      {message && <div className="notice">{message}</div>}
-      {busy ? <div className="loading">Sincronizando dadosâ€¦</div> : <>
-        {view === "overview" && <section>
-          <div className="hero"><div><p>PATRIMÃ”NIO SOB GESTÃƒO</p><strong>{money(total)}</strong><span>{accounts.length} contas ativas</span></div><div className="monogram">AB</div></div>
-          <div className="stats"><article><span>Contas</span><strong>{accounts.length}</strong></article><article><span>TransferÃªncias locais</span><strong>{transactions.length}</strong></article><article><span>ConcluÃ­das</span><strong>{transactions.filter(t => t.status === "COMPLETED").length}</strong></article></div>
-          <Title text="Contas recentes" action={() => setView("accounts")} />
-          <AccountGrid accounts={accounts.slice(0, 3)} />
-        </section>}
-        {view === "accounts" && <section>
-          <div className="split"><div><Title text="Todas as contas" /><AccountGrid accounts={accounts} /></div>
-            <form className="card form" onSubmit={createAccount}><h2>Nova conta</h2><label>Titular<input name="ownerName" maxLength={120} required /></label><label>Saldo inicial<input name="initialBalance" type="number" min="0" step="0.01" required /></label><button>Criar conta</button></form>
-          </div>
-        </section>}
-        {view === "transfer" && <section className="narrow"><form className="card form transfer" onSubmit={transfer}><p className="eyebrow">TRANSFERÃŠNCIA INTERNA</p><h2>Movimentar entre contas</h2>
-          <label>Conta de origem<select name="source" required defaultValue=""><option value="" disabled>Selecione</option>{accounts.map(a => <option value={a.id} key={a.id}>{a.ownerName} Â· {money(a.balance)}</option>)}</select></label>
-          <label>Conta de destino<select name="destination" required defaultValue=""><option value="" disabled>Selecione</option>{accounts.map(a => <option value={a.id} key={a.id}>{a.ownerName}</option>)}</select></label>
-          <div className="row"><label>Valor<input name="amount" type="number" min="0.01" step="0.01" required /></label><label>DescriÃ§Ã£o<input name="description" maxLength={140} required /></label></div>
-          <button>Confirmar transferÃªncia</button><small>A operaÃ§Ã£o usa chave idempotente e nÃ£o serÃ¡ debitada duas vezes.</small>
-        </form></section>}
-        {view === "history" && <section><Title text="HistÃ³rico neste navegador" /><div className="table card"><div className="tr head"><span>DescriÃ§Ã£o</span><span>Valor</span><span>Status</span><span>Data</span></div>{transactions.map(t => <div className="tr" key={t.id}><span><b>{t.description}</b><small>{t.id.slice(0, 8)}</small></span><span>{money(t.amount)}</span><span><em className={t.status.toLowerCase()}>{t.status}</em></span><span>{new Date(t.createdAt).toLocaleString("pt-BR")}</span></div>)}{!transactions.length && <p className="empty">As transferÃªncias feitas neste navegador aparecerÃ£o aqui.</p>}</div></section>}
-      </>}
-    </main>
-  </div>;
-}
-
-function Title({text, action}: {text: string; action?: () => void}) {
-  return <div className="title"><h2>{text}</h2>{action && <button onClick={action}>Ver todas</button>}</div>;
-}
-function AccountGrid({accounts}: {accounts: Account[]}) {
-  return <div className="account-grid">{accounts.map(account => <article className="card account" key={account.id}><div className="avatar">{initials(account.ownerName)}</div><div><h3>{account.ownerName}</h3><small>{account.id.slice(0, 8)} Â· conta digital</small><strong>{money(account.balance)}</strong></div></article>)}{!accounts.length && <p className="empty">Nenhuma conta cadastrada.</p>}</div>;
-}
+import{FormEvent,useEffect,useState}from"react";import{api,money}from"./api";import type{Account,DirectoryEntry,Transaction}from"./types";
+const KEY="moura-banking-transactions";
+export function App(){const[account,setAccount]=useState<Account|null>(null),[directory,setDirectory]=useState<DirectoryEntry[]>([]),[transactions,setTransactions]=useState<Transaction[]>([]),[mode,setMode]=useState<"login"|"register">("login"),[view,setView]=useState<"home"|"transfer"|"history">("home"),[busy,setBusy]=useState(true),[message,setMessage]=useState("");
+async function load(){try{const me=await api.me(),dir=await api.directory();setAccount(me);setDirectory(dir.filter(x=>x.id!==me.id));const ids=JSON.parse(localStorage.getItem(KEY)??"[]")as string[];const items=await Promise.allSettled(ids.map(api.transaction));setTransactions(items.flatMap(x=>x.status==="fulfilled"?[x.value]:[]));}catch{setAccount(null)}finally{setBusy(false)}}
+useEffect(()=>{void load()},[]);
+async function authenticate(e:FormEvent<HTMLFormElement>){e.preventDefault();const f=e.currentTarget,d=new FormData(f);try{const a=mode==="login"?await api.login(String(d.get("accountNumber")),String(d.get("password"))):await api.register(String(d.get("ownerName")),String(d.get("password")),Number(d.get("initialBalance")));setAccount(a);setMessage("");await load()}catch(x){setMessage((x as Error).message)}}
+async function transfer(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!account)return;const f=e.currentTarget,d=new FormData(f);try{const t=await api.transfer(account.id,String(d.get("destination")),Number(d.get("amount")),String(d.get("description")));const ids=JSON.parse(localStorage.getItem(KEY)??"[]")as string[];localStorage.setItem(KEY,JSON.stringify([t.id,...ids].slice(0,20)));setMessage("Transferência concluída.");f.reset();await load();setView("history")}catch(x){setMessage((x as Error).message)}}
+if(busy)return <div className="loading">Abrindo Moura Banking&</div>;
+if(!account)return <main className="auth"><section className="login-card"><div className="brand auth-brand"><span>M</span><div><strong>Moura</strong><small>Banking</small></div></div><p className="eyebrow">BANCO DIGITAL DO LAB</p><h1>{mode==="login"?"Acesse sua conta":"Abra sua conta"}</h1>{message&&<div className="notice">{message}</div>}<form className="form" onSubmit={authenticate}>{mode==="register"&&<><label>Titular<input name="ownerName" maxLength={120} required/></label><label>Saldo inicial<input name="initialBalance" type="number" min="0" step=".01" required/></label></>} {mode==="login"&&<label>Número da conta<input name="accountNumber" inputMode="numeric" pattern="[0-9]{8}" required/></label>}<label>Senha<input name="password" type="password" minLength={10} maxLength={72} required/></label><button>{mode==="login"?"Entrar com segurança":"Criar conta"}</button></form><button className="switch" onClick={()=>{setMode(mode==="login"?"register":"login");setMessage("")}}>{mode==="login"?"Ainda não tenho conta":"Já tenho uma conta"}</button><small className="security">Sessão protegida e expira após 15 minutos.</small></section></main>;
+const nav:[typeof view,string][]=[["home","Minha conta"],["transfer","Transferir"],["history","Histórico"]];
+return <div className="shell"><aside><div className="brand"><span>M</span><div><strong>Moura</strong><small>Banking</small></div></div><nav>{nav.map(([id,label])=><button key={id} className={view===id?"active":""} onClick={()=>setView(id)}>{label}</button>)}</nav><button className="logout" onClick={async()=>{await api.logout();setAccount(null)}}>Sair</button></aside><main><header><div><p>CONTA DIGITAL</p><h1>{nav.find(x=>x[0]===view)?.[1]}</h1></div><span>Conta {account.accountNumber}</span></header>{message&&<div className="notice">{message}</div>}{view==="home"&&<><div className="hero"><div><p>SALDO DISPONÍVEL</p><strong>{money(account.balance)}</strong><span>{account.ownerName}</span></div><div className="monogram">MB</div></div><div className="stats"><article><span>Número da conta</span><strong>{account.accountNumber}</strong></article><article><span>Transferências</span><strong>{transactions.length}</strong></article><article><span>Status</span><strong>Ativa</strong></article></div></>}{view==="transfer"&&<section className="narrow"><form className="card form transfer" onSubmit={transfer}><p className="eyebrow">PIX INTERNO</p><h2>Nova transferência</h2><label>Destino<select name="destination" required defaultValue=""><option value="" disabled>Selecione a conta</option>{directory.map(x=><option key={x.id} value={x.id}>{x.ownerName} · {x.accountNumber}</option>)}</select></label><div className="row"><label>Valor<input name="amount" type="number" min=".01" step=".01" required/></label><label>Descrição<input name="description" maxLength={140} required/></label></div><button>Confirmar transferência</button></form></section>}{view==="history"&&<section><div className="title"><h2>Suas transferências</h2></div><div className="table card">{transactions.map(t=><div className="tr" key={t.id}><span><b>{t.description}</b><small>{t.id.slice(0,8)}</small></span><span>{money(t.amount)}</span><span><em className={t.status.toLowerCase()}>{t.status}</em></span><span>{new Date(t.createdAt).toLocaleString("pt-BR")}</span></div>)}{!transactions.length&&<p className="empty">Nenhuma transferência nesta sessão.</p>}</div></section>}</main></div>}

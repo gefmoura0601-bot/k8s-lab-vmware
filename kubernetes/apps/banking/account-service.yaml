@@ -57,6 +57,11 @@ spec:
                 secretKeyRef:
                   name: banking-db
                   key: password
+            - name: BANKING_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: banking-session
+                  key: session-secret
           ports:
             - name: http
               containerPort: 8080

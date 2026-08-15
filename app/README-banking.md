@@ -31,9 +31,9 @@ conciliação ou trilha regulatória.
 
 | Método | Endpoint | Descrição |
 |---|---|---|
-| `POST` | `/bank/accounts` | Cria conta |
-| `GET` | `/bank/accounts` | Lista contas |
-| `GET` | `/bank/accounts/{id}` | Consulta conta e saldo |
+| `POST` | `/bank/auth/register` | Cria conta e sessão segura |
+| `POST` | `/bank/auth/login` | Autentica por conta e senha |
+| `GET` | `/bank/accounts/me` | Consulta somente a conta autenticada |
 | `POST` | `/bank/transactions` | Executa transferência |
 | `GET` | `/bank/transactions/{id}` | Consulta transferência |
 

@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface AccountRepository extends JpaRepository<Account, UUID> {
+    Optional<Account> findByAccountNumber(String accountNumber);
+    boolean existsByAccountNumber(String accountNumber);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Account a where a.id = :id")
     Optional<Account> findByIdForUpdate(@Param("id") UUID id);
