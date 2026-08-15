@@ -1,0 +1,34 @@
+name: Validate Banking Web
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite TEST-BANKING-WEB
+        required: true
+        type: string
+
+jobs:
+  banking-web-e2e:
+    if: inputs.confirmation == 'TEST-BANKING-WEB'
+    runs-on: [self-hosted, master]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Validar interface e API
+        shell: bash
+        run: bash scripts/validation/validate-banking-web-e2e.sh
+      - name: Coletar evidências
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          kubectl -n banking get deploy,pod,svc -o wide > evidence/resources.txt
+          kubectl -n banking logs deployment/banking-web -c banking-web --tail=200 > evidence/banking-web.log
+          kubectl -n banking get virtualservice,authorizationpolicy -o yaml > evidence/istio.yaml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: banking-web-evidence
+          path: evidence
+          retention-days: 14

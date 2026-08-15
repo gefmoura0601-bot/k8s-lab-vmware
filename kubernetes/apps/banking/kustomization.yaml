@@ -7,8 +7,15 @@ resources:
   - ghcr-secret-sealed.yaml
   - account-service.yaml
   - transaction-service.yaml
+  - banking-web.yaml
   - autoscaling.yaml
   - networkpolicies.yaml
   - istio.yaml
   - monitoring.yaml
   - runtime-dashboards.yaml
+  - banking-web-dashboard.yaml
+
+images:
+  - name: ghcr.io/gefmoura0601-bot/banking-web
+    newName: ghcr.io/gefmoura0601-bot/banking-web
+    newTag: bootstrap

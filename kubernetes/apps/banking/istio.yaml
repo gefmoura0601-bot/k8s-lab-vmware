@@ -57,6 +57,14 @@ spec:
   http:
     - match:
         - uri:
+            prefix: /banking
+      route:
+        - destination:
+            host: banking-web.banking.svc.cluster.local
+            port:
+              number: 80
+    - match:
+        - uri:
             prefix: /bank/accounts
       rewrite:
         uriRegexRewrite:
@@ -135,3 +143,27 @@ spec:
         - operation:
             methods: [GET]
             paths: [/health/*, /metrics]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: banking-web
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: banking-web
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-system/sa/istio-ingressgateway
+      to:
+        - operation:
+            methods: [GET]
+            paths: [/, /banking, /banking/*, /healthz]
+    - to:
+        - operation:
+            methods: [GET]
+            paths: [/healthz]
