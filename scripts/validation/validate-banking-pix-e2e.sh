@@ -105,6 +105,8 @@ reversal_payload="$(jq -nc --arg id "${reversal_id}" '{reversalId:$id}')"
 reversal_base64="$(printf '%s' "${reversal_payload}" | base64 | tr -d '\n')"
 reversal_url="http://account-service/internal/v1/transfers/${transaction_id}/reversals"
 transaction_pod="$(kubectl -n banking get pod -l app=transaction-service -o jsonpath='{.items[0].metadata.name}')"
+# The positional parameters and temporary path must expand inside the container shell.
+# shellcheck disable=SC2016
 kubectl -n banking exec "${transaction_pod}" -c transaction-service -- sh -c \
   'tmp="/tmp/pix-reversal-$$.json"; echo "$1" | base64 -d >"$tmp"; wget -qO- --header Content-Type:application/json --post-file "$tmp" "$2"; code=$?; rm -f "$tmp"; exit $code' \
   _ "${reversal_base64}" "${reversal_url}" >"${work_dir}/reversal.json"
