@@ -45,6 +45,8 @@ public sealed class TransferCoordinatorTests
             => Task.CompletedTask;
         public Task ConfirmAsync(Guid sourceAccountId, string password, string sessionCookie, CancellationToken cancellationToken)
             => Task.CompletedTask;
+        public Task<PixDestination> ResolvePixKeyAsync(Guid pixKey, CancellationToken cancellationToken)
+            => Task.FromResult(new PixDestination(Guid.NewGuid(), "00000000", "Test"));
 
         public int CallCount { get; private set; }
         public Task ApplyTransferAsync(Guid transactionId, TransferRequest request, CancellationToken cancellationToken)

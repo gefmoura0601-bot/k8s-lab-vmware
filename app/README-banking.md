@@ -34,9 +34,16 @@ conciliação ou trilha regulatória.
 | `POST` | `/bank/auth/register` | Cria conta e sessão segura |
 | `POST` | `/bank/auth/login` | Autentica por conta e senha |
 | `GET` | `/bank/accounts/me` | Consulta somente a conta autenticada |
+| `GET` | `/bank/accounts/me/pix-key` | Consulta a chave PIX da conta autenticada |
+| `PUT` | `/bank/accounts/me/pix-key` | Cria ou retorna idempotentemente a chave PIX da conta |
 | `POST` | `/bank/transactions` | Executa transferência após confirmar a senha |
 | `GET` | `/bank/transactions?sourceAccountId={id}` | Extrato persistente da conta autenticada |
 | `GET` | `/bank/transactions/{id}` | Consulta transferência da conta autenticada |
+
+Ao criar uma transferência, informe exatamente um destino: `destinationAccountId`
+para uma conta conhecida ou `pixKey` para resolução pelo diretório PIX interno.
+Nos dois casos a senha da conta de origem é confirmada antes da resolução e da
+movimentação financeira.
 
 Crie duas contas:
 
