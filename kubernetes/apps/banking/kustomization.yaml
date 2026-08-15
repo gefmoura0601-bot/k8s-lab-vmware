@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - serviceaccounts.yaml
   - banking-db-secret-sealed.yaml
+  - banking-session-secret-sealed.yaml
   - ghcr-secret-sealed.yaml
   - account-service.yaml
   - transaction-service.yaml

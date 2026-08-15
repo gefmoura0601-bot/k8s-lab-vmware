@@ -18,6 +18,13 @@ public class Account {
     private String ownerName;
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
+    @Column(length = 10, unique = true)
+    private String accountNumber;
+    @Column(length = 100)
+    private String passwordHash;
+    @Column(nullable = false)
+    private int failedLoginAttempts;
+    private Instant lockedUntil;
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
     @Version
@@ -30,6 +37,23 @@ public class Account {
         this.ownerName = ownerName;
         this.balance = balance;
         this.createdAt = Instant.now();
+    }
+
+    public Account(UUID id, String accountNumber, String ownerName, String passwordHash, BigDecimal balance) {
+        this(id, ownerName, balance);
+        this.accountNumber = accountNumber;
+        this.passwordHash = passwordHash;
+    }
+
+    public boolean hasCredentials() { return accountNumber != null && passwordHash != null; }
+    public boolean isLocked(Instant now) { return lockedUntil != null && lockedUntil.isAfter(now); }
+    public void loginSucceeded() { failedLoginAttempts = 0; lockedUntil = null; }
+    public void loginFailed(Instant now) {
+        failedLoginAttempts++;
+        if (failedLoginAttempts >= 5) {
+            lockedUntil = now.plusSeconds(15 * 60);
+            failedLoginAttempts = 0;
+        }
     }
 
     public void debit(BigDecimal amount) {
@@ -46,5 +70,7 @@ public class Account {
     public UUID getId() { return id; }
     public String getOwnerName() { return ownerName; }
     public BigDecimal getBalance() { return balance; }
+    public String getAccountNumber() { return accountNumber; }
+    public String getPasswordHash() { return passwordHash; }
     public Instant getCreatedAt() { return createdAt; }
 }

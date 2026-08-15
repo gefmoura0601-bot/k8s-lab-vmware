@@ -39,6 +39,7 @@ app.MapMetrics();
 app.MapPost("/api/v1/transactions", async (
     HttpRequest httpRequest,
     TransferRequest request,
+    IAccountClient accountClient,
     TransferCoordinator coordinator,
     CancellationToken cancellationToken) =>
 {
@@ -52,6 +53,7 @@ app.MapPost("/api/v1/transactions", async (
 
     try
     {
+        await accountClient.AuthorizeAsync(request.SourceAccountId, httpRequest.Headers.Cookie.ToString(), cancellationToken);
         var transaction = await coordinator.ExecuteAsync(idempotencyKey, request, cancellationToken);
         return transaction.Status == TransactionStatus.Completed
             ? Results.Ok(transaction)
@@ -72,11 +74,22 @@ app.MapPost("/api/v1/transactions", async (
 
 app.MapGet("/api/v1/transactions/{id:guid}", async (
     Guid id,
+    HttpRequest httpRequest,
+    IAccountClient accountClient,
     ITransactionRepository repository,
     CancellationToken cancellationToken) =>
 {
     var transaction = await repository.GetAsync(id, cancellationToken);
-    return transaction is null ? Results.NotFound() : Results.Ok(transaction);
+    if (transaction is null) return Results.NotFound();
+    try
+    {
+        await accountClient.AuthorizeAsync(transaction.SourceAccountId, httpRequest.Headers.Cookie.ToString(), cancellationToken);
+        return Results.Ok(transaction);
+    }
+    catch (AccountTransferException exception)
+    {
+        return Results.Json(new ApiError(exception.Code, exception.Message), statusCode: exception.StatusCode);
+    }
 })
 .WithName("GetTransaction")
 .Produces<Transaction>()
