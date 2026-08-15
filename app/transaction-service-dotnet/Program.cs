@@ -48,13 +48,18 @@ app.MapPost("/api/v1/transactions", async (
     {
         return Results.BadRequest(new ApiError("invalid_idempotency_key", "Idempotency-Key must be a UUID"));
     }
-    var request = new TransferRequest(input.SourceAccountId, input.DestinationAccountId, input.Amount, input.Description);
-    var validation = Validate(request);
-    if (validation is not null) return Results.BadRequest(validation);
+    if ((input.DestinationAccountId is null) == (input.PixKey is null))
+        return Results.BadRequest(new ApiError("invalid_destination", "Provide either destinationAccountId or pixKey"));
 
     try
     {
-        await accountClient.ConfirmAsync(request.SourceAccountId, input.Password, httpRequest.Headers.Cookie.ToString(), cancellationToken);
+        await accountClient.ConfirmAsync(input.SourceAccountId, input.Password, httpRequest.Headers.Cookie.ToString(), cancellationToken);
+        var destinationId = input.PixKey is Guid pixKey
+            ? (await accountClient.ResolvePixKeyAsync(pixKey, cancellationToken)).Id
+            : input.DestinationAccountId!.Value;
+        var request = new TransferRequest(input.SourceAccountId, destinationId, input.Amount, input.Description);
+        var validation = Validate(request);
+        if (validation is not null) return Results.BadRequest(validation);
         var transaction = await coordinator.ExecuteAsync(idempotencyKey, request, cancellationToken);
         return transaction.Status == TransactionStatus.Completed
             ? Results.Ok(transaction)

@@ -2,7 +2,8 @@ using System.ComponentModel.DataAnnotations;
 
 public record CreateTransactionRequest(
     Guid SourceAccountId,
-    Guid DestinationAccountId,
+    Guid? DestinationAccountId,
+    Guid? PixKey,
     decimal Amount,
     [property: Required, MaxLength(140)] string Description,
     [property: Required, MinLength(10), MaxLength(72)] string Password);
@@ -32,6 +33,7 @@ public enum TransactionStatus
 }
 
 public record ApiError(string Code, string Message);
+public record PixDestination(Guid Id, string AccountNumber, string OwnerName);
 
 public interface ITransactionRepository
 {
@@ -49,5 +51,6 @@ public interface IAccountClient
 {
     Task AuthorizeAsync(Guid sourceAccountId, string sessionCookie, CancellationToken cancellationToken);
     Task ConfirmAsync(Guid sourceAccountId, string password, string sessionCookie, CancellationToken cancellationToken);
+    Task<PixDestination> ResolvePixKeyAsync(Guid pixKey, CancellationToken cancellationToken);
     Task ApplyTransferAsync(Guid transactionId, TransferRequest request, CancellationToken cancellationToken);
 }

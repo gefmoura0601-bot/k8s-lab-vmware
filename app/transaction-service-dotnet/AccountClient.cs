@@ -26,5 +26,13 @@ public sealed class AccountClient(HttpClient client) : IAccountClient
         var error=await response.Content.ReadFromJsonAsync<ApiError>(cancellationToken:ct);
         throw new AccountTransferException((int)response.StatusCode,error?.Code??"account_service_error",error?.Message??"Account service rejected the transfer");
     }
+    public async Task<PixDestination> ResolvePixKeyAsync(Guid pixKey,CancellationToken ct)
+    {
+        var response=await client.GetAsync($"/internal/v1/pix-keys/{pixKey}",ct);
+        if(response.IsSuccessStatusCode)
+            return (await response.Content.ReadFromJsonAsync<PixDestination>(cancellationToken:ct))!;
+        var error=await response.Content.ReadFromJsonAsync<ApiError>(cancellationToken:ct);
+        throw new AccountTransferException((int)response.StatusCode,error?.Code??"pix_key_not_found",error?.Message??"PIX key was not found");
+    }
 }
 public sealed class AccountTransferException(int statusCode,string code,string message):Exception(message){public int StatusCode{get;}=statusCode;public string Code{get;}=code;}

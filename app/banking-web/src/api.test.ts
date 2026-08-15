@@ -18,3 +18,11 @@ describe("interface encoding", () => {
     expect(source).toMatch(/Sess\u00e3o protegida/);
   });
 });
+
+describe("PIX API", () => {
+  it("supports key management and PIX destinations", () => {
+    const source = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
+    expect(source).toContain("/bank/accounts/me/pix-key");
+    expect(source).toContain("pixKey?: string");
+  });
+});
