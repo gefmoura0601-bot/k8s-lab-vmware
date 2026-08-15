@@ -35,3 +35,24 @@ spec:
     - port: http
       path: /metrics
       interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: banking-ledger
+  namespace: banking
+  labels:
+    release: kube-prometheus-stack
+    team: banking
+spec:
+  groups:
+    - name: banking-ledger
+      rules:
+        - alert: BankingLedgerDivergence
+          expr: banking_ledger_divergent_accounts > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Saldo de conta diverge do ledger"
+            description: "Uma ou mais contas possuem saldo diferente da soma dos lancamentos."

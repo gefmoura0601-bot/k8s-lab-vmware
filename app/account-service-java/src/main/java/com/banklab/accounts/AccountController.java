@@ -18,7 +18,7 @@ class AccountController {
 
     @PostMapping("/auth/register")
     ResponseEntity<AccountResponse> register(@Valid @RequestBody RegisterRequest request) {
-        var account = auth.register(request.ownerName(), request.password(), request.initialBalance());
+        var account = auth.register(request.ownerName(), request.password(), BigDecimal.ZERO);
         var token = auth.login(account.getAccountNumber(), request.password());
         return ResponseEntity.status(HttpStatus.CREATED).header(HttpHeaders.SET_COOKIE, session(token).toString())
             .body(AccountResponse.from(account));
@@ -54,8 +54,7 @@ class AccountController {
             .sameSite("Strict").path("/").maxAge(Duration.ofMinutes(15)).build();
     }
     record RegisterRequest(@NotBlank @Size(max=120) String ownerName,
-        @NotBlank @Size(min=10,max=72) String password,
-        @NotNull @DecimalMin("0.00") BigDecimal initialBalance) {}
+        @NotBlank @Size(min=10,max=72) String password) {}
     record LoginRequest(@NotBlank String accountNumber, @NotBlank String password) {}
     record AccountResponse(UUID id, String accountNumber, String ownerName, BigDecimal balance) {
         static AccountResponse from(Account a) { return new AccountResponse(a.getId(),a.getAccountNumber(),a.getOwnerName(),a.getBalance()); }

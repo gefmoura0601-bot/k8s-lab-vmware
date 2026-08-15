@@ -17,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AccountServiceTest {
     @Mock AccountRepository accounts;
     @Mock TransferRecordRepository transfers;
+    @Mock LedgerEntryRepository ledger;
     @InjectMocks AccountService service;
 
     @Test
