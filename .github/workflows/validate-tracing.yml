@@ -18,6 +18,9 @@ jobs:
       - name: Validar trace HTTP e PostgreSQL
         shell: bash
         run: bash scripts/validation/validate-tracing-e2e.sh
+      - name: Validar pipeline de alertas
+        shell: bash
+        run: bash scripts/validation/validate-tempo-alerts.sh
       - name: Coletar evidencias
         if: always()
         shell: bash
@@ -27,6 +30,9 @@ jobs:
           kubectl -n tracing logs deployment/otel-collector --tail=200 > evidence/collector.log
           kubectl -n tracing logs deployment/tempo --tail=200 > evidence/tempo.log
           kubectl top nodes > evidence/node-memory.txt
+          kubectl -n monitoring get prometheusrule tempo-derived-metrics -o yaml > evidence/tempo-alerts.yaml
+          kubectl -n apps get analysisrun -o yaml > evidence/analysisruns.yaml
+          kubectl -n monitoring exec prometheus-kube-prometheus-stack-prometheus-0 -- +            wget -qO- 'http://localhost:9090/api/v1/query?query=traces_spanmetrics_calls_total' +            > evidence/span-metrics.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
