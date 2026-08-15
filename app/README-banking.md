@@ -7,9 +7,14 @@ saldo e transferências idempotentes entre dois serviços:
 |---|---|---|
 | `account-service` | Java 25 / Spring Boot 4.1 | Contas, saldos e aplicação atômica da transferência |
 | `transaction-service` | .NET 10 / ASP.NET Core | Histórico e orquestração idempotente |
+| `banking-web` | React 19 / TypeScript / Nginx | Interface para contas e transferências |
 
 Os serviços executam no namespace `banking`, usam PostgreSQL no namespace
 `databases` e são publicados pelo Istio em `https://nginx.lab.local:31882`.
+
+A interface está disponível em `https://nginx.lab.local:31882/banking/`. O
+histórico mostrado nela contém as transações criadas no navegador atual, pois a
+API expõe consulta por ID, mas não uma listagem global.
 
 ## Consistência
 
