@@ -35,6 +35,7 @@ REQUIRED_APPS=(
   "postgres-api"
   "cpu-worker"
   "cpu-producer"
+  "nginx-lab-tls"
   "nginx-lab"
 )
 
@@ -80,6 +81,39 @@ assert_clusterpolicy_ready() {
   pass "ClusterPolicy/${policy} está Ready"
 }
 
+wait_for_rollout_healthy() {
+  local rollout="$1"
+  local namespace="$2"
+  local phase
+
+  for _ in $(seq 1 90); do
+    phase="$(kubectl get rollout "$rollout" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    [[ "$phase" == "Healthy" ]] && break
+    sleep 2
+  done
+
+  [[ "$phase" == "Healthy" ]] || fail "Rollout/${rollout} não ficou Healthy no namespace ${namespace} (fase=${phase:-vazia})"
+  pass "Rollout/${rollout} está Healthy"
+}
+
+assert_nginx_https() {
+  local authority ingress_ip ingress_port http_code tls_mode credential_name
+
+  authority="$(printf '%s' "$INGRESS_URL" | sed -E 's#^https://([^/]+).*$#\1#')"
+  [[ "$authority" != "$INGRESS_URL" ]] || fail "INGRESS_URL deve usar HTTPS (recebido: ${INGRESS_URL})"
+  ingress_ip="${authority%%:*}"
+  ingress_port="${authority##*:}"
+  [[ "$ingress_ip" != "$ingress_port" ]] || ingress_port="443"
+
+  tls_mode="$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.servers[?(@.port.number==443)].tls.mode}')"
+  credential_name="$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.servers[?(@.port.number==443)].tls.credentialName}')"
+  [[ "$tls_mode" == "SIMPLE" && -n "$credential_name" ]] || fail "Gateway/${GATEWAY_NAME} não possui TLS SIMPLE com credentialName na porta 443"
+  kubectl get secret "$credential_name" -n "$GATEWAY_NAMESPACE" >/dev/null || fail "Secret TLS/${credential_name} não encontrado no namespace ${GATEWAY_NAMESPACE}"
+
+  http_code="$(curl -sk --noproxy '*' --resolve "${HOST_HEADER}:${ingress_port}:${ingress_ip}" -o /dev/null -w '%{http_code}' --max-time 10 "https://${HOST_HEADER}:${ingress_port}/")"
+  [[ "$http_code" == "200" ]] || fail "HTTPS do nginx-lab retornou HTTP ${http_code}; esperado=200"
+  pass "Gateway TLS e HTTPS do nginx-lab estão funcionando"
+}
 # ============================================================
 # Pré-checagens
 # ============================================================
@@ -134,12 +168,17 @@ for app in "${REQUIRED_APPS[@]}"; do
 done
 
 # ============================================================
-# 4) Rollouts principais
+# 4) HTTPS do nginx-lab via Gateway Istio
 # ============================================================
-info "4) Validando rollouts principais"
+info "4) Validando HTTPS do nginx-lab"
+assert_nginx_https
 
-kubectl rollout status deployment/postgres-api -n "$APPS_NS" --timeout=180s >/dev/null
-pass "Deployment/postgres-api disponível"
+# ============================================================
+# 5) Workloads principais
+# ============================================================
+info "5) Validando workloads principais"
+
+wait_for_rollout_healthy "postgres-api" "$APPS_NS"
 
 kubectl rollout status deployment/cpu-worker -n "$WORKERS_NS" --timeout=180s >/dev/null
 pass "Deployment/cpu-worker disponível"
@@ -255,7 +294,8 @@ echo "Resumo:"
 echo "- nodes Ready"
 echo "- Calico disponível"
 echo "- Applications principais Synced/Healthy"
-echo "- rollouts principais OK"
+echo "- Gateway TLS e HTTPS do nginx-lab OK"
+echo "- workloads principais OK"
 echo "- mesh/mTLS da postgres-api OK"
 echo "- PostgreSQL respondendo"
 echo "- RabbitMQ com fila ${RABBIT_QUEUE}"

@@ -56,6 +56,13 @@ kubectl -n argocd get svc argocd-server
 Crie um túnel da porta local `8085` para a porta HTTPS `443` do ClusterIP e
 acesse `https://localhost:8085`. O certificado é autoassinado.
 
+```powershell
+ssh.exe -N -i .\iac\vagrant\.vagrant\machines\k8s-master\vmware_desktop\private_key `
+  -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes `
+  -L 127.0.0.1:8085:<CLUSTER_IP_ARGOCD>:443 `
+  vagrant@192.168.109.151
+```
+
 Usuário inicial: `admin`. Consulte a senha sem gravá-la em arquivo:
 
 ```bash
