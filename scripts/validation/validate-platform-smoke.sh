@@ -22,6 +22,7 @@ HOST_HEADER="${HOST_HEADER:-nginx.lab.local}"
 EXTERNAL_BASE_PATH="${EXTERNAL_BASE_PATH:-/postgres-api}"
 GATEWAY_NAME="${GATEWAY_NAME:-nginx-lab-gateway}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-nginx-lab}"
+ISTIO_INGRESS_NAMESPACE="${ISTIO_INGRESS_NAMESPACE:-istio-system}"
 
 POSTGRES_POD="${POSTGRES_POD:-postgres-0}"
 POSTGRES_DB="${POSTGRES_DB:-appdb}"
@@ -108,7 +109,7 @@ assert_nginx_https() {
   tls_mode="$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.servers[?(@.port.number==443)].tls.mode}')"
   credential_name="$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.servers[?(@.port.number==443)].tls.credentialName}')"
   [[ "$tls_mode" == "SIMPLE" && -n "$credential_name" ]] || fail "Gateway/${GATEWAY_NAME} não possui TLS SIMPLE com credentialName na porta 443"
-  kubectl get secret "$credential_name" -n "$GATEWAY_NAMESPACE" >/dev/null || fail "Secret TLS/${credential_name} não encontrado no namespace ${GATEWAY_NAMESPACE}"
+  kubectl get secret "$credential_name" -n "$ISTIO_INGRESS_NAMESPACE" >/dev/null || fail "Secret TLS/${credential_name} não encontrado no namespace ${ISTIO_INGRESS_NAMESPACE}"
 
   http_code="$(curl -sk --noproxy '*' --resolve "${HOST_HEADER}:${ingress_port}:${ingress_ip}" -o /dev/null -w '%{http_code}' --max-time 10 "https://${HOST_HEADER}:${ingress_port}/")"
   [[ "$http_code" == "200" ]] || fail "HTTPS do nginx-lab retornou HTTP ${http_code}; esperado=200"
