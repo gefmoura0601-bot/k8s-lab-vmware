@@ -62,15 +62,47 @@ jobs:
       - name: Validate Grafana dashboards
         shell: bash
         run: |
-          mapfile -t dashboards < <(find kubernetes -type f -name '*dashboard*.json' -print)
+          embedded_dir="$(mktemp -d)"
+          trap 'rm -rf "${embedded_dir}"' EXIT
+          ruby -ryaml -e '
+            output = ARGV.fetch(0)
+            index = 0
+            Dir.glob("kubernetes/**/*dashboard*.{yaml,yml}").sort.each do |file|
+              YAML.load_stream(File.read(file)).each do |document|
+                next unless document.is_a?(Hash) && document["kind"] == "ConfigMap"
+                document.fetch("data", {}).each do |name, content|
+                  next unless name.end_with?(".json")
+                  index += 1
+                  File.write(File.join(output, format("%04d-%s", index, File.basename(name))), content)
+                end
+              end
+            end
+          ' "${embedded_dir}"
+          mapfile -t dashboards < <(
+            find kubernetes -type f -name '*dashboard*.json' -print
+            find "${embedded_dir}" -type f -name '*.json' -print
+          )
+          if [[ "${#dashboards[@]}" -eq 0 ]]; then
+            echo "No Grafana dashboards found." >&2
+            exit 1
+          fi
           for dashboard in "${dashboards[@]}"; do
-            jq -e '.title and (.panels | type == "array") and (.panels | length > 0)' "$dashboard" >/dev/null
+            jq -e '.uid and .title and (.panels | type == "array") and (.panels | length > 0)' "$dashboard" >/dev/null
             duplicate_ids="$(jq -r '[.panels[].id] | group_by(.)[] | select(length > 1) | .[0]' "$dashboard")"
             if [[ -n "${duplicate_ids}" ]]; then
               echo "Duplicate panel IDs in ${dashboard}: ${duplicate_ids}" >&2
               exit 1
             fi
           done
+          duplicate_uids="$(
+            for dashboard in "${dashboards[@]}"; do
+              jq -r '.uid' "$dashboard"
+            done | sort | uniq -d
+          )"
+          if [[ -n "${duplicate_uids}" ]]; then
+            echo "Duplicate Grafana dashboard UIDs: ${duplicate_uids}" >&2
+            exit 1
+          fi
       - name: Validate local Markdown links
         shell: ruby {0}
         run: |
@@ -106,6 +138,7 @@ jobs:
           - app/cpu-producer-go
           - app/cpu-worker-go
           - app/postgres-api-go
+          - app/store-service-go
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -114,7 +147,9 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: ${{ matrix.module }}/go.mod
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+          cache-dependency-path: |
+            ${{ matrix.module }}/go.mod
+            ${{ matrix.module }}/go.sum
 
       - name: Check formatting
         working-directory: ${{ matrix.module }}
@@ -163,3 +198,25 @@ jobs:
       - name: Test
         working-directory: app/transaction-service-dotnet
         run: dotnet test tests/TransactionService.Tests --configuration Release
+
+  validate-acquirer-dotnet:
+    name: Validate Acquirer .NET 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0-alpine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Restore
+        working-directory: app/acquirer-service-dotnet
+        run: dotnet restore
+
+      - name: Build
+        working-directory: app/acquirer-service-dotnet
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        working-directory: app/acquirer-service-dotnet
+        run: dotnet test tests/AcquirerService.Tests --configuration Release

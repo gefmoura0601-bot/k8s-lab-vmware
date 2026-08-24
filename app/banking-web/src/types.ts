@@ -3,6 +3,7 @@ export type Account = {
   accountNumber: string;
   ownerName: string;
   balance: number;
+  cpfMasked?: string;
 };
 export type DirectoryEntry = {
   id: string;
@@ -22,3 +23,43 @@ export type Transaction = {
   failureCode?: string;
 };
 export type ApiError = { code?: string; message?: string };
+
+export type CardType = "DEBIT" | "CREDIT";
+export type CardFormFactor = "VIRTUAL" | "PHYSICAL";
+export type CardStatus = "ACTIVE" | "BLOCKED" | "CANCELLED";
+
+export type CardSummary = {
+  id: string;
+  type: CardType;
+  formFactor: CardFormFactor;
+  status: CardStatus;
+  last4: string;
+  expiryMonth: number;
+  expiryYear: number;
+  creditLimit: number | null;
+  usedAmount: number | null;
+  availableAmount: number;
+  createdAt: string;
+};
+
+export type CardDetails = CardSummary & {
+  holderName: string;
+  number: string;
+  cvv: string;
+};
+
+export type CardPurchase = {
+  paymentId: string;
+  cardId: string | null;
+  merchantId: string;
+  merchantName: string;
+  orderReference: string;
+  amount: number;
+  currency: string;
+  paymentType: CardType;
+  installments: number;
+  status: "CAPTURED" | "DECLINED";
+  authorizationCode?: string;
+  declineCode?: string;
+  createdAt: string;
+};

@@ -15,6 +15,12 @@ app/cpu-worker-go/cpu-worker-go
 app/postgres-api-go/postgres-api-go
 *.test
 coverage.out
+**/target/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/coverage/
 
 # local backups
 backups/

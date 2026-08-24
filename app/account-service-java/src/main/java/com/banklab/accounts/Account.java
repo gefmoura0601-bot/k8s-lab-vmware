@@ -22,6 +22,10 @@ public class Account {
     private String accountNumber;
     @Column(length = 100)
     private String passwordHash;
+    @Column(length = 64)
+    private String cpfFingerprint;
+    @Column(length = 4)
+    private String cpfLast4;
     @Column(nullable = false)
     private int failedLoginAttempts;
     private Instant lockedUntil;
@@ -40,9 +44,16 @@ public class Account {
     }
 
     public Account(UUID id, String accountNumber, String ownerName, String passwordHash, BigDecimal balance) {
+        this(id, accountNumber, ownerName, passwordHash, balance, null, null);
+    }
+
+    public Account(UUID id, String accountNumber, String ownerName, String passwordHash,
+                   BigDecimal balance, String cpfFingerprint, String cpfLast4) {
         this(id, ownerName, balance);
         this.accountNumber = accountNumber;
         this.passwordHash = passwordHash;
+        this.cpfFingerprint = cpfFingerprint;
+        this.cpfLast4 = cpfLast4;
     }
 
     public boolean hasCredentials() { return accountNumber != null && passwordHash != null; }
@@ -72,5 +83,6 @@ public class Account {
     public BigDecimal getBalance() { return balance; }
     public String getAccountNumber() { return accountNumber; }
     public String getPasswordHash() { return passwordHash; }
+    public String getCpfLast4() { return cpfLast4; }
     public Instant getCreatedAt() { return createdAt; }
 }

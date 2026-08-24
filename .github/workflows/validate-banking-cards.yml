@@ -1,0 +1,67 @@
+name: Validate Banking Cards
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite TEST-BANKING-CARDS
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-banking-cards
+  cancel-in-progress: false
+
+jobs:
+  banking-cards-e2e:
+    if: inputs.confirmation == 'TEST-BANKING-CARDS'
+    runs-on: [self-hosted, master]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validar cartões virtuais e adquirência
+        shell: bash
+        env:
+          BANKING_CARDS_EVIDENCE_FILE: evidence/cards-result.json
+        run: |
+          mkdir -p evidence
+          bash scripts/validation/validate-banking-cards-e2e.sh
+
+      - name: Coletar evidências sanitizadas
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          kubectl -n banking get deployment/account-service deployment/acquirer-service deployment/store-service deployment/banking-e2e-client -o custom-columns='KIND:.kind,NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas' > evidence/deployments.txt
+          kubectl -n banking get pods -l 'app in (account-service,acquirer-service,store-service,banking-e2e-fixture)' -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready' > evidence/pods.txt
+          kubectl -n banking get authorizationpolicy/account-service authorizationpolicy/acquirer-service authorizationpolicy/store-service -o name > evidence/authorization-policies.txt
+
+      - name: Impedir dados sensíveis nos artefatos
+        id: sensitive_scan
+        if: always()
+        shell: bash
+        run: |
+          if grep -ERIl '"(number|cvv|cpf)"|cardNumber|securityCode' evidence; then
+            echo 'safe=false' >> "$GITHUB_OUTPUT"
+            evidence_dir="$(realpath evidence)"
+            expected_dir="${GITHUB_WORKSPACE%/}/evidence"
+            if [[ "$evidence_dir" == "$expected_dir" ]]; then
+              rm -rf -- "$evidence_dir"
+            else
+              echo 'Recusa ao limpar um caminho de evidência inesperado.' >&2
+            fi
+            echo 'Dados sensíveis de cartão ou CPF encontrados nas evidências.' >&2
+            exit 1
+          fi
+          echo 'safe=true' >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.sensitive_scan.outputs.safe == 'true'
+        with:
+          name: banking-cards-evidence
+          path: evidence
+          retention-days: 14

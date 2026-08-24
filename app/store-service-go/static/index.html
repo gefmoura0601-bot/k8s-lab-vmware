@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#102820" />
+    <meta name="description" content="Loja de laboratório para validar cartões virtuais do Moura Banking" />
+    <title>Moura Store</title>
+    <link rel="stylesheet" href="/store/styles.css" />
+    <script src="/store/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/store/" aria-label="Página inicial da Moura Store">
+        <span class="brand-mark">M</span>
+        <span><strong>Moura</strong><small>Store</small></span>
+      </a>
+      <span class="lab-pill">Ambiente de laboratório</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">COMÉRCIO DIGITAL SIMULADO</p>
+          <h1>Seu cartão virtual,<br />em uma compra de verdade.</h1>
+          <p class="subtitle">Escolha um item e acompanhe a autorização entre loja, adquirência e Moura Banking.</p>
+        </div>
+        <div class="flow" aria-label="Fluxo da transação">
+          <span>Loja</span><i>→</i><span>Adquirência</span><i>→</i><span>Banco</span>
+        </div>
+      </section>
+
+      <aside class="warning" role="note">
+        <strong>Use somente cartões virtuais gerados pelo laboratório.</strong>
+        Nunca informe dados de um cartão real nesta simulação.
+      </aside>
+
+      <section aria-labelledby="catalog-title">
+        <div class="section-title">
+          <div><p class="eyebrow">CATÁLOGO</p><h2 id="catalog-title">Escolha seu produto</h2></div>
+          <span>Valores em BRL</span>
+        </div>
+        <div id="products" class="products" aria-live="polite">
+          <p class="loading">Carregando catálogo…</p>
+        </div>
+      </section>
+
+      <section id="checkout-section" class="checkout hidden" aria-labelledby="checkout-title">
+        <div class="order-summary">
+          <p class="eyebrow">SEU PEDIDO</p>
+          <div id="selected-product"></div>
+          <label>Quantidade
+            <input id="quantity" type="number" min="1" max="10" value="1" inputmode="numeric" />
+          </label>
+          <div class="total"><span>Total calculado pela loja</span><strong id="total">R$ 0,00</strong></div>
+        </div>
+
+        <form id="checkout-form" class="payment-form" autocomplete="off">
+          <p class="eyebrow">PAGAMENTO SEGURO DO LAB</p>
+          <h2 id="checkout-title">Cartão virtual</h2>
+          <div class="payment-types" role="radiogroup" aria-label="Modalidade do cartão">
+            <label><input type="radio" name="paymentType" value="DEBIT" checked /> Débito</label>
+            <label><input type="radio" name="paymentType" value="CREDIT" /> Crédito</label>
+          </div>
+          <label>Número do cartão
+            <input name="number" inputmode="numeric" autocomplete="off" placeholder="9999 9900 0000 0006" maxlength="19" aria-describedby="lab-card-hint" required />
+            <small id="lab-card-hint" class="field-hint">Somente cartão virtual do laboratório, com início 999999.</small>
+          </label>
+          <label>Nome impresso
+            <input name="holderName" autocomplete="off" maxlength="100" required />
+          </label>
+          <div class="form-row">
+            <label>Mês
+              <input name="expiryMonth" type="number" min="1" max="12" placeholder="MM" inputmode="numeric" autocomplete="off" required />
+            </label>
+            <label>Ano
+              <input name="expiryYear" type="number" min="2026" max="2099" placeholder="AAAA" inputmode="numeric" autocomplete="off" required />
+            </label>
+            <label>CVV
+              <input name="cvv" type="password" inputmode="numeric" autocomplete="off" minlength="3" maxlength="3" pattern="[0-9]{3}" title="Use exatamente 3 dígitos" required />
+            </label>
+          </div>
+          <label id="installments-label" class="hidden">Parcelas
+            <select name="installments">
+              <option value="1">1x sem juros</option>
+              <option value="2">2x sem juros</option>
+              <option value="3">3x sem juros</option>
+              <option value="4">4x sem juros</option>
+              <option value="6">6x sem juros</option>
+              <option value="12">12x sem juros</option>
+            </select>
+          </label>
+          <button id="pay-button" type="submit">Autorizar compra</button>
+          <p class="privacy">A Moura Store não armazena nem registra número ou CVV.</p>
+        </form>
+      </section>
+
+      <section id="result" class="result hidden" aria-live="assertive"></section>
+    </main>
+    <footer>Moura Store · Simulação de adquirência para fins de laboratório</footer>
+  </body>
+</html>

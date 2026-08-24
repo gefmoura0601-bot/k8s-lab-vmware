@@ -1,0 +1,745 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-e2e-fixture-sql
+  namespace: banking
+  labels:
+    app: banking-e2e-fixture
+    component: bootstrap
+    team: banking
+    environment: lab
+data:
+  bootstrap.sql: |
+    \set ON_ERROR_STOP on
+    \set QUIET on
+    BEGIN;
+
+    SELECT 'CREATE ROLE banking_e2e_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+    WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'banking_e2e_owner')
+    \gexec
+    SELECT 'CREATE ROLE banking_e2e LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4'
+    WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'banking_e2e')
+    \gexec
+
+    ALTER ROLE banking_e2e_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    ALTER ROLE banking_e2e LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4;
+    DO $roles$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_auth_members membership
+          JOIN pg_catalog.pg_roles executor ON executor.oid = membership.member
+         WHERE executor.rolname = 'banking_e2e') THEN
+        RAISE EXCEPTION 'banking_e2e must not inherit or assume another database role';
+      END IF;
+    END
+    $roles$;
+    ALTER ROLE banking_e2e SET statement_timeout = '30s';
+    ALTER ROLE banking_e2e SET lock_timeout = '5s';
+    ALTER ROLE banking_e2e SET idle_in_transaction_session_timeout = '15s';
+    ALTER ROLE banking_e2e IN DATABASE appdb SET banking.environment = 'lab';
+    SELECT pg_catalog.format('ALTER ROLE banking_e2e PASSWORD %L', :'fixture_password')
+    \gexec
+
+    CREATE SCHEMA IF NOT EXISTS banking_e2e AUTHORIZATION banking_e2e_owner;
+    ALTER SCHEMA banking_e2e OWNER TO banking_e2e_owner;
+    REVOKE ALL ON SCHEMA banking_e2e FROM PUBLIC;
+    REVOKE CREATE ON SCHEMA banking_e2e FROM banking_e2e;
+    GRANT USAGE ON SCHEMA banking_e2e TO banking_e2e;
+    GRANT CONNECT ON DATABASE appdb TO banking_e2e;
+    REVOKE TEMPORARY ON DATABASE appdb FROM banking_e2e;
+
+    GRANT USAGE ON SCHEMA account_service TO banking_e2e_owner;
+    GRANT SELECT, UPDATE, DELETE ON TABLE account_service.accounts TO banking_e2e_owner;
+    GRANT SELECT, INSERT, DELETE ON TABLE account_service.ledger_entries TO banking_e2e_owner;
+    GRANT SELECT, DELETE ON TABLE account_service.processed_transfers TO banking_e2e_owner;
+    GRANT SELECT, DELETE ON TABLE account_service.pix_keys TO banking_e2e_owner;
+    GRANT USAGE, SELECT ON SEQUENCE account_service.ledger_entries_id_seq TO banking_e2e_owner;
+
+    DO $fixture$
+    BEGIN
+      IF pg_catalog.to_regnamespace('transaction_service') IS NOT NULL THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA transaction_service TO banking_e2e_owner';
+        EXECUTE 'REVOKE ALL ON SCHEMA transaction_service FROM banking_e2e';
+        EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA transaction_service FROM banking_e2e';
+        EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA transaction_service FROM banking_e2e';
+      END IF;
+      IF pg_catalog.to_regclass('transaction_service.transactions') IS NOT NULL THEN
+        EXECUTE 'GRANT SELECT, DELETE ON TABLE transaction_service.transactions TO banking_e2e_owner';
+      END IF;
+      IF pg_catalog.to_regnamespace('acquiring_service') IS NOT NULL THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA acquiring_service TO banking_e2e_owner';
+        EXECUTE 'REVOKE ALL ON SCHEMA acquiring_service FROM banking_e2e';
+        EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA acquiring_service FROM banking_e2e';
+        EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA acquiring_service FROM banking_e2e';
+      END IF;
+      IF pg_catalog.to_regclass('acquiring_service.payments') IS NOT NULL THEN
+        EXECUTE 'GRANT SELECT, DELETE ON TABLE acquiring_service.payments TO banking_e2e_owner';
+      END IF;
+      IF pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL THEN
+        EXECUTE 'GRANT SELECT, DELETE ON TABLE account_service.card_payments TO banking_e2e_owner';
+      END IF;
+      IF pg_catalog.to_regclass('account_service.cards') IS NOT NULL THEN
+        EXECUTE 'GRANT SELECT, DELETE ON TABLE account_service.cards TO banking_e2e_owner';
+      END IF;
+      IF pg_catalog.to_regclass('account_service.card_credit_lines') IS NOT NULL THEN
+        EXECUTE 'GRANT SELECT, DELETE ON TABLE account_service.card_credit_lines TO banking_e2e_owner';
+      END IF;
+    END
+    $fixture$;
+
+    REVOKE ALL ON SCHEMA account_service FROM banking_e2e;
+    REVOKE ALL ON ALL TABLES IN SCHEMA account_service FROM banking_e2e;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA account_service FROM banking_e2e;
+
+    CREATE TABLE IF NOT EXISTS banking_e2e.payment_runs (
+      run_id uuid NOT NULL,
+      payment_id uuid NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+      CONSTRAINT pk_banking_e2e_payment_runs PRIMARY KEY (run_id, payment_id),
+      CONSTRAINT uq_banking_e2e_payment_runs_payment UNIQUE (payment_id)
+    );
+    ALTER TABLE banking_e2e.payment_runs OWNER TO banking_e2e_owner;
+    REVOKE ALL ON TABLE banking_e2e.payment_runs FROM PUBLIC;
+    REVOKE ALL ON TABLE banking_e2e.payment_runs FROM banking_e2e;
+
+    CREATE OR REPLACE FUNCTION banking_e2e.fund_account(
+      p_run_id uuid,
+      p_account_id uuid,
+      p_amount numeric
+    ) RETURNS uuid
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog
+    AS $function$
+    DECLARE
+      v_owner_name text;
+      v_balance numeric(19, 2);
+      v_journal_id uuid := pg_catalog.gen_random_uuid();
+      v_prefix text := 'E2E:' || p_run_id::text || ':%';
+    BEGIN
+      IF session_user <> 'banking_e2e'
+         OR pg_catalog.current_setting('banking.environment', true) IS DISTINCT FROM 'lab' THEN
+        RAISE EXCEPTION 'banking E2E fixture is restricted to the lab executor';
+      END IF;
+      IF p_run_id IS NULL OR p_account_id IS NULL THEN
+        RAISE EXCEPTION 'E2E run and account identifiers are required';
+      END IF;
+      IF p_amount IS NULL
+         OR p_amount <= 0
+         OR p_amount > 1000
+         OR pg_catalog.round(p_amount, 2) <> p_amount THEN
+        RAISE EXCEPTION 'E2E funding amount must be between 0.01 and 1000.00 with at most two decimal places';
+      END IF;
+
+      SELECT owner_name, balance
+        INTO v_owner_name, v_balance
+        FROM account_service.accounts
+       WHERE id = p_account_id
+       FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'E2E account % does not exist', p_account_id;
+      END IF;
+      IF v_owner_name NOT LIKE v_prefix THEN
+        RAISE EXCEPTION 'account % does not belong to E2E run %', p_account_id, p_run_id;
+      END IF;
+      IF v_balance <> 0 THEN
+        RAISE EXCEPTION 'E2E account % must have zero balance before funding', p_account_id;
+      END IF;
+
+      UPDATE account_service.accounts
+         SET balance = balance + p_amount,
+             version = version + 1
+       WHERE id = p_account_id;
+      INSERT INTO account_service.ledger_entries(journal_id, account_id, signed_amount, entry_type)
+      VALUES (v_journal_id, p_account_id, p_amount, 'E2E_FUNDING'),
+             (v_journal_id, NULL, -p_amount, 'SYSTEM_OFFSET');
+      RETURN v_journal_id;
+    END
+    $function$;
+
+    CREATE OR REPLACE FUNCTION banking_e2e.track_payment(
+      p_run_id uuid,
+      p_payment_id uuid
+    ) RETURNS uuid
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog
+    AS $function$
+    DECLARE
+      v_existing_run uuid;
+      v_exists boolean := false;
+      v_count integer;
+      v_inserted integer;
+    BEGIN
+      IF session_user <> 'banking_e2e'
+         OR pg_catalog.current_setting('banking.environment', true) IS DISTINCT FROM 'lab' THEN
+        RAISE EXCEPTION 'banking E2E fixture is restricted to the lab executor';
+      END IF;
+      IF p_run_id IS NULL OR p_payment_id IS NULL THEN
+        RAISE EXCEPTION 'E2E run and payment identifiers are required';
+      END IF;
+
+      PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_run_id::text, 0));
+
+      IF pg_catalog.to_regclass('acquiring_service.payments') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS (SELECT 1 FROM acquiring_service.payments WHERE payment_id = $1)'
+          INTO v_exists USING p_payment_id;
+        IF v_exists THEN
+          RAISE EXCEPTION 'payment identifier is already present in acquiring service';
+        END IF;
+      END IF;
+      IF pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS (SELECT 1 FROM account_service.card_payments WHERE payment_id = $1)'
+          INTO v_exists USING p_payment_id;
+        IF v_exists THEN
+          RAISE EXCEPTION 'payment identifier is already present in account service';
+        END IF;
+      END IF;
+
+      SELECT run_id INTO v_existing_run
+        FROM banking_e2e.payment_runs
+       WHERE payment_id = p_payment_id;
+      IF FOUND THEN
+        IF v_existing_run <> p_run_id THEN
+          RAISE EXCEPTION 'payment identifier is already tracked by another E2E run';
+        END IF;
+        RETURN p_payment_id;
+      END IF;
+
+      SELECT pg_catalog.count(*) INTO v_count
+        FROM banking_e2e.payment_runs
+       WHERE run_id = p_run_id;
+      IF v_count >= 10 THEN
+        RAISE EXCEPTION 'payment tracking refused: E2E run % reached the 10-payment safety limit', p_run_id;
+      END IF;
+
+      INSERT INTO banking_e2e.payment_runs(run_id, payment_id)
+      VALUES (p_run_id, p_payment_id)
+      ON CONFLICT (payment_id) DO NOTHING;
+      GET DIAGNOSTICS v_inserted = ROW_COUNT;
+      IF v_inserted <> 1 THEN
+        RAISE EXCEPTION 'payment identifier was concurrently tracked by another E2E run';
+      END IF;
+      RETURN p_payment_id;
+    END
+    $function$;
+
+    CREATE OR REPLACE FUNCTION banking_e2e.cleanup_run(p_run_id uuid)
+    RETURNS jsonb
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog
+    AS $function$
+    DECLARE
+      v_account_ids uuid[];
+      v_card_payment_ids uuid[];
+      v_tracked_payment_ids uuid[];
+      v_payment_ids uuid[];
+      v_prefix text := 'E2E:' || p_run_id::text || ':%';
+      v_transactions integer := 0;
+      v_acquiring_payments integer := 0;
+      v_card_payments integer := 0;
+      v_cards integer := 0;
+      v_credit_lines integer := 0;
+      v_ledger integer := 0;
+      v_transfers integer := 0;
+      v_pix_keys integer := 0;
+      v_accounts integer := 0;
+      v_payment_tracking integer := 0;
+      v_crossed boolean := false;
+    BEGIN
+      IF session_user <> 'banking_e2e'
+         OR pg_catalog.current_setting('banking.environment', true) IS DISTINCT FROM 'lab' THEN
+        RAISE EXCEPTION 'banking E2E fixture is restricted to the lab executor';
+      END IF;
+      IF p_run_id IS NULL THEN
+        RAISE EXCEPTION 'E2E run identifier is required';
+      END IF;
+
+      PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_run_id::text, 0));
+      SELECT pg_catalog.array_agg(payment_id ORDER BY payment_id)
+        INTO v_tracked_payment_ids
+        FROM banking_e2e.payment_runs
+       WHERE run_id = p_run_id;
+
+      PERFORM 1
+        FROM account_service.accounts
+       WHERE owner_name LIKE v_prefix
+       ORDER BY id
+       FOR UPDATE;
+      SELECT pg_catalog.array_agg(id ORDER BY id)
+        INTO v_account_ids
+        FROM account_service.accounts
+       WHERE owner_name LIKE v_prefix;
+      IF v_account_ids IS NULL AND v_tracked_payment_ids IS NULL THEN
+        RETURN pg_catalog.jsonb_build_object(
+          'runId', p_run_id, 'accounts', 0, 'transactions', 0,
+          'acquiringPayments', 0, 'cardPayments', 0, 'cards', 0,
+          'creditLines', 0, 'ledgerEntries', 0, 'processedTransfers', 0,
+          'pixKeys', 0, 'paymentTracking', 0
+        );
+      END IF;
+
+      IF v_account_ids IS NOT NULL THEN
+        IF pg_catalog.cardinality(v_account_ids) > 10 THEN
+          RAISE EXCEPTION 'cleanup refused: E2E run % exceeds the 10-account safety limit', p_run_id;
+        END IF;
+
+        IF pg_catalog.to_regclass('transaction_service.transactions') IS NOT NULL THEN
+          EXECUTE $sql$
+            SELECT pg_catalog.bool_or(
+              (source_account_id = ANY($1)) IS DISTINCT FROM
+              (destination_account_id = ANY($1)))
+            FROM transaction_service.transactions
+            WHERE source_account_id = ANY($1) OR destination_account_id = ANY($1)
+          $sql$ INTO v_crossed USING v_account_ids;
+          IF coalesce(v_crossed, false) THEN
+            RAISE EXCEPTION 'cleanup refused: E2E run % has a transaction involving a non-E2E account', p_run_id;
+          END IF;
+        END IF;
+
+        SELECT pg_catalog.bool_or(
+                 (source_account_id = ANY(v_account_ids)) IS DISTINCT FROM
+                 (destination_account_id = ANY(v_account_ids)))
+          INTO v_crossed
+          FROM account_service.processed_transfers
+         WHERE source_account_id = ANY(v_account_ids)
+            OR destination_account_id = ANY(v_account_ids);
+        IF coalesce(v_crossed, false) THEN
+          RAISE EXCEPTION 'cleanup refused: E2E run % has a processed transfer involving a non-E2E account', p_run_id;
+        END IF;
+
+        SELECT pg_catalog.bool_or(
+                 peer.account_id IS NOT NULL
+                 AND NOT (peer.account_id = ANY(v_account_ids)))
+          INTO v_crossed
+          FROM account_service.ledger_entries target
+          JOIN account_service.ledger_entries peer ON peer.journal_id = target.journal_id
+         WHERE target.account_id = ANY(v_account_ids);
+        IF coalesce(v_crossed, false) THEN
+          RAISE EXCEPTION 'cleanup refused: E2E run % shares a ledger journal with a non-E2E account', p_run_id;
+        END IF;
+
+        IF pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL
+           AND pg_catalog.to_regclass('account_service.cards') IS NOT NULL THEN
+          EXECUTE $sql$
+            SELECT pg_catalog.bool_or(
+              (payment.account_id = ANY($1) OR card.account_id = ANY($1))
+              AND (
+                (payment.account_id IS NOT NULL AND NOT (payment.account_id = ANY($1)))
+                OR (card.account_id IS NOT NULL AND NOT (card.account_id = ANY($1)))
+              ))
+            FROM account_service.card_payments payment
+            LEFT JOIN account_service.cards card ON card.id = payment.card_id
+            WHERE payment.account_id = ANY($1) OR card.account_id = ANY($1)
+          $sql$ INTO v_crossed USING v_account_ids;
+          IF coalesce(v_crossed, false) THEN
+            RAISE EXCEPTION 'cleanup refused: E2E run % has a card payment involving external card data', p_run_id;
+          END IF;
+
+          EXECUTE $sql$
+            SELECT pg_catalog.array_agg(payment.payment_id ORDER BY payment.payment_id)
+            FROM account_service.card_payments payment
+            LEFT JOIN account_service.cards card ON card.id = payment.card_id
+            WHERE payment.account_id = ANY($1) OR card.account_id = ANY($1)
+          $sql$ INTO v_card_payment_ids USING v_account_ids;
+        ELSIF pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL THEN
+          EXECUTE $sql$
+            SELECT pg_catalog.array_agg(payment_id ORDER BY payment_id)
+            FROM account_service.card_payments
+            WHERE account_id = ANY($1)
+          $sql$ INTO v_card_payment_ids USING v_account_ids;
+        END IF;
+      END IF;
+
+      SELECT pg_catalog.array_agg(payment_id ORDER BY payment_id)
+        INTO v_payment_ids
+        FROM (
+          SELECT pg_catalog.unnest(v_tracked_payment_ids) AS payment_id
+          UNION
+          SELECT pg_catalog.unnest(v_card_payment_ids) AS payment_id
+        ) payment_ids;
+
+      IF v_tracked_payment_ids IS NOT NULL
+         AND pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL
+         AND pg_catalog.to_regclass('account_service.cards') IS NOT NULL THEN
+        EXECUTE $sql$
+          SELECT pg_catalog.bool_or(
+            CASE WHEN $2 IS NULL THEN
+              payment.account_id IS NOT NULL OR payment.card_id IS NOT NULL
+            ELSE
+              (payment.account_id IS NOT NULL AND NOT (payment.account_id = ANY($2)))
+              OR (payment.card_id IS NOT NULL
+                  AND (card.account_id IS NULL OR NOT (card.account_id = ANY($2))))
+            END)
+          FROM account_service.card_payments payment
+          LEFT JOIN account_service.cards card ON card.id = payment.card_id
+          WHERE payment.payment_id = ANY($1)
+        $sql$ INTO v_crossed USING v_tracked_payment_ids, v_account_ids;
+        IF coalesce(v_crossed, false) THEN
+          RAISE EXCEPTION 'cleanup refused: tracked payment for E2E run % references external card data', p_run_id;
+        END IF;
+      ELSIF v_tracked_payment_ids IS NOT NULL
+            AND pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL THEN
+        EXECUTE $sql$
+          SELECT pg_catalog.bool_or(
+            card_id IS NOT NULL
+            OR (account_id IS NOT NULL
+                AND ($2 IS NULL OR NOT (account_id = ANY($2)))))
+          FROM account_service.card_payments
+          WHERE payment_id = ANY($1)
+        $sql$ INTO v_crossed USING v_tracked_payment_ids, v_account_ids;
+        IF coalesce(v_crossed, false) THEN
+          RAISE EXCEPTION 'cleanup refused: tracked payment for E2E run % cannot be proven isolated', p_run_id;
+        END IF;
+      END IF;
+
+      IF v_tracked_payment_ids IS NOT NULL
+         AND pg_catalog.to_regclass('acquiring_service.payments') IS NOT NULL THEN
+        EXECUTE $sql$
+          SELECT pg_catalog.bool_or(merchant_id <> 'moura-store' OR order_id <> payment_id)
+          FROM acquiring_service.payments
+          WHERE payment_id = ANY($1)
+        $sql$ INTO v_crossed USING v_tracked_payment_ids;
+        IF coalesce(v_crossed, false) THEN
+          RAISE EXCEPTION 'cleanup refused: tracked payment for E2E run % contains external acquiring data', p_run_id;
+        END IF;
+      END IF;
+
+      IF v_payment_ids IS NOT NULL
+         AND pg_catalog.to_regclass('acquiring_service.payments') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM acquiring_service.payments WHERE payment_id = ANY($1)'
+          USING v_payment_ids;
+        GET DIAGNOSTICS v_acquiring_payments = ROW_COUNT;
+      END IF;
+
+      IF pg_catalog.to_regclass('account_service.card_payments') IS NOT NULL THEN
+        IF v_account_ids IS NOT NULL
+           AND pg_catalog.to_regclass('account_service.cards') IS NOT NULL THEN
+          EXECUTE $sql$
+            DELETE FROM account_service.card_payments payment
+             WHERE payment.payment_id = ANY($1)
+                OR payment.account_id = ANY($2)
+                OR payment.card_id IN (
+                     SELECT card.id FROM account_service.cards card
+                      WHERE card.account_id = ANY($2))
+          $sql$ USING v_payment_ids, v_account_ids;
+        ELSIF v_account_ids IS NOT NULL THEN
+          EXECUTE $sql$
+            DELETE FROM account_service.card_payments
+             WHERE payment_id = ANY($1) OR account_id = ANY($2)
+          $sql$ USING v_payment_ids, v_account_ids;
+        ELSIF v_payment_ids IS NOT NULL THEN
+          EXECUTE 'DELETE FROM account_service.card_payments WHERE payment_id = ANY($1)'
+            USING v_payment_ids;
+        END IF;
+        GET DIAGNOSTICS v_card_payments = ROW_COUNT;
+      END IF;
+
+      IF v_account_ids IS NOT NULL THEN
+        IF pg_catalog.to_regclass('account_service.card_credit_lines') IS NOT NULL THEN
+          EXECUTE 'DELETE FROM account_service.card_credit_lines WHERE account_id = ANY($1)'
+            USING v_account_ids;
+          GET DIAGNOSTICS v_credit_lines = ROW_COUNT;
+        END IF;
+        IF pg_catalog.to_regclass('account_service.cards') IS NOT NULL THEN
+          EXECUTE 'DELETE FROM account_service.cards WHERE account_id = ANY($1)'
+            USING v_account_ids;
+          GET DIAGNOSTICS v_cards = ROW_COUNT;
+        END IF;
+
+        IF pg_catalog.to_regclass('transaction_service.transactions') IS NOT NULL THEN
+          EXECUTE $sql$
+            DELETE FROM transaction_service.transactions
+             WHERE source_account_id = ANY($1) OR destination_account_id = ANY($1)
+          $sql$ USING v_account_ids;
+          GET DIAGNOSTICS v_transactions = ROW_COUNT;
+        END IF;
+
+        DELETE FROM account_service.ledger_entries
+         WHERE journal_id IN (
+           SELECT DISTINCT journal_id
+             FROM account_service.ledger_entries
+            WHERE account_id = ANY(v_account_ids));
+        GET DIAGNOSTICS v_ledger = ROW_COUNT;
+
+        DELETE FROM account_service.processed_transfers
+         WHERE source_account_id = ANY(v_account_ids)
+            OR destination_account_id = ANY(v_account_ids);
+        GET DIAGNOSTICS v_transfers = ROW_COUNT;
+
+        DELETE FROM account_service.pix_keys WHERE account_id = ANY(v_account_ids);
+        GET DIAGNOSTICS v_pix_keys = ROW_COUNT;
+
+        DELETE FROM account_service.accounts WHERE id = ANY(v_account_ids);
+        GET DIAGNOSTICS v_accounts = ROW_COUNT;
+      END IF;
+
+      DELETE FROM banking_e2e.payment_runs WHERE run_id = p_run_id;
+      GET DIAGNOSTICS v_payment_tracking = ROW_COUNT;
+
+      RETURN pg_catalog.jsonb_build_object(
+        'runId', p_run_id,
+        'accounts', v_accounts,
+        'transactions', v_transactions,
+        'acquiringPayments', v_acquiring_payments,
+        'cardPayments', v_card_payments,
+        'cards', v_cards,
+        'creditLines', v_credit_lines,
+        'ledgerEntries', v_ledger,
+        'processedTransfers', v_transfers,
+        'pixKeys', v_pix_keys,
+        'paymentTracking', v_payment_tracking
+      );
+    END
+    $function$;
+
+    CREATE OR REPLACE FUNCTION banking_e2e.verify_access()
+    RETURNS boolean
+    LANGUAGE sql
+    SECURITY DEFINER
+    SET search_path = pg_catalog
+    AS $function$
+      SELECT session_user = 'banking_e2e'
+         AND pg_catalog.current_database() = 'appdb'
+         AND pg_catalog.current_setting('banking.environment', true) = 'lab'
+         AND NOT pg_catalog.has_schema_privilege(session_user, 'account_service', 'USAGE')
+         AND NOT pg_catalog.has_schema_privilege(session_user, 'banking_e2e', 'CREATE')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_catalog.pg_auth_members membership
+                 JOIN pg_catalog.pg_roles executor ON executor.oid = membership.member
+                WHERE executor.rolname = session_user)
+         AND NOT pg_catalog.has_table_privilege(session_user, 'account_service.accounts', 'SELECT')
+         AND NOT pg_catalog.has_table_privilege(session_user, 'account_service.accounts', 'UPDATE')
+         AND NOT pg_catalog.has_table_privilege(session_user, 'account_service.ledger_entries', 'INSERT')
+         AND NOT pg_catalog.has_table_privilege(session_user, 'banking_e2e.payment_runs', 'SELECT')
+         AND pg_catalog.has_function_privilege(
+               session_user,
+               'banking_e2e.fund_account(uuid,uuid,numeric)',
+               'EXECUTE')
+         AND pg_catalog.has_function_privilege(
+               session_user,
+               'banking_e2e.track_payment(uuid,uuid)',
+               'EXECUTE')
+         AND pg_catalog.has_function_privilege(
+               session_user,
+               'banking_e2e.cleanup_run(uuid)',
+               'EXECUTE');
+    $function$;
+
+    ALTER FUNCTION banking_e2e.fund_account(uuid, uuid, numeric) OWNER TO banking_e2e_owner;
+    ALTER FUNCTION banking_e2e.track_payment(uuid, uuid) OWNER TO banking_e2e_owner;
+    ALTER FUNCTION banking_e2e.cleanup_run(uuid) OWNER TO banking_e2e_owner;
+    ALTER FUNCTION banking_e2e.verify_access() OWNER TO banking_e2e_owner;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA banking_e2e FROM PUBLIC;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA banking_e2e FROM banking_e2e;
+    GRANT EXECUTE ON FUNCTION banking_e2e.fund_account(uuid, uuid, numeric) TO banking_e2e;
+    GRANT EXECUTE ON FUNCTION banking_e2e.track_payment(uuid, uuid) TO banking_e2e;
+    GRANT EXECUTE ON FUNCTION banking_e2e.cleanup_run(uuid) TO banking_e2e;
+    GRANT EXECUTE ON FUNCTION banking_e2e.verify_access() TO banking_e2e;
+
+    COMMIT;
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: banking-e2e-fixture-bootstrap
+  namespace: banking
+  labels:
+    app: banking-e2e-fixture
+    component: bootstrap
+    team: banking
+    environment: lab
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: banking-e2e-fixture
+        component: bootstrap
+        team: banking
+        environment: lab
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: banking-e2e
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command: [sh, -ec]
+          args:
+            - |
+              test "${BANKING_E2E_USER}" = banking_e2e
+              test -n "${BANKING_E2E_PASSWORD}"
+              for attempt in $(seq 1 60); do
+                if psql -X -qAtc "SELECT pg_catalog.to_regclass('account_service.accounts') IS NOT NULL AND pg_catalog.to_regclass('account_service.ledger_entries') IS NOT NULL" | grep -qx t; then
+                  break
+                fi
+                test "${attempt}" -lt 60
+                sleep 5
+              done
+              psql -X -q -v ON_ERROR_STOP=1 -v "fixture_password=${BANKING_E2E_PASSWORD}" -f /fixture/bootstrap.sql
+          env:
+            - name: PGHOST
+              value: postgres.databases.svc.cluster.local
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: appdb
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: banking-db
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-db
+                  key: password
+            - name: BANKING_E2E_USER
+              valueFrom:
+                secretKeyRef:
+                  name: banking-e2e-db
+                  key: username
+            - name: BANKING_E2E_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-e2e-db
+                  key: password
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 150m
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: fixture-sql
+              mountPath: /fixture
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: fixture-sql
+          configMap:
+            name: banking-e2e-fixture-sql
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banking-e2e-client
+  namespace: banking
+  labels:
+    app: banking-e2e-fixture
+    component: client
+    team: banking
+    environment: lab
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: banking-e2e-fixture
+      component: client
+  template:
+    metadata:
+      labels:
+        app: banking-e2e-fixture
+        component: client
+        team: banking
+        environment: lab
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: banking-e2e
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: psql-client
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command: [sh, -ec]
+          args:
+            - exec sleep infinity
+          env:
+            - name: PGHOST
+              value: postgres.databases.svc.cluster.local
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: appdb
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: banking-e2e-db
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-e2e-db
+                  key: password
+          readinessProbe:
+            exec:
+              command: [sh, -ec, 'pg_isready -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE"']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: [sh, -ec, 'pg_isready -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE"']
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

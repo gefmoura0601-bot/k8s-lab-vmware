@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-cards-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: banking
+data:
+  banking-cards.json: |
+    {
+      "uid": "banking-cards",
+      "title": "Banking / Cartões e Adquirência",
+      "tags": ["banking", "cards", "acquiring", "store"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Cartões virtuais emitidos",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(banking_cards_issued_total) or vector(0)"}]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Credenciais reveladas",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(banking_cards_revealed_total) or vector(0)"}]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Pagamentos capturados",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(banking_card_acquiring_payments_total{status=\u0022captured\u0022}) or vector(0)"}]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Erros técnicos da loja",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "targets": [{"refId": "A", "expr": "sum(store_checkout_requests_total{outcome=\u0022error\u0022}) or vector(0)"}]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Checkout da loja por resultado",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [
+            {"refId": "A", "expr": "sum by (outcome) (rate(store_checkout_requests_total[5m]))", "legendFormat": "{{outcome}}"}
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Decisões da adquirência",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [
+            {"refId": "A", "expr": "sum by (status) (rate(banking_card_acquiring_payments_total[5m]))", "legendFormat": "{{status}}"}
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Autorizações no emissor",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {"refId": "A", "expr": "sum by (card_type, outcome) (rate(banking_card_payments_total[5m]))", "legendFormat": "{{card_type}} / {{outcome}}"}
+          ]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Emissão e revelação por tipo",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [
+            {"refId": "A", "expr": "sum by (card_type) (rate(banking_cards_issued_total[5m]))", "legendFormat": "emitido / {{card_type}}"},
+            {"refId": "B", "expr": "sum by (card_type) (rate(banking_cards_revealed_total[5m]))", "legendFormat": "revelado / {{card_type}}"}
+          ]
+        }
+      ]
+    }
