@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -44,6 +45,12 @@ RUNTIME_DETECTION = {
         r"DOTNET_|COMPlus_|CORECLR_|MONO_)"
     ),
 }
+TECHNOLOGY_DETECTION = {
+    "Kafka": re.compile(r"(?i)(kafka|strimzi|confluent|redpanda)"),
+    "RabbitMQ": re.compile(r"(?i)(rabbitmq|rabbit-mq|amqp)"),
+    "NGINX": re.compile(r"(?i)(nginx|ingress-nginx)"),
+    "API Gateway": re.compile(r"(?i)(kong|traefik|envoy|gateway|ambassador|apisix|istio)"),
+}
 
 CORE_RULES = {
     "cpu": (
@@ -65,6 +72,22 @@ CORE_RULES = {
     "cpu_periods": (
         r"^container_cpu_cfs_periods_total$",
         r"container.*cpu.*periods.*total$",
+    ),
+    "restarts": (
+        r"^kube_pod_container_status_restarts_total$",
+        r".*pod.*container.*restart.*total$",
+    ),
+    "oom_events": (
+        r"^container_oom_events_total$",
+        r".*(?:oom|out_of_memory).*total$",
+    ),
+    "network_receive": (
+        r"^container_network_receive_bytes_total$",
+        r".*network.*receive.*bytes.*total$",
+    ),
+    "network_transmit": (
+        r"^container_network_transmit_bytes_total$",
+        r".*network.*transmit.*bytes.*total$",
     ),
 }
 
@@ -151,6 +174,34 @@ RUNTIME_RULES = {
         ),
     },
 }
+TECHNOLOGY_RULES = {
+    "Kafka": {
+        "under_replicated_partitions": (r"^kafka_server_replicamanager_underreplicatedpartitions$", r".*kafka.*under.*replicated.*partition.*"),
+        "offline_partitions": (r"^kafka_controller_kafkacontroller_offlinepartitionscount$", r".*kafka.*offline.*partition.*"),
+        "consumer_lag": (r"^kafka_consumergroup_lag$", r".*kafka.*consumer.*lag.*"),
+        "request_errors": (r".*kafka.*request.*error.*(?:total|count)$",),
+    },
+    "RabbitMQ": {
+        "messages_ready": (r"^rabbitmq_queue_messages_ready$", r".*rabbitmq.*messages.*ready.*"),
+        "messages_unacked": (r"^rabbitmq_queue_messages_unacked$", r".*rabbitmq.*messages.*unack.*"),
+        "consumers": (r"^rabbitmq_queue_consumers$", r".*rabbitmq.*consumer.*"),
+        "connections": (r"^rabbitmq_connections$", r".*rabbitmq.*connection.*"),
+        "disk_free": (r"^rabbitmq_disk_space_available_bytes$", r".*rabbitmq.*disk.*(?:free|available).*bytes.*"),
+        "memory_used": (r"^rabbitmq_process_resident_memory_bytes$", r".*rabbitmq.*memory.*bytes.*"),
+    },
+    "NGINX": {
+        "active_connections": (r"^nginx_connections_active$", r".*nginx.*connections.*active.*"),
+        "requests": (r"^nginx_http_requests_total$", r".*nginx.*requests.*total$"),
+        "http_errors": (r".*nginx.*(?:responses|requests).*(?:5xx|status).*total$",),
+    },
+    "API Gateway": {
+        "requests": (r".*(?:gateway|kong|envoy|traefik|apisix).*request.*total$",),
+        "http_errors": (r".*(?:gateway|kong|envoy|traefik|apisix).*(?:5xx|error).*total$",),
+        "active_connections": (r".*(?:gateway|kong|envoy|traefik|apisix).*connection.*active.*",),
+    },
+}
+TECHNOLOGY_COUNTER_ROLES = {"requests", "request_errors", "http_errors"}
+
 ROLE_UNITS = {
     "heap_used": "bytes",
     "heap_max": "bytes",
@@ -198,6 +249,21 @@ STANDARD_FALLBACK_METRICS = {
     "dotnet_exceptions_total",
     "process_working_set_bytes",
     "process_resident_memory_bytes",
+    "kube_pod_container_status_restarts_total",
+    "container_oom_events_total",
+    "container_network_receive_bytes_total",
+    "container_network_transmit_bytes_total",
+    "kafka_server_replicamanager_underreplicatedpartitions",
+    "kafka_controller_kafkacontroller_offlinepartitionscount",
+    "kafka_consumergroup_lag",
+    "rabbitmq_queue_messages_ready",
+    "rabbitmq_queue_messages_unacked",
+    "rabbitmq_queue_consumers",
+    "rabbitmq_connections",
+    "rabbitmq_disk_space_available_bytes",
+    "rabbitmq_process_resident_memory_bytes",
+    "nginx_connections_active",
+    "nginx_http_requests_total",
 }
 
 
@@ -211,6 +277,7 @@ class WorkloadTarget:
     deployment: str
     runtime_hints: tuple[str, ...] = ()
     runtime_config: tuple[tuple[str, str, str], ...] = ()
+    technology_hints: tuple[str, ...] = ()
 
 
 @dataclass
@@ -273,18 +340,28 @@ def get_json(
     request = Request(
         f"{base_url}{path}{'?' + query if query else ''}",
         method="GET",
-        headers={"Accept": "application/json", "User-Agent": "eks-prometheus-assessment/2.0"},
+        headers={"Accept": "application/json", "User-Agent": "eks-prometheus-assessment/3.0"},
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            if response.status != 200:
-                raise TelemetryError(f"Prometheus returned HTTP {response.status}")
-            return json.loads(response.read().decode("utf-8"))
-    except TelemetryError:
-        raise
-    except Exception as error:
-        raise TelemetryError(f"Prometheus endpoint unavailable: {error}") from error
-
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                if response.status != 200:
+                    raise TelemetryError(f"Prometheus returned HTTP {response.status}")
+                payload = response.read(64 * 1024 * 1024 + 1)
+                if len(payload) > 64 * 1024 * 1024:
+                    raise TelemetryError("Prometheus response exceeded the 64 MiB safety limit")
+                return json.loads(payload.decode("utf-8"))
+        except HTTPError as error:
+            if error.code in {429, 500, 502, 503, 504} and attempt < 2:
+                time.sleep(0.25 * (2 ** attempt))
+                continue
+            raise TelemetryError(f"Prometheus returned HTTP {error.code}") from error
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+            if attempt < 2:
+                time.sleep(0.25 * (2 ** attempt))
+                continue
+            raise TelemetryError(f"Prometheus endpoint unavailable: {error}") from error
+    raise TelemetryError("Prometheus endpoint unavailable after retries")
 
 def percentile(values: list[float], ratio: float) -> float:
     ordered = sorted(values)
@@ -418,13 +495,13 @@ def safe_runtime_value(name: str, entry: dict[str, Any]) -> str:
     return value[:600] + ("..." if len(value) > 600 else "")
 
 
-def container_runtimes(container: dict[str, Any]) -> set[str]:
+def container_text(container: dict[str, Any]) -> str:
     env_names = [
         str(item.get("name", ""))
         for item in container.get("env") or []
         if isinstance(item, dict)
     ]
-    text = " ".join(
+    return " ".join(
         [
             str(container.get("name", "")),
             str(container.get("image", "")),
@@ -433,7 +510,20 @@ def container_runtimes(container: dict[str, Any]) -> set[str]:
             " ".join(env_names),
         ]
     )
+
+
+def container_runtimes(container: dict[str, Any]) -> set[str]:
+    text = container_text(container)
     return {runtime for runtime, pattern in RUNTIME_DETECTION.items() if pattern.search(text)}
+
+
+def container_technologies(container: dict[str, Any]) -> set[str]:
+    text = container_text(container)
+    return {
+        technology
+        for technology, pattern in TECHNOLOGY_DETECTION.items()
+        if pattern.search(text)
+    }
 
 
 def workload(value: str) -> WorkloadTarget:
@@ -461,9 +551,11 @@ def workloads_file(path: str) -> list[WorkloadTarget]:
             continue
         pod_spec = (((item.get("spec") or {}).get("template") or {}).get("spec") or {})
         runtimes: set[str] = set()
+        technologies: set[str] = set()
         config: set[tuple[str, str, str]] = set()
         for container in pod_spec.get("containers") or []:
             runtimes.update(container_runtimes(container))
+            technologies.update(container_technologies(container))
             container_name = str(container.get("name", "-"))
             for entry in container.get("env") or []:
                 if not isinstance(entry, dict):
@@ -477,6 +569,7 @@ def workloads_file(path: str) -> list[WorkloadTarget]:
                 deployment,
                 tuple(sorted(runtimes)),
                 tuple(sorted(config)),
+                tuple(sorted(technologies)),
             )
         )
     return result
@@ -487,16 +580,18 @@ def merge_targets(targets: list[WorkloadTarget]) -> list[WorkloadTarget]:
     for target in targets:
         entry = merged.setdefault(
             (target.namespace, target.deployment),
-            {"runtimes": set(), "config": set()},
+            {"runtimes": set(), "config": set(), "technologies": set()},
         )
         entry["runtimes"].update(target.runtime_hints)
         entry["config"].update(target.runtime_config)
+        entry["technologies"].update(target.technology_hints)
     return [
         WorkloadTarget(
             namespace,
             deployment,
             tuple(sorted(value["runtimes"])),
             tuple(sorted(value["config"])),
+            tuple(sorted(value["technologies"])),
         )
         for (namespace, deployment), value in sorted(merged.items())
     ]
@@ -736,7 +831,9 @@ class MetricDiscovery:
             "catalogMetrics": len(self.catalog),
             "catalogReason": self.catalog_reason,
             "seriesErrors": errors[:20],
-            "runtimeCandidates": candidates,
+            "metricCandidates": candidates,
+            "runtimeCandidates": {key: value for key, value in candidates.items() if key in RUNTIME_RULES},
+            "technologyCandidates": {key: value for key, value in candidates.items() if key in TECHNOLOGY_RULES},
             "automaticEndpointDiscovery": False,
             "readOnlyEndpoints": [
                 "/api/v1/status/runtimeinfo",
@@ -749,12 +846,13 @@ class MetricDiscovery:
 
 
 def candidate_map(discovery: MetricDiscovery) -> dict[str, dict[str, list[str]]]:
+    definitions = {**RUNTIME_RULES, **TECHNOLOGY_RULES}
     return {
-        runtime: {
+        technology: {
             role: ranked_candidates(discovery.catalog, patterns)
             for role, patterns in roles.items()
         }
-        for runtime, roles in RUNTIME_RULES.items()
+        for technology, roles in definitions.items()
     }
 
 
@@ -787,11 +885,15 @@ def core_bindings(
         resolved[role] = best_selector(discovery, target, names, role, True, True)
 
     expressions = {
-        "cpu": lambda metric, selector: f"sum(rate({metric}{selector}[5m]))",
-        "memory": lambda metric, selector: f"sum({metric}{selector})",
-        "memory_working_set": lambda metric, selector: f"sum({metric}{selector})",
+        "cpu": (lambda metric, selector: f"sum(rate({metric}{selector}[5m]))", "cores"),
+        "memory": (lambda metric, selector: f"sum({metric}{selector})", "bytes"),
+        "memory_working_set": (lambda metric, selector: f"sum({metric}{selector})", "bytes"),
+        "restarts": (lambda metric, selector: f"sum(increase({metric}{selector}[1h]))", "events_per_hour"),
+        "oom_events": (lambda metric, selector: f"sum(increase({metric}{selector}[1h]))", "events_per_hour"),
+        "network_receive": (lambda metric, selector: f"sum(rate({metric}{selector}[5m]))", "bytes_per_second"),
+        "network_transmit": (lambda metric, selector: f"sum(rate({metric}{selector}[5m]))", "bytes_per_second"),
     }
-    for key, builder in expressions.items():
+    for key, (builder, unit) in expressions.items():
         value = resolved.get(key)
         if not value:
             missing[key] = no_data(key, "Compatible metric family not discovered")
@@ -801,7 +903,7 @@ def core_bindings(
             key,
             builder(metric, match.selector),
             metric,
-            unit="cores" if key == "cpu" else "bytes",
+            unit=unit,
             selector_labels=match.labels,
         )
 
@@ -921,6 +1023,120 @@ def runtime_bindings(
     return bindings, missing, sources
 
 
+def technology_unit(role: str) -> str:
+    if role in {"disk_free", "memory_used"}:
+        return "bytes"
+    if role in TECHNOLOGY_COUNTER_ROLES:
+        return "per_second"
+    return "count"
+
+
+def technology_bindings(
+    discovery: MetricDiscovery,
+    target: WorkloadTarget,
+    candidates: dict[str, dict[str, list[str]]],
+) -> tuple[list[str], dict[str, MetricBinding], dict[str, MetricResult]]:
+    detected = set(target.technology_hints)
+    bindings: dict[str, MetricBinding] = {}
+    missing: dict[str, MetricResult] = {}
+    for technology, roles in TECHNOLOGY_RULES.items():
+        available: dict[str, tuple[str, SelectorMatch]] = {}
+        for role in roles:
+            resolved = best_selector(
+                discovery,
+                target,
+                candidates.get(technology, {}).get(role, []),
+                role,
+                False,
+                technology in target.technology_hints,
+            )
+            if resolved:
+                available[role] = resolved
+        if available:
+            detected.add(technology)
+        if technology not in detected:
+            continue
+        prefix = re.sub(r"[^a-z0-9]+", "_", technology.lower()).strip("_")
+        for role in roles:
+            key = f"{prefix}_{role}"
+            resolved = available.get(role)
+            if not resolved:
+                missing[key] = no_data(
+                    key,
+                    f"No compatible {technology} {role} metric discovered for workload",
+                    runtime=technology,
+                    unit=technology_unit(role),
+                )
+                continue
+            metric, match = resolved
+            series = f"{metric}{match.selector}"
+            query = (
+                f"sum(rate({series}[5m]))"
+                if role in TECHNOLOGY_COUNTER_ROLES
+                else f"sum({series})"
+            )
+            bindings[key] = MetricBinding(
+                key,
+                query,
+                metric,
+                runtime=technology,
+                unit=technology_unit(role),
+                selector_labels=match.labels,
+            )
+    return sorted(detected), bindings, missing
+
+
+def display_value(value: float | None, unit: str) -> str:
+    if value is None:
+        return "sem dados"
+    if unit == "bytes":
+        return f"{value / 1048576:.1f} MiB"
+    if unit == "bytes_per_second":
+        return f"{value / 1048576:.2f} MiB/s"
+    if unit == "cores":
+        return f"{value * 100:.1f}% de 1 vCPU"
+    if unit == "percent":
+        return f"{value:.1f}%"
+    if unit == "events_per_hour":
+        return f"{value:.2f}/h"
+    if unit == "per_second":
+        return f"{value:.2f}/s"
+    return f"{value:.2f}"
+
+
+def simple_metrics(metrics: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for key, metric in sorted(metrics.items()):
+        if not isinstance(metric, dict):
+            continue
+        unit = str(metric.get("unit") or "")
+        state = metric.get("state", "NO_DATA")
+        p95 = metric.get("p95")
+        assessment = "evidência disponível"
+        if state != "AVAILABLE":
+            assessment = "não avaliado; métrica ausente ou indisponível"
+        elif key == "cpu_throttling" and isinstance(p95, (int, float)) and p95 > 10:
+            assessment = "throttling elevado; revisar CPU request/limit"
+        elif key.endswith(("restarts", "oom_events")) and isinstance(p95, (int, float)) and p95 > 0:
+            assessment = "eventos observados; investigar estabilidade e limites"
+        elif key.endswith("consumer_lag") and isinstance(p95, (int, float)) and p95 > 0:
+            assessment = "lag observado; validar capacidade dos consumidores"
+        elif key.endswith(("under_replicated_partitions", "offline_partitions")) and isinstance(p95, (int, float)) and p95 > 0:
+            assessment = "risco de disponibilidade no Kafka"
+        rows.append(
+            {
+                "metric": key,
+                "state": state,
+                "mean": display_value(metric.get("mean"), unit),
+                "p95": display_value(p95, unit),
+                "peak": display_value(metric.get("peak"), unit),
+                "unit": unit,
+                "assessment": assessment,
+            }
+        )
+    return rows
+
+
 def runtime_metadata(identity: SelectorMatch | None) -> dict[str, str]:
     if not identity:
         return {}
@@ -947,10 +1163,13 @@ def collect_workload(
     runtime, missing_runtime, bindings_by_key = runtime_bindings(
         discovery, target, runtimes, candidates
     )
-    bindings = {**core, **runtime}
+    technologies, technology, missing_technology = technology_bindings(
+        discovery, target, candidates
+    )
+    bindings = {**core, **runtime, **technology}
     metrics: dict[str, dict[str, Any]] = {
         key: asdict(result)
-        for key, result in {**missing_core, **missing_runtime}.items()
+        for key, result in {**missing_core, **missing_runtime, **missing_technology}.items()
     }
     if bindings:
         with ThreadPoolExecutor(max_workers=min(16, len(bindings))) as pool:
@@ -1011,6 +1230,8 @@ def collect_workload(
         "state": state,
         "runtimeHints": list(target.runtime_hints),
         "runtimeDetected": runtimes,
+        "technologyHints": list(target.technology_hints),
+        "technologiesDetected": technologies,
         "runtimeConfig": [
             {"container": container, "name": name, "value": value}
             for container, name, value in target.runtime_config
@@ -1018,7 +1239,61 @@ def collect_workload(
         "runtimeTelemetry": runtime_telemetry,
         "metricBindings": bindings_by_key,
         "metrics": metrics,
+        "simpleMetrics": simple_metrics(metrics),
     }
+
+
+def prometheus_platform_health(base_url: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "state": "AVAILABLE",
+        "targets": {},
+        "rules": {},
+        "readOnlyEndpoints": ["/api/v1/targets", "/api/v1/rules"],
+    }
+    errors: list[str] = []
+    try:
+        payload = get_json(base_url, "/api/v1/targets", {"state": "active"})
+        active = (payload.get("data") or {}).get("activeTargets") or []
+        result["targets"] = {
+            "active": len(active),
+            "up": sum(item.get("health") == "up" for item in active),
+            "down": sum(item.get("health") != "up" for item in active),
+            "scrapeErrors": sum(bool(item.get("lastError")) for item in active),
+        }
+    except TelemetryError as error:
+        errors.append(f"targets: {error}")
+    try:
+        payload = get_json(base_url, "/api/v1/rules")
+        groups = (payload.get("data") or {}).get("groups") or []
+        rules = [
+            rule
+            for group in groups
+            for rule in (group.get("rules") or [])
+            if isinstance(rule, dict)
+        ]
+        alerts = [rule for rule in rules if rule.get("type") == "alerting"]
+        result["rules"] = {
+            "groups": len(groups),
+            "rules": len(rules),
+            "unhealthy": sum(rule.get("health") not in {None, "ok"} for rule in rules),
+            "alerts": len(alerts),
+            "firing": sum(
+                alert.get("state") == "firing"
+                for rule in alerts
+                for alert in (rule.get("alerts") or [])
+            ),
+            "pending": sum(
+                alert.get("state") == "pending"
+                for rule in alerts
+                for alert in (rule.get("alerts") or [])
+            ),
+        }
+    except TelemetryError as error:
+        errors.append(f"rules: {error}")
+    if errors:
+        result["state"] = "PARTIAL" if result["targets"] or result["rules"] else "UNAVAILABLE"
+        result["reason"] = "; ".join(errors)
+    return result
 
 
 def main() -> int:
@@ -1066,6 +1341,7 @@ def main() -> int:
         runtime = get_json(base_url, "/api/v1/status/runtimeinfo")
         if runtime.get("status") != "success":
             raise TelemetryError("runtimeinfo response was not successful")
+        platform_health = prometheus_platform_health(base_url)
     except TelemetryError as error:
         print(
             json.dumps(
@@ -1087,6 +1363,7 @@ def main() -> int:
                     "window": args.window,
                     "stepSeconds": WINDOWS[args.window],
                     "runtime": runtime.get("data", {}),
+                    "platformHealth": platform_health,
                     "workloads": [],
                     "reason": "No workloads explicitly configured",
                 },
@@ -1127,20 +1404,25 @@ def main() -> int:
         else "PARTIAL"
     )
     runtime_counts: dict[str, int] = {}
+    technology_counts: dict[str, int] = {}
     for item in items:
         for runtime_name in item.get("runtimeDetected", []):
             runtime_counts[runtime_name] = runtime_counts.get(runtime_name, 0) + 1
+        for technology in item.get("technologiesDetected", []):
+            technology_counts[technology] = technology_counts.get(technology, 0) + 1
 
     print(
         json.dumps(
             {
-                "schemaVersion": "2.0",
+                "schemaVersion": "3.0",
                 "state": state,
                 "window": args.window,
                 "stepSeconds": step,
                 "runtime": runtime.get("data", {}),
+                "platformHealth": platform_health,
                 "metricDiscovery": discovery.summary(candidates),
                 "runtimeWorkloads": runtime_counts,
+                "technologyWorkloads": technology_counts,
                 "workloads": items,
             },
             ensure_ascii=False,

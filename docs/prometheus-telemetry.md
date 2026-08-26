@@ -35,7 +35,7 @@ O coletor não pressupõe nomes de aplicações, namespaces ou labels do lab. El
 3. classifica famílias por semântica e nomes de métricas;
 4. consulta `/api/v1/series` para descobrir os labels reais de namespace, pod, workload e heap;
 5. correlaciona os valores desses labels com cada Deployment;
-6. consulta somente `/api/v1/query_range` para calcular média, pico, p50, p90, p95 e p99.
+6. consulta somente `/api/v1/query_range` para calcular média, pico, p50, p90, p95 e p99;
 
 Labels como `namespace`/`pod`, `k8s_namespace_name`/`k8s_pod_name` ou equivalentes são aceitos quando os valores identificam o workload. A ausência de uma série vira `NO_DATA`/`N/A`, nunca conformidade.
 
@@ -43,9 +43,9 @@ Labels como `namespace`/`pod`, `k8s_namespace_name`/`k8s_pod_name` ou equivalent
 
 A coleta básica procura famílias compatíveis de:
 
-- CPU, memória total, working set e throttling;
+- CPU, memória total, working set, throttling, reinícios, OOM e rede;
 - JVM: identidade/versão, heap usado/máximo, GC, threads, alocação e memória nativa;
-- .NET: identidade/versão, managed heap/máximo, GC, thread pool, alocação, exceções e working set.
+- .NET: identidade/versão, managed heap/máximo, GC, thread pool, alocação, exceções e working set;
 
 O runtime é inferido por duas fontes independentes: imagem/comando/variáveis do manifest e séries reais do Prometheus. A saída registra a métrica-fonte e os labels usados para que a correlação seja auditável.
 
@@ -53,7 +53,7 @@ Janelas disponíveis: `1d`, `3d`, `7d`, `14d` e `30d`. Estados: `DISABLED`, `UNA
 
 ## Segurança e tuning
 
-Somente HTTP `GET` é usado. Esquemas diferentes de HTTP/HTTPS, query string, fragmento ou credenciais embutidas na URL são rejeitados.
+Somente HTTP `GET` é usado. Esquemas diferentes de HTTP/HTTPS, query string, fragmento ou credenciais embutidas na URL são rejeitados. Respostas são limitadas a 64 MiB e chamadas transitórias usam retry/backoff limitado.
 
 Opções conhecidas de JVM e famílias seguras de runtime .NET (`DOTNET_`, `COMPlus_`, `CORECLR_`, `MONO_`, `ASPNETCORE_`) são associadas ao workload. Nomes ou valores com padrão de senha, token, secret, credential, private key, API key ou connection string são redigidos. Variáveis arbitrárias não são exportadas.
 
@@ -63,5 +63,5 @@ A aba **Prometheus** apresenta percentuais de request/limit e heap, além de ver
 
 ```bash
 cd /workspace/scripts/validation
-python3 -m unittest -v test_prometheus_telemetry.py
+python3.11 -m unittest -v test_prometheus_telemetry.py test_eks_assessment.py
 ```

@@ -118,6 +118,8 @@ tbody tr:hover { background: #f6f8fb; }
 .assessment-card { display: block; background: #fff; border-top: 5px solid #7b8798; padding: 18px; color: #152033; text-decoration: none; min-height: 150px; }
 .assessment-card.CRIT { border-color: #b32720; }
 .assessment-card.WARN { border-color: #bb7a19; }
+.assessment-card.UNKNOWN { border-color: #7a4da3; }
+.assessment-card.PARTIAL { border-color: #d19a2b; }
 .assessment-card.INFO { border-color: #2d5aa3; }
 .assessment-card.PASS { border-color: #378653; }
 .assessment-card.NA { border-color: #7b8798; }

@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 LOCK = threading.Lock()
 PLACEHOLDERS = {"", "cluster", "not-detected", "eks-production"}
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Rollout", "Job", "CronJob"}
-SEVERITY_ORDER = {"CRIT": 0, "WARN": 1, "INFO": 2, "N/A": 3, "PASS": 4}
+SEVERITY_ORDER = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
 
 
 def jfile(path: Path, fallback):
@@ -73,6 +73,22 @@ def cluster() -> tuple[str, str]:
     source = cluster_ref if ":cluster/" in cluster_ref else context
     name = source.rsplit(":cluster/", 1)[-1] if ":cluster/" in source else source.rsplit("@", 1)[-1] if "@" in source else source
     return context or "cluster", name or "cluster"
+
+
+def eks_cluster_name() -> str:
+    configured = os.environ.get("EKS_CLUSTER_NAME", "").strip()
+    if configured:
+        return configured
+    context_result = run(["kubectl", "config", "current-context"], timeout=15)
+    view_result = run(["kubectl", "config", "view", "--minify", "-o", "json"], timeout=15)
+    context = context_result.stdout.strip() if context_result.returncode == 0 else ""
+    config = jtext(view_result.stdout, {}) if view_result.returncode == 0 else {}
+    cluster_ref = (((config.get("contexts") or [{}])[0].get("context") or {}).get("cluster", ""))
+    for candidate in (cluster_ref, context):
+        match = re.search(r"arn:[^:]+:eks:[^:]+:\d{12}:cluster/([^\s]+)", candidate)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def metadata(directory: Path) -> dict:
@@ -275,7 +291,7 @@ def details(directory: Path) -> dict:
     rabbit = next((x for x in resources["statefulsets"] if "rabbit" in x["name"].lower()), None)
     scanner_summary = comprehensive.get("summary") or {}
     summary = {"nodes": len(resources["nodes"]), "readyNodes": sum(1 for x in resources["nodes"] if x["ready"]), "pods": len(resources["pods"]), "running": phases["Running"], "pending": phases["Pending"], "failed": phases["Failed"], "deployments": len(resources["deployments"]), "statefulsets": len(resources["statefulsets"]), "daemonsets": len(resources["daemonsets"]), "jobs": len(resources["jobs"]), "cronjobs": len(resources["cronjobs"]), "rollouts": len(resources["rollouts"]), "namespaces": len(resources["namespaces"]), "services": len(resources["services"]), "pvcs": len(resources["pvcs"]), "hpas": len(resources["hpas"]), "keda": len(resources["keda"]), "vpas": len(resources["vpas"]), "rabbitReady": rabbit["ready"] if rabbit else 0, "rabbitDesired": rabbit.get("desired", 0) if rabbit else 0, **scanner_summary}
-    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
+    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -310,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
         value = metadata(directory) if directory else {"clusterName": cluster()[1]}
         ident = directory.name if directory else ""
         cq = urlencode({"collection": ident}) if ident else ""
-        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Capacidade"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
+        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Capacidade"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
         nav = []
         for key, path, label in links:
             separator = "&" if "?" in path else "?"
@@ -327,12 +343,13 @@ class Handler(BaseHTTPRequestHandler):
         value, ident = details(directory), esc(directory.name)
         summary, findings = value["summary"], value["findings"]
         critical = sum(x.get("severity") == "CRIT" for x in findings); warnings = sum(x.get("severity") == "WARN" for x in findings)
-        state = "CRÍTICO" if critical else "ATENÇÃO" if warnings else "OK"
+        unknown = sum(x.get("severity") == "UNKNOWN" for x in findings); partial = sum(x.get("severity") == "PARTIAL" for x in findings)
+        state = "CRÍTICO" if critical else "ATENÇÃO" if warnings else "EVIDÊNCIA INCOMPLETA" if unknown or partial else "OK"
         cards = [("NODES", summary["nodes"], "nodes"), ("NODES READY", summary["readyNodes"], "nodes"), ("PODS", summary["pods"], "pods"), ("RUNNING", summary["running"], "pods&status=Running"), ("PENDING", summary["pending"], "pods&status=Pending"), ("FAILED", summary["failed"], "pods&status=Failed"), ("DEPLOYMENTS", summary["deployments"], "deployments"), ("STATEFULSETS", summary["statefulsets"], "statefulsets"), ("DAEMONSETS", summary["daemonsets"], "daemonsets"), ("JOBS", summary["jobs"], "jobs"), ("CRONJOBS", summary["cronjobs"], "cronjobs"), ("ROLLOUTS", summary["rollouts"], "rollouts"), ("HPA", summary["hpas"], "hpas"), ("KEDA", summary["keda"], "keda"), ("PVC", summary["pvcs"], "pvcs"), ("RABBITMQ", f'{summary["rabbitReady"]}/{summary["rabbitDesired"]}', "rabbitmq")]
         card_html = "".join(f'<a class="card" href="/resources?collection={ident}&kind={kind}"><small>{label}</small><b>{count}</b></a>' for label, count, kind in cards)
         discovery = value.get("discovery") or {}; scanner = value.get("comprehensive", {}).get("summary", {})
         priority = table(findings[:20], [("severity", "Severidade"), ("category", "Categoria"), ("namespace", "Namespace"), ("workload", "Workload"), ("check", "Check"), ("detail", "Evidência"), ("recommendation", "Recomendação")])
-        body = f'<section class="state"><small>SAÚDE DO AMBIENTE</small><h1>{state}</h1><p>{critical} crítico(s), {warnings} alerta(s), {scanner.get("passed",0)} conforme(s), {scanner.get("notApplicable",0)} N/A. {scanner.get("checks","N/A")} checks em {scanner.get("workloads","N/A")} workloads / {scanner.get("containers","N/A")} containers. Discovery {discovery.get("succeeded","N/A")}/{discovery.get("sections","N/A")}.</p></section><div class="cards">{card_html}</div><h2>Problemas e recomendações prioritárias</h2>{priority}'
+        body = f'<section class="state"><small>SAÚDE DO AMBIENTE</small><h1>{state}</h1><p>{critical} crítico(s), {warnings} alerta(s), {unknown} desconhecido(s), {partial} parcial(is), {scanner.get("passed",0)} conforme(s), {scanner.get("notApplicable",0)} N/A. {scanner.get("checks","N/A")} checks em {scanner.get("workloads","N/A")} workloads / {scanner.get("containers","N/A")} containers. Discovery {discovery.get("succeeded","N/A")}/{discovery.get("sections","N/A")}.</p></section><div class="cards">{card_html}</div><h2>Problemas e recomendações prioritárias</h2>{priority}'
         return self.layout("Visão geral", body, directory, "overview")
 
     def resources_page(self, directory: Path | None, query: dict[str, list[str]]) -> str:
@@ -365,7 +382,7 @@ class Handler(BaseHTTPRequestHandler):
         if severity: rows = [x for x in rows if x.get("severity") == severity]
         if category: rows = [x for x in rows if x.get("category") == category]
         if search: rows = [x for x in rows if search in json.dumps(x, ensure_ascii=False).lower()]
-        severities = "".join(f'<option value="{x}" {"selected" if severity == x else ""}>{x}</option>' for x in ("CRIT", "WARN", "INFO", "N/A", "PASS"))
+        severities = "".join(f'<option value="{x}" {"selected" if severity == x else ""}>{x}</option>' for x in ("CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A"))
         categories = sorted({x.get("category", "") for x in value["findings"]}); category_options = "".join(f'<option value="{esc(x)}" {"selected" if category == x else ""}>{esc(x)}</option>' for x in categories)
         filters = f'<form class="filters"><input type="hidden" name="collection" value="{esc(directory.name)}"><select name="severity"><option value="">Todas as severidades</option>{severities}</select><select name="category"><option value="">Todas as categorias</option>{category_options}</select><input name="search" value="{esc(query.get("search",[""])[0])}" placeholder="Filtrar namespace, workload, container, evidência ou tecnologia"><button>Filtrar</button></form>'
         rendered = []
@@ -381,9 +398,9 @@ class Handler(BaseHTTPRequestHandler):
         for item in details(directory)["findings"]: groups[item.get("category", "Assessment")].append(item)
         cards = []
         for category, rows in sorted(groups.items()):
-            severities = {x.get("severity") for x in rows}; level = next((x for x in ("CRIT", "WARN", "INFO", "PASS", "N/A") if x in severities), "N/A"); counts = Counter(x.get("severity") for x in rows)
+            severities = {x.get("severity") for x in rows}; level = next((x for x in ("CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A") if x in severities), "N/A"); counts = Counter(x.get("severity") for x in rows)
             href = f'/problems?collection={esc(directory.name)}&category={quote_plus(category)}'
-            cards.append(f'<a class="assessment-card {level.replace("/", "")}" href="{href}"><span class="badge">{level}</span><h2>{esc(category)}</h2><p>{len(rows)} check(s): {counts["CRIT"]} CRIT · {counts["WARN"]} WARN · {counts["PASS"]} PASS · {counts["N/A"]} N/A</p><small>{esc(rows[0].get("detail",""))}</small></a>')
+            cards.append(f'<a class="assessment-card {level.replace("/", "")}" href="{href}"><span class="badge">{level}</span><h2>{esc(category)}</h2><p>{len(rows)} check(s): {counts["CRIT"]} CRIT · {counts["WARN"]} WARN · {counts["UNKNOWN"]} UNKNOWN · {counts["PARTIAL"]} PARTIAL · {counts["PASS"]} PASS · {counts["N/A"]} N/A</p><small>{esc(rows[0].get("detail",""))}</small></a>')
         return self.layout("Assessment", f'<h1>Assessment adaptativo de melhores práticas</h1><div class="assessment-cards">{"".join(cards) or "Sem achados"}</div>', directory, "assessment")
 
     def workload(self, directory: Path | None, query: dict[str, list[str]]) -> str:
@@ -457,9 +474,11 @@ class Handler(BaseHTTPRequestHandler):
 
         rows = []
         runtime_rows = []
+        simple_rows = []
         technical_rows = []
         counters = Counter()
         runtime_coverage = 0
+        technology_coverage = 0
         for workload in workloads:
             namespace = str(workload.get("namespace", ""))
             deployment = str(workload.get("deployment", ""))
@@ -474,8 +493,12 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(entry, dict) and entry.get("runtime")
             )
             runtime_label = ", ".join(sorted(runtime_names)) or "N/A"
+            technology_names = set(workload.get("technologiesDetected") or workload.get("technologyHints") or [])
+            technology_label = ", ".join(sorted(technology_names)) or "N/A"
             if runtime_names:
                 runtime_coverage += 1
+            if technology_names:
+                technology_coverage += 1
 
             def p95(*names: str) -> float | None:
                 for name in names:
@@ -585,6 +608,7 @@ class Handler(BaseHTTPRequestHandler):
                 "namespace": namespace,
                 "deploymentHtml": deployment_html,
                 "runtime": runtime_label,
+                "technologies": technology_label,
                 "cpu": human_cpu(cpu),
                 "cpuRequestHtml": percent_html(cpu_request_pct),
                 "cpuLimitHtml": percent_html(cpu_limit_pct, 80, 95),
@@ -662,6 +686,16 @@ class Handler(BaseHTTPRequestHandler):
                     "configHtml": config_html,
                 })
 
+            for simple in workload.get("simpleMetrics") or []:
+                if not isinstance(simple, dict):
+                    continue
+                simple_rows.append({
+                    "namespace": namespace,
+                    "deploymentHtml": deployment_html,
+                    "technologies": technology_label,
+                    **simple,
+                })
+
             for metric, metric_value in sorted(metrics.items()):
                 technical_rows.append({
                     "namespace": namespace,
@@ -692,6 +726,9 @@ class Handler(BaseHTTPRequestHandler):
         message_class = "good" if state == "AVAILABLE" else "bad" if state == "UNAVAILABLE" else ""
         reason = str(telemetry.get("reason") or "").strip()
         discovery = telemetry.get("metricDiscovery") or {}
+        platform = telemetry.get("platformHealth") or {}
+        targets = platform.get("targets") or {}
+        rules = platform.get("rules") or {}
         catalog_metrics = int(discovery.get("catalogMetrics") or 0)
         catalog_source = str(discovery.get("catalogSource") or "N/A")
         message = (
@@ -706,6 +743,10 @@ class Handler(BaseHTTPRequestHandler):
             f'<div><small>Estado</small><b>{esc(state_labels.get(state, state))}</b></div>'
             f'<div><small>Cobertura básica</small><b>{available}/{len(workloads)}</b><span> deployments</span></div>'
             f'<div><small>Runtimes descobertos</small><b>{runtime_coverage}</b></div>'
+            f'<div><small>Tecnologias com métricas</small><b>{technology_coverage}</b></div>'
+            f'<div><small>Targets Prometheus UP</small><b>{targets.get("up", "N/A")}/{targets.get("active", "N/A")}</b></div>'
+            f'<div><small>Rules não saudáveis</small><b>{rules.get("unhealthy", "N/A")}</b></div>'
+            f'<div><small>Alertas firing</small><b>{rules.get("firing", "N/A")}</b></div>'
             f'<div><small>Críticos</small><b>{counters["critical"]}</b></div>'
             f'<div><small>Atenções</small><b>{counters["warning"]}</b></div>'
             f'<div><small>Revisar configuração</small><b>{counters["review"]}</b></div>'
@@ -715,13 +756,13 @@ class Handler(BaseHTTPRequestHandler):
         legend = (
             '<div class="metric-legend"><b>Como ler:</b> p95 é o uso que não foi ultrapassado '
             'em 95% das amostras. “% request/limit” compara o uso com as réplicas observadas. '
-            'JVM/.NET e seus rótulos são descobertos no Prometheus; as opções aplicadas vêm '
-            'dos manifests sanitizados. N/A significa dado ou configuração ausente.</div>'
+            'JVM/.NET, Kafka, RabbitMQ, NGINX e gateways são descobertos no Prometheus e nos manifests; '
+            'as opções aplicadas vêm dos manifests sanitizados. N/A significa dado ou configuração ausente.</div>'
         )
         usage_columns = [
             ("signalHtml", "Sinal"), ("namespace", "Namespace"),
             ("deploymentHtml", "Deployment"), ("runtime", "Runtime"),
-            ("cpu", "CPU p95"), ("cpuRequestHtml", "CPU / request"),
+            ("technologies", "Tecnologias"), ("cpu", "CPU p95"), ("cpuRequestHtml", "CPU / request"),
             ("cpuLimitHtml", "CPU / limit"), ("memory", "Memória p95"),
             ("memoryRequestHtml", "Memória / request"),
             ("memoryLimitHtml", "Memória / limit"),
@@ -750,6 +791,15 @@ class Handler(BaseHTTPRequestHandler):
             if runtime_rows
             else '<div class="message">Nenhum runtime foi identificado por manifest ou série Prometheus nesta coleta.</div>'
         )
+        platform_rows = [
+            {"domain": "Targets", "state": platform.get("state", "N/A"), "total": targets.get("active", "N/A"), "healthy": targets.get("up", "N/A"), "problem": targets.get("down", "N/A"), "detail": f'erros de scrape={targets.get("scrapeErrors", "N/A")}'},
+            {"domain": "Rules", "state": platform.get("state", "N/A"), "total": rules.get("rules", "N/A"), "healthy": "N/A", "problem": rules.get("unhealthy", "N/A"), "detail": f'alertas firing={rules.get("firing", "N/A")}; pending={rules.get("pending", "N/A")}'},
+        ]
+        simple_table = table(
+            simple_rows,
+            [("namespace","Namespace"),("deploymentHtml","Deployment"),("technologies","Tecnologias"),("metric","Sinal"),("state","Estado"),("mean","Média"),("p95","p95"),("peak","Pico"),("assessment","Leitura rápida")],
+            {"deploymentHtml"},
+        )
         technical_table = table(
             technical_rows,
             [
@@ -773,12 +823,69 @@ class Handler(BaseHTTPRequestHandler):
         )
         body = (
             f'<h1>Prometheus — visão operacional</h1>{message}{facts}{legend}'
+            f'<h2>Saúde do Prometheus</h2>{table(platform_rows, [("domain","Domínio"),("state","Estado"),("total","Total"),("healthy","Saudáveis"),("problem","Problemas"),("detail","Detalhe")])}'
             f'<h2>Uso p95 por Deployment</h2>{usage_table}'
+            f'<h2>Sinais simplificados e tecnologias</h2>{simple_table}'
             f'<h2>Runtime e tuning descobertos automaticamente</h2>{runtime_table}'
             f'{technical}'
         )
         return self.layout("Prometheus", body, directory, "prometheus")
 
+    def aws_eks(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        value = details(directory)
+        aws = value.get("awsEks") or {"state": "UNKNOWN"}
+        state = str(aws.get("state") or "UNKNOWN")
+        reason = str(aws.get("reason") or "")
+        summary = aws.get("summary") or {}
+        coverage_rows = [
+            {
+                "domain": key,
+                "state": entry.get("state"),
+                "reason": entry.get("reason", ""),
+            }
+            for key, entry in sorted((aws.get("coverage") or {}).items())
+            if isinstance(entry, dict)
+        ]
+        inventory_rows = []
+        for key, entry in sorted((aws.get("inventory") or {}).items()):
+            if isinstance(entry, list):
+                count, detail = len(entry), f"{len(entry)} objeto(s)"
+            elif isinstance(entry, dict):
+                count = len(entry)
+                detail = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+            else:
+                count, detail = 1, str(entry)
+            if len(detail) > 600:
+                detail = detail[:597] + "..."
+            inventory_rows.append({"domain": key, "count": count, "detail": detail})
+        aws_findings = [
+            finding
+            for finding in value["findings"]
+            if finding.get("evidence") == "aws-api" or finding.get("category") in {"EKS", "AWS Security", "EKS Networking"}
+        ]
+        message_class = "good" if state == "AVAILABLE" else "bad" if state == "UNAVAILABLE" else ""
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Estado</small><b>{esc(state)}</b></div>'
+            f'<div><small>Checks AWS</small><b>{summary.get("checks", 0)}</b></div>'
+            f'<div><small>Críticos</small><b>{summary.get("critical", 0)}</b></div>'
+            f'<div><small>Alertas</small><b>{summary.get("warnings", 0)}</b></div>'
+            f'<div><small>Desconhecidos</small><b>{summary.get("unknown", 0)}</b></div>'
+            f'<div><small>Cobertura disponível</small><b>{summary.get("coverageAvailable", 0)}</b></div>'
+            '</div>'
+        )
+        body = (
+            f'<h1>AWS / Amazon EKS</h1><div class="message {message_class}">'
+            f'Coletor exclusivamente read-only: <b>{esc(state)}</b>. {esc(reason)} '
+            'Permissão ausente vira UNKNOWN; não é tratada como conformidade.</div>'
+            f'{facts}<h2>Achados e recomendações</h2>'
+            f'{table(aws_findings, [("severity","Severidade"),("check","Check"),("workload","Recurso"),("detail","Evidência"),("recommendation","Recomendação")])}'
+            f'<h2>Cobertura das APIs AWS</h2>{table(coverage_rows, [("domain","Domínio"),("state","Estado"),("reason","Detalhe")])}'
+            f'<h2>Inventário sanitizado</h2>{table(inventory_rows, [("domain","Domínio"),("count","Itens"),("detail","Resumo")])}'
+        )
+        return self.layout("AWS / EKS", body, directory, "aws")
     def coverage(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         value = details(directory)
@@ -791,32 +898,136 @@ class Handler(BaseHTTPRequestHandler):
         message = f'<div class="message good">Somente leitura. Secrets: metadados/chaves, sem valores. Discovery: {discovery.get("succeeded","N/A")} concluídas, {discovery.get("not_applicable","N/A")} N/A, {discovery.get("unavailable","N/A")} indisponíveis. Inventário universal: {universal.get("resourceTypes",0)} APIs e {universal.get("objectCount",0)} objetos; indisponíveis: {universal.get("unavailableResourceTypes",0)}.</div>'
         known = table(rows, [("resource", "Domínio profundo"), ("state", "Estado"), ("count", "Objetos"), ("api", "API usada"), ("reason", "Detalhe")])
         all_apis = table(universal_rows, [("resourceHtml", "API/recurso"), ("scope", "Escopo"), ("state", "Estado"), ("count", "Objetos"), ("mode", "Coleta"), ("reason", "Detalhe")], {"resourceHtml"})
-        return self.layout("Cobertura", f'<h1>Cobertura da descoberta</h1>{message}<h2>Domínios com anÃ¡lise profunda</h2>{known}<h2>Todas as APIs listÃ¡veis</h2>{all_apis}', directory, "coverage")
+        return self.layout("Cobertura", f'<h1>Cobertura da descoberta</h1>{message}<h2>Domínios com análise profunda</h2>{known}<h2>Todas as APIs listáveis</h2>{all_apis}', directory, "coverage")
 
     def api_inventory(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory: return self.overview(None)
         resource = query.get("resource", [""])[0]; universal = details(directory).get("universal") or {}
         entry = next((item for item in universal.get("resources") or [] if item.get("resource") == resource), None)
-        if not entry: return self.layout("Inventário de API", '<div class="message bad">Recurso não encontrado no inventÃ¡rio universal.</div>', directory, "coverage")
+        if not entry: return self.layout("Inventário de API", '<div class="message bad">Recurso não encontrado no inventário universal.</div>', directory, "coverage")
         rows = entry.get("objects") or []
         mode = "coleta profunda" if entry.get("deepCollected") else "somente identidade segura"
         message = f'<div class="message">Estado: <b>{esc(entry.get("state"))}</b> · Escopo: {esc(entry.get("scope"))} · Modo: {mode} · Objetos: {len(rows)}. Recursos desconhecidos não persistem spec ou valores.</div>'
         return self.layout(resource, f'<h1>{esc(resource)}</h1>{message}{table(rows,[("apiVersion","API version"),("kind","Kind"),("namespace","Namespace"),("name","Nome")])}', directory, "coverage")
     def compare(self, directory: Path | None, query: dict[str, list[str]]) -> str:
-        directories = self.directories(); before_id = query.get("before", [""])[0]; after_id = query.get("after", [directory.name if directory else ""])[0]
-        def options(selected): return "".join(f'<option value="{esc(x.name)}" {"selected" if x.name == selected else ""}>{esc(x.name)}</option>' for x in directories)
-        form = f'<form class="compare"><label>Antes<select name="before">{options(before_id)}</select></label><label>Depois<select name="after">{options(after_id)}</select></label><button>Comparar</button></form>'; body = form; before, after = self.root / before_id, self.root / after_id
+        directories = self.directories()
+        before_id = query.get("before", [""])[0]
+        after_id = query.get("after", [directory.name if directory else ""])[0]
+        def options(selected):
+            return "".join(
+                f'<option value="{esc(item.name)}" {"selected" if item.name == selected else ""}>{esc(item.name)}</option>'
+                for item in directories
+            )
+        form = (
+            f'<form class="compare"><label>Antes<select name="before">{options(before_id)}</select></label>'
+            f'<label>Depois<select name="after">{options(after_id)}</select></label><button>Comparar</button></form>'
+        )
+        body = form
+        before, after = self.root / before_id, self.root / after_id
         if before.is_dir() and after.is_dir():
-            old, new = details(before), details(after); rows = [{"metric": key, "before": old["summary"].get(key), "after": new["summary"].get(key), "delta": (new["summary"].get(key, 0) or 0) - (old["summary"].get(key, 0) or 0)} for key in new["summary"] if isinstance(new["summary"].get(key), int) and isinstance(old["summary"].get(key), int)]
-            old_open = {x.get("id") for x in old["findings"] if x.get("severity") in {"CRIT", "WARN"} and x.get("id")}; new_findings = [x for x in new["findings"] if x.get("severity") in {"CRIT", "WARN"} and x.get("id") not in old_open]
-            body += '<h2>Delta dos indicadores</h2>' + table(rows, [("metric", "Indicador"), ("before", "Antes"), ("after", "Depois"), ("delta", "Delta")]); body += '<h2>Novos riscos</h2>' + table(new_findings, [("severity", "Severidade"), ("category", "Categoria"), ("namespace", "Namespace"), ("workload", "Workload"), ("check", "Check"), ("detail", "Evidência")])
+            old, new = details(before), details(after)
+            rows = [
+                {
+                    "metric": key,
+                    "before": old["summary"].get(key),
+                    "after": new["summary"].get(key),
+                    "delta": (new["summary"].get(key, 0) or 0) - (old["summary"].get(key, 0) or 0),
+                }
+                for key in new["summary"]
+                if isinstance(new["summary"].get(key), int)
+                and isinstance(old["summary"].get(key), int)
+            ]
+            def fingerprint(item):
+                return (
+                    item.get("fingerprint")
+                    or (
+                        f'{item.get("ruleId")}|{item.get("resourceKey")}'
+                        if item.get("ruleId") and item.get("resourceKey") else ""
+                    )
+                    or item.get("id")
+                )
+            old_map = {fingerprint(item): item for item in old["findings"] if fingerprint(item)}
+            new_map = {fingerprint(item): item for item in new["findings"] if fingerprint(item)}
+            risks = {"CRIT", "WARN"}
+            gaps = {"UNKNOWN", "PARTIAL"}
+            new_risks = [
+                item for key, item in new_map.items()
+                if item.get("severity") in risks and key not in old_map
+            ]
+            resolved = [
+                item for key, item in old_map.items()
+                if item.get("severity") in risks and key not in new_map
+            ]
+            new_gaps = [
+                item for key, item in new_map.items()
+                if item.get("severity") in gaps and key not in old_map
+            ]
+            severity_changes = []
+            evidence_changes = []
+            for key in sorted(old_map.keys() & new_map.keys()):
+                previous, current = old_map[key], new_map[key]
+                old_severity, new_severity = previous.get("severity"), current.get("severity")
+                if old_severity != new_severity:
+                    old_rank = SEVERITY_ORDER.get(old_severity, 9)
+                    new_rank = SEVERITY_ORDER.get(new_severity, 9)
+                    severity_changes.append({
+                        "direction": "REGRESSÃO" if new_rank < old_rank else "MELHORIA",
+                        "before": old_severity,
+                        "after": new_severity,
+                        "category": current.get("category"),
+                        "workload": current.get("workload"),
+                        "check": current.get("check"),
+                        "detail": current.get("detail"),
+                    })
+                elif previous.get("evidenceHash") and previous.get("evidenceHash") != current.get("evidenceHash"):
+                    evidence_changes.append({
+                        "severity": new_severity,
+                        "category": current.get("category"),
+                        "workload": current.get("workload"),
+                        "check": current.get("check"),
+                        "before": previous.get("detail"),
+                        "after": current.get("detail"),
+                    })
+            finding_columns = [("severity","Severidade"),("category","Categoria"),("namespace","Namespace"),("workload","Workload"),("check","Check"),("detail","Evidência")]
+            body += '<h2>Delta dos indicadores</h2>' + table(rows, [("metric","Indicador"),("before","Antes"),("after","Depois"),("delta","Delta")])
+            body += '<h2>Mudanças de severidade</h2>' + table(severity_changes, [("direction","Direção"),("before","Antes"),("after","Depois"),("category","Categoria"),("workload","Workload"),("check","Check"),("detail","Evidência")])
+            body += '<h2>Novos riscos</h2>' + table(new_risks, finding_columns)
+            body += '<h2>Riscos resolvidos</h2>' + table(resolved, finding_columns)
+            body += '<h2>Novas lacunas de evidência</h2>' + table(new_gaps, finding_columns)
+            body += '<h2>Evidências alteradas sem mudança de severidade</h2>' + table(evidence_changes, [("severity","Severidade"),("category","Categoria"),("workload","Workload"),("check","Check"),("before","Antes"),("after","Depois")])
         return self.layout("Comparar coletas", f'<h1>Comparar coletas</h1>{body}', directory, "compare")
-
     def collect_form(self, baseline: bool) -> str:
-        detected = cluster()[1]; windows = "".join(f'<option value="{x}" {"selected" if x == "7d" else ""}>{x}</option>' for x in ("1d", "3d", "7d", "14d", "30d"))
-        body = f'<h1>{"Novo baseline" if baseline else "Nova coleta"}</h1><p>Assessment completo, adaptativo e somente leitura. A URL Prometheus é opcional e deve ser informada explicitamente; credenciais embutidas na URL são rejeitadas.</p><form class="collect" method="post" action="/collect"><input type="hidden" name="baseline" value="{1 if baseline else 0}"><label>Cluster detectado<input value="{esc(detected)}" disabled></label><label>Identificador da mudança<input name="label" value="manual" required></label><label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label><label>Namespace do baseline Prometheus<input name="prometheus_namespace" value="monitoring"></label><label>Service do baseline Prometheus<input name="prometheus_service" value="kube-prometheus-stack-prometheus"></label><label>URL explícita do Prometheus (opcional)<input name="prometheus_url" placeholder="http://prometheus.example:9090"></label><label>Janela histórica<select name="prometheus_window">{windows}</select></label><button>Iniciar assessment read-only</button></form>'
+        detected = cluster()[1]
+        eks_name = eks_cluster_name()
+        environment = f"Amazon EKS / {eks_name}" if eks_name else f"Kubernetes / {detected}"
+        windows = "".join(
+            f'<option value="{item}" {"selected" if item == "7d" else ""}>{item}</option>'
+            for item in ("1d", "3d", "7d", "14d", "30d")
+        )
+        profiles = (
+            '<option value="low-impact">Baixo impacto</option>'
+            '<option value="conservative" selected>Conservador (recomendado)</option>'
+            '<option value="exhaustive">Exaustivo</option>'
+        )
+        body = (
+            f'<h1>{"Novo baseline" if baseline else "Nova coleta"}</h1>'
+            '<p>Assessment adaptativo e somente leitura. O perfil controla concorrência e orçamento, '
+            'não muda os critérios. URL Prometheus é opcional, explícita e não pode conter credenciais.</p>'
+            f'<form class="collect" method="post" action="/collect">'
+            f'<input type="hidden" name="baseline" value="{1 if baseline else 0}">'
+            f'<label>Ambiente detectado<input value="{esc(environment)}" disabled></label>'
+            '<label>Identificador da mudança<input name="label" value="manual" required></label>'
+            f'<label>Perfil de coleta<select name="profile">{profiles}</select></label>'
+            '<label>Namespace (vazio = cluster inteiro)<input name="namespace" placeholder="namespace opcional"></label>'
+            '<label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label>'
+            '<label><input type="checkbox" name="account_security" value="1"> Incluir GuardDuty/runtime security (requer permissão de conta)</label>'
+            '<label>Namespace do baseline Prometheus<input name="prometheus_namespace" value="monitoring"></label>'
+            '<label>Service do baseline Prometheus<input name="prometheus_service" value="kube-prometheus-stack-prometheus"></label>'
+            '<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" placeholder="http://prometheus.example:9090"></label>'
+            f'<label>Janela histórica<select name="prometheus_window">{windows}</select></label>'
+            '<button>Iniciar assessment read-only</button></form>'
+        )
         return self.layout("Nova coleta", body)
-
     def do_GET(self):
         parsed = urlparse(self.path); path, query = parsed.path, parse_qs(parsed.query); directory = self.selected(query)
         if path == "/api/health": return self.send_json({"ok": True, "readOnly": True, "clusterName": cluster()[1]})
@@ -829,6 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/technologies": return self.send_html(self.technologies(directory))
         if path == "/capacity": return self.send_html(self.capacity(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
+        if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/coverage": return self.send_html(self.coverage(directory))
         if path == "/api-inventory": return self.send_html(self.api_inventory(directory, query))
         if path == "/compare": return self.send_html(self.compare(directory, query))
@@ -844,31 +1056,157 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "Rota não encontrada"}, 404)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/collect": return self.send_json({"error": "Rota não encontrada"}, 404)
-        if not LOCK.acquire(blocking=False): return self.send_html(self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'), 409)
+        if urlparse(self.path).path != "/collect":
+            return self.send_json({"error": "Rota não encontrada"}, 404)
+        if not LOCK.acquire(blocking=False):
+            return self.send_html(
+                self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'),
+                409,
+            )
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length > 65536: return self.send_json({"error": "Formulário excede o limite"}, 413)
-            form = parse_qs(self.rfile.read(length).decode("utf-8")); context, detected = cluster(); label = re.sub(r"[^A-Za-z0-9._-]", "-", form.get("label", ["manual"])[0])[:64] or "manual"; baseline = form.get("baseline", ["0"])[0] == "1"; phase = "before" if baseline else "manual"; stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ"); ident = f"eks-{stamp}-{phase}-{label}"; output = self.root / ident; output.mkdir(parents=True)
-            env = {**os.environ, "OUTPUT_DIR": str(output), "EKS_CLUSTER_NAME": detected, "AWS_REGION": form.get("region", [""])[0], "PROMETHEUS_NAMESPACE": form.get("prometheus_namespace", ["monitoring"])[0], "PROMETHEUS_SERVICE": form.get("prometheus_service", ["kube-prometheus-stack-prometheus"])[0]}; codes: list[int] = []
-            runs = [("assessment.log", ["bash", str(self.repository / "scripts/validation/assess-eks.sh")], 900), ("discovery.log", ["bash", str(self.repository / "scripts/validation/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200)]
-            for logfile, args, timeout in runs:
-                result = run(args, cwd=self.repository, env=env, timeout=timeout); (output / logfile).write_text(result.stdout + result.stderr, encoding="utf-8"); codes.append(result.returncode)
-            for filename, args in {"services.json": ["kubectl", "get", "services", "-A", "-o", "json"], "pvcs.json": ["kubectl", "get", "pvc", "-A", "-o", "json"], "hpas.json": ["kubectl", "get", "hpa", "-A", "-o", "json"]}.items():
-                result = run(args, timeout=120); (output / filename).write_text(result.stdout if result.returncode == 0 else '{"items":[]}', encoding="utf-8")
-            prometheus_url = form.get("prometheus_url", [""])[0].strip() or os.environ.get("PROMETHEUS_URL", "").strip(); window = form.get("prometheus_window", [os.environ.get("PROMETHEUS_WINDOW", "7d")])[0]
-            if window not in {"1d", "3d", "7d", "14d", "30d"}: window = "7d"
+            if length > 65536:
+                return self.send_json({"error": "Formulário excede o limite"}, 413)
+            form = parse_qs(self.rfile.read(length).decode("utf-8"))
+            context, detected = cluster()
+            label = re.sub(r"[^A-Za-z0-9._-]", "-", form.get("label", ["manual"])[0])[:64] or "manual"
+            baseline = form.get("baseline", ["0"])[0] == "1"
+            phase = "before" if baseline else "manual"
+            profile = form.get("profile", ["conservative"])[0]
+            profiles = {
+                "low-impact": {"workers": "2", "delay": "250", "requests": "500", "response": "256"},
+                "conservative": {"workers": "4", "delay": "100", "requests": "1500", "response": "512"},
+                "exhaustive": {"workers": "8", "delay": "25", "requests": "5000", "response": "1024"},
+            }
+            profile_values = profiles.get(profile, profiles["conservative"])
+            namespace = form.get("namespace", [""])[0].strip()
+            if namespace and not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", namespace):
+                return self.send_html(self.layout("Erro", '<div class="message bad">Namespace inválido.</div>'), 400)
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            ident = f"eks-{stamp}-{phase}-{label}"
+            output = self.root / ident
+            output.mkdir(parents=True)
+            env = {
+                **os.environ,
+                "OUTPUT_DIR": str(output),
+                "EKS_CLUSTER_NAME": eks_cluster_name(),
+                "AWS_REGION": form.get("region", [""])[0].strip(),
+                "PROMETHEUS_NAMESPACE": form.get("prometheus_namespace", ["monitoring"])[0],
+                "PROMETHEUS_SERVICE": form.get("prometheus_service", ["kube-prometheus-stack-prometheus"])[0],
+                "ASSESSMENT_NAMESPACE": namespace,
+                "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
+            }
+            codes: list[int] = []
+            components: list[str] = []
+            runs = [
+                ("assessment", "assessment.log", ["bash", str(self.repository / "scripts/validation/assess-eks.sh")], 900),
+                ("discovery", "discovery.log", ["bash", str(self.repository / "scripts/validation/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
+            ]
+            for component, logfile, args, timeout in runs:
+                result = run(args, cwd=self.repository, env=env, timeout=timeout)
+                (output / logfile).write_text(result.stdout + result.stderr, encoding="utf-8")
+                components.append(component)
+                codes.append(result.returncode)
+            for filename, args in {
+                "services.json": ["kubectl", "get", "services", "-A", "-o", "json"],
+                "pvcs.json": ["kubectl", "get", "pvc", "-A", "-o", "json"],
+                "hpas.json": ["kubectl", "get", "hpa", "-A", "-o", "json"],
+            }.items():
+                result = run(args, timeout=120)
+                (output / filename).write_text(
+                    result.stdout if result.returncode == 0 else '{"items":[]}',
+                    encoding="utf-8",
+                )
+            prometheus_url = form.get("prometheus_url", [""])[0].strip() or os.environ.get("PROMETHEUS_URL", "").strip()
+            window = form.get("prometheus_window", [os.environ.get("PROMETHEUS_WINDOW", "7d")])[0]
+            if window not in {"1d", "3d", "7d", "14d", "30d"}:
+                window = "7d"
             telemetry_path = output / "prometheus-telemetry.json"
             if prometheus_url:
-                command = [sys.executable, str(self.repository / "scripts/validation/prometheus_telemetry.py"), "--url", prometheus_url, "--window", window, "--workloads-file", str(output / "workloads.json")]; result = run(command, cwd=self.repository, env=env, timeout=1800); telemetry_path.write_text(result.stdout or json.dumps({"state": "UNAVAILABLE", "reason": result.stderr}), encoding="utf-8"); (output / "prometheus-telemetry.log").write_text(result.stderr, encoding="utf-8"); codes.append(result.returncode)
-            else: telemetry_path.write_text(json.dumps({"state": "DISABLED", "reason": "PROMETHEUS_URL não configurada explicitamente", "workloads": []}, ensure_ascii=False), encoding="utf-8")
-            scanner = run([sys.executable, str(self.repository / "scripts/validation/eks_comprehensive_assessment.py"), "--snapshot-dir", str(output), "--collect-live", "--timeout", "30", "--chunk-size", "200"], cwd=self.repository, env=env, timeout=1800); (output / "comprehensive-assessment.log").write_text(scanner.stdout + scanner.stderr, encoding="utf-8"); codes.append(scanner.returncode)
-            value = {"id": ident, "createdAt": utc_iso(), "clusterName": detected, "context": context, "baseline": baseline, "completed": not any(codes), "readOnly": True, "collectorExitCodes": codes}; (output / "metadata.json").write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-            validator = run([sys.executable, str(self.repository / "scripts/validation/validate_assessment_artifacts.py"), str(output)], cwd=self.repository, env=env, timeout=300); (output / "artifact-smoke.log").write_text(validator.stdout + validator.stderr, encoding="utf-8"); codes.append(validator.returncode); value["collectorExitCodes"] = codes; value["completed"] = not any(codes); (output / "metadata.json").write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-            self.send_response(303); self.send_header("Location", f"/?collection={ident}"); self.end_headers()
-        except Exception as error: self.send_html(self.layout("Erro", f'<div class="message bad">{esc(error)}</div>'), 500)
-        finally: LOCK.release()
-
+                command = [
+                    sys.executable,
+                    str(self.repository / "scripts/validation/prometheus_telemetry.py"),
+                    "--url", prometheus_url,
+                    "--window", window,
+                    "--workloads-file", str(output / "workloads.json"),
+                    "--workers", profile_values["workers"],
+                ]
+                result = run(command, cwd=self.repository, env=env, timeout=1800)
+                telemetry_path.write_text(
+                    result.stdout or json.dumps({"state": "UNAVAILABLE", "reason": result.stderr}),
+                    encoding="utf-8",
+                )
+                (output / "prometheus-telemetry.log").write_text(result.stderr, encoding="utf-8")
+                components.append("prometheus")
+                codes.append(result.returncode)
+            else:
+                telemetry_path.write_text(
+                    json.dumps(
+                        {"state": "DISABLED", "reason": "PROMETHEUS_URL não configurada explicitamente", "workloads": []},
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+            scanner_command = [
+                sys.executable,
+                str(self.repository / "scripts/validation/eks_comprehensive_assessment.py"),
+                "--snapshot-dir", str(output),
+                "--collect-live",
+                "--timeout", "30",
+                "--chunk-size", "200",
+                "--inventory-workers", profile_values["workers"],
+                "--api-delay-ms", profile_values["delay"],
+                "--max-requests", profile_values["requests"],
+                "--max-duration", "3600",
+                "--max-response-mb", profile_values["response"],
+            ]
+            if namespace:
+                scanner_command.extend(["--namespace", namespace])
+            scanner = run(scanner_command, cwd=self.repository, env=env, timeout=3900)
+            (output / "comprehensive-assessment.log").write_text(scanner.stdout + scanner.stderr, encoding="utf-8")
+            components.append("comprehensive")
+            codes.append(scanner.returncode)
+            value = {
+                "id": ident,
+                "createdAt": utc_iso(),
+                "clusterName": detected,
+                "eksClusterName": eks_cluster_name() or None,
+                "context": context,
+                "baseline": baseline,
+                "profile": profile,
+                "namespaceScope": namespace or "*",
+                "completed": not any(codes),
+                "readOnly": True,
+                "collectorComponents": components,
+                "collectorExitCodes": codes,
+            }
+            (output / "metadata.json").write_text(
+                json.dumps(value, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            validator = run(
+                [sys.executable, str(self.repository / "scripts/validation/validate_assessment_artifacts.py"), str(output)],
+                cwd=self.repository,
+                env=env,
+                timeout=300,
+            )
+            (output / "artifact-smoke.log").write_text(validator.stdout + validator.stderr, encoding="utf-8")
+            components.append("smoke")
+            codes.append(validator.returncode)
+            value["collectorComponents"] = components
+            value["collectorExitCodes"] = codes
+            value["completed"] = not any(codes)
+            (output / "metadata.json").write_text(
+                json.dumps(value, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self.send_response(303)
+            self.send_header("Location", f"/?collection={ident}")
+            self.end_headers()
+        except Exception as error:
+            self.send_html(self.layout("Erro", f'<div class="message bad">{esc(error)}</div>'), 500)
+        finally:
+            LOCK.release()
 
 def utc_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()

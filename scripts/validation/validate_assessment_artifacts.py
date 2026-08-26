@@ -37,7 +37,7 @@ def safe_runtime_env_name(name: str) -> bool:
 REQUIRED = (
     "metadata.json", "nodes.json", "pods.json", "workloads.json",
     "comprehensive-assessment.json", "application-manifests-sanitized.json",
-    "api-resources.json", "universal-inventory.json",
+    "api-resources.json", "universal-inventory.json", "aws-eks-assessment.json",
 )
 
 
@@ -109,6 +109,17 @@ def main() -> int:
     report = documents.get("comprehensive-assessment.json", {})
     if report.get("readOnly") is not True or (report.get("safety") or {}).get("mutations") != 0:
         errors.append("read-only safety invariant missing")
+    if str(report.get("schemaVersion", "")).split(".", 1)[0] not in {"4"}:
+        errors.append("unexpected comprehensive assessment schema")
+    allowed_severities = {"CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A"}
+    for finding in report.get("findings", []) if isinstance(report, dict) else []:
+        if finding.get("severity") not in allowed_severities:
+            errors.append("unsupported finding severity")
+        if not finding.get("fingerprint") or not finding.get("ruleId") or not finding.get("resourceKey"):
+            errors.append("finding lacks stable identity fields")
+    aws_report = documents.get("aws-eks-assessment.json", {})
+    if aws_report.get("readOnly") is not True or (aws_report.get("safety") or {}).get("mutations") != 0:
+        errors.append("AWS/EKS read-only safety invariant missing")
     summary = report.get("summary") or {}
     if int(summary.get("workloads") or 0) == 0 or int(summary.get("containers") or 0) == 0:
         errors.append("workload/container inventory is empty")
@@ -130,6 +141,9 @@ def main() -> int:
         "capacityRecommendations": summary.get("capacityRecommendations", 0),
         "apiResourceTypes": universal.get("resourceTypes", 0),
         "objectsInventoried": universal.get("objectCount", 0),
+        "awsEksState": (documents.get("aws-eks-assessment.json") or {}).get("state", "UNKNOWN"),
+        "unknown": summary.get("unknown", 0),
+        "partial": summary.get("partial", 0),
     }
     unique_errors = list(dict.fromkeys(errors))
     print(json.dumps({"ok": not unique_errors, "inventory": inventory, "errors": unique_errors}, ensure_ascii=False))

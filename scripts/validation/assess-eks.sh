@@ -4,6 +4,8 @@ set -euo pipefail
 # Read-only EKS assessment. Produces a point-in-time health and best-practices
 # report, including Prometheus baseline data, without changing cluster state.
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+AWS_SCANNER="$ROOT/scripts/validation/aws_eks_assessment.py"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-monitoring}"
@@ -122,42 +124,29 @@ prom_query pvc_low_space 'count((kubelet_volume_stats_available_bytes / kubelet_
 bullet "Raw Prometheus responses: \`prometheus/*.json\`"
 bullet "Metric table: \`prometheus-baseline.tsv\`"
 
-if [[ -z "$EKS_CLUSTER_NAME" && "$context" =~ ^arn:aws:eks:[^:]+:[^:]+:cluster/(.+)$ ]]; then
+if [[ -z "$EKS_CLUSTER_NAME" && "$context" =~ arn:aws:eks:[^:]+:[^:]+:cluster/(.+)$ ]]; then
   EKS_CLUSTER_NAME="${BASH_REMATCH[1]}"
 fi
 
 section "AWS EKS best practices"
-if command -v aws >/dev/null 2>&1 && [[ -n "$EKS_CLUSTER_NAME" ]]; then
-  info "Avaliando configuração AWS EKS"
-  aws_args=(eks describe-cluster --name "$EKS_CLUSTER_NAME" --output json)
-  [[ -n "$AWS_REGION" ]] && aws_args+=(--region "$AWS_REGION")
-  aws "${aws_args[@]}" >"$OUTPUT_DIR/eks-cluster.json"
-  cluster="$OUTPUT_DIR/eks-cluster.json"
-  endpoint_public="$(jq -r '.cluster.resourcesVpcConfig.endpointPublicAccess' "$cluster")"
-  endpoint_private="$(jq -r '.cluster.resourcesVpcConfig.endpointPrivateAccess' "$cluster")"
-  public_cidrs="$(jq -r '.cluster.resourcesVpcConfig.publicAccessCidrs[]?' "$cluster" | tr '\n' ',')"
-  logging="$(jq -r '[.cluster.logging.clusterLogging[]?.types[]?] | unique | join(",")' "$cluster")"
-  encryption="$(jq '[.cluster.encryptionConfig[]?] | length' "$cluster")"
-  oidc="$(jq -r '.cluster.identity.oidc.issuer // empty' "$cluster")"
-
-  if [[ "$endpoint_private" == true ]]; then finding PASS eks "Private endpoint" "enabled"; else finding WARN eks "Private endpoint" "disabled"; fi
-  if [[ "$endpoint_public" == false ]]; then finding PASS eks "Public endpoint" "disabled"; else finding WARN eks "Public endpoint" "enabled; CIDRs=${public_cidrs:-not-restricted}"; fi
-  if [[ "$public_cidrs" != *"0.0.0.0/0"* ]]; then finding PASS eks "Public endpoint CIDRs" "restricted"; else finding WARN eks "Public endpoint CIDRs" "includes 0.0.0.0/0"; fi
-  if [[ "$encryption" != 0 ]]; then finding PASS eks "Secrets encryption" "KMS encryption configured"; else finding WARN eks "Secrets encryption" "not configured"; fi
-  if [[ -n "$oidc" ]]; then finding PASS eks "OIDC provider" "$oidc"; else finding WARN eks "OIDC provider" "not configured; assess IRSA/EKS Pod Identity"; fi
-  for log_type in api audit authenticator controllerManager scheduler; do
-    if [[ ",$logging," == *",$log_type,"* ]]; then
-      finding PASS eks "Control-plane log $log_type" "enabled"
-    else
-      finding WARN eks "Control-plane log $log_type" "disabled"
-    fi
-  done
-  bullet "AWS cluster evidence: \`eks-cluster.json\`"
+info "Executando coletor AWS/EKS independente e somente leitura"
+aws_args=(--output "$OUTPUT_DIR/aws-eks-assessment.json")
+[[ -n "$EKS_CLUSTER_NAME" ]] && aws_args+=(--cluster "$EKS_CLUSTER_NAME")
+[[ -n "$AWS_REGION" ]] && aws_args+=(--region "$AWS_REGION")
+[[ "${ASSESSMENT_INCLUDE_ACCOUNT_SECURITY:-0}" == 1 ]] && aws_args+=(--include-account-security)
+if command -v python3.11 >/dev/null 2>&1 && [[ -r "$AWS_SCANNER" ]]; then
+  if python3.11 "$AWS_SCANNER" "${aws_args[@]}" >"$OUTPUT_DIR/aws-eks-assessment.log" 2>&1; then
+    jq -r '.findings[]? | [.severity, (.category | ascii_downcase), .check, .detail] | @tsv' "$OUTPUT_DIR/aws-eks-assessment.json" >>"$FINDINGS"
+    aws_state="$(jq -r '.state // "UNKNOWN"' "$OUTPUT_DIR/aws-eks-assessment.json")"
+    bullet "AWS/EKS collector state: $aws_state; evidence: aws-eks-assessment.json."
+  else
+    finding UNKNOWN eks "AWS/EKS collector" "collector failed; inspect aws-eks-assessment.log"
+    bullet "AWS/EKS collector failed; Kubernetes assessment remains valid."
+  fi
 else
-  finding WARN eks "AWS configuration" "aws CLI or EKS_CLUSTER_NAME unavailable; skipped"
-  bullet "Skipped: set EKS_CLUSTER_NAME and configure AWS CLI to assess endpoint, logs, encryption and OIDC."
+  finding UNKNOWN eks "AWS/EKS collector" "Python 3.11 or aws_eks_assessment.py unavailable"
+  bullet "AWS/EKS evidence unavailable; Kubernetes assessment remains valid."
 fi
-
 section "Findings"
 printf '\n| Status | Area | Item | Evidence |\n|---|---|---|---|\n' >>"$REPORT"
 awk -F'\t' 'NR > 1 {gsub(/\|/, "\\|", $4); printf "| %s | %s | %s | %s |\n", $1, $2, $3, $4}' "$FINDINGS" >>"$REPORT"

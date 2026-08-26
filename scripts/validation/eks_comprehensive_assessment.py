@@ -13,16 +13,22 @@ import datetime as dt
 import hashlib
 import json
 import math
+import os
+import random
 import re
 import subprocess
 import sys
+import threading
+import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
 
+from eks_semantic_assessment import apply_semantic_assessment
 
-SCHEMA_VERSION = "3.0"
+
+SCHEMA_VERSION = "4.0"
 SYSTEM_NAMESPACES = {
     "kube-system", "kube-public", "kube-node-lease", "calico-system",
     "calico-apiserver", "tigera-operator", "monitoring", "observability",
@@ -111,6 +117,28 @@ RESOURCE_SPECS: dict[str, tuple[str, tuple[str, ...], bool]] = {
     "kyverno_clusterpolicies": ("kyverno-clusterpolicies.json", ("clusterpolicies.kyverno.io",), False),
     "argocd_applications": ("argocd-applications.json", ("applications.argoproj.io",), True),
     "volumesnapshots": ("volumesnapshots.json", ("volumesnapshots.snapshot.storage.k8s.io",), True),
+    "volumesnapshotclasses": ("volumesnapshotclasses.json", ("volumesnapshotclasses.snapshot.storage.k8s.io",), False),
+    "volumesnapshotcontents": ("volumesnapshotcontents.json", ("volumesnapshotcontents.snapshot.storage.k8s.io",), False),
+    "priorityclasses": ("priorityclasses.json", ("priorityclasses.scheduling.k8s.io",), False),
+    "runtimeclasses": ("runtimeclasses.json", ("runtimeclasses.node.k8s.io",), False),
+    "csidrivers": ("csidrivers.json", ("csidrivers.storage.k8s.io",), False),
+    "csinodes": ("csinodes.json", ("csinodes.storage.k8s.io",), False),
+    "volumeattachments": ("volumeattachments.json", ("volumeattachments.storage.k8s.io",), False),
+    "velero_backups": ("velero-backups.json", ("backups.velero.io",), True),
+    "velero_restores": ("velero-restores.json", ("restores.velero.io",), True),
+    "velero_schedules": ("velero-schedules.json", ("schedules.velero.io",), True),
+    "external_secrets": ("external-secrets.json", ("externalsecrets.external-secrets.io",), True),
+    "secret_stores": ("secretstores.json", ("secretstores.external-secrets.io",), True),
+    "cluster_secret_stores": ("clustersecretstores.json", ("clustersecretstores.external-secrets.io",), False),
+    "certificates": ("certificates.json", ("certificates.cert-manager.io",), True),
+    "issuers": ("issuers.json", ("issuers.cert-manager.io",), True),
+    "cluster_issuers": ("clusterissuers.json", ("clusterissuers.cert-manager.io",), False),
+    "strimzi_kafkas": ("strimzi-kafkas.json", ("kafkas.kafka.strimzi.io",), True),
+    "strimzi_kafkatopics": ("strimzi-kafkatopics.json", ("kafkatopics.kafka.strimzi.io",), True),
+    "rabbitmq_clusters": ("rabbitmq-clusters.json", ("rabbitmqclusters.rabbitmq.com",), True),
+    "cnpg_clusters": ("cnpg-clusters.json", ("clusters.postgresql.cnpg.io",), True),
+    "policyreports": ("policyreports.json", ("policyreports.wgpolicyk8s.io",), True),
+    "clusterpolicyreports": ("clusterpolicyreports.json", ("clusterpolicyreports.wgpolicyk8s.io",), False),
 }
 
 TECH_PATTERNS = {
@@ -310,11 +338,90 @@ def sanitize_resource_list(resource_key: str, value: dict[str, Any]) -> dict[str
     return clean
 
 
-def api_resources(timeout: int) -> tuple[set[str], set[str], dict[str, Any]]:
+class CollectionBudgetExceeded(RuntimeError):
+    pass
+
+
+class ApiBudget:
+    """Thread-safe request, time and response-size budget for production clusters."""
+
+    def __init__(self, max_requests: int, max_duration: int, max_bytes: int, delay_ms: int):
+        self.max_requests = max_requests
+        self.max_duration = max_duration
+        self.max_bytes = max_bytes
+        self.delay = delay_ms / 1000.0
+        self.started = time.monotonic()
+        self.requests = 0
+        self.retries = 0
+        self.response_bytes = 0
+        self.throttles = 0
+        self.reason = ""
+        self._next_allowed = self.started
+        self._lock = threading.Lock()
+
+    def before_request(self, retry: bool = False) -> None:
+        with self._lock:
+            elapsed = time.monotonic() - self.started
+            if self.reason:
+                raise CollectionBudgetExceeded(self.reason)
+            if self.requests >= self.max_requests:
+                self.reason = f"request budget exhausted ({self.max_requests})"
+                raise CollectionBudgetExceeded(self.reason)
+            if elapsed >= self.max_duration:
+                self.reason = f"duration budget exhausted ({self.max_duration}s)"
+                raise CollectionBudgetExceeded(self.reason)
+            now = time.monotonic()
+            wait = max(0.0, self._next_allowed - now)
+            self._next_allowed = max(now, self._next_allowed) + self.delay
+            self.requests += 1
+            if retry:
+                self.retries += 1
+        if wait:
+            time.sleep(wait)
+
+    def after_response(self, response: subprocess.CompletedProcess[str]) -> None:
+        size = len((response.stdout or "").encode("utf-8", "replace")) + len((response.stderr or "").encode("utf-8", "replace"))
+        stderr = (response.stderr or "").lower()
+        with self._lock:
+            self.response_bytes += size
+            if "too many requests" in stderr or "429" in stderr or "throttl" in stderr:
+                self.throttles += 1
+            if self.response_bytes > self.max_bytes and not self.reason:
+                self.reason = f"response budget exhausted ({self.max_bytes} bytes)"
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "requests": self.requests, "retries": self.retries,
+            "responseBytes": self.response_bytes, "throttles": self.throttles,
+            "elapsedSeconds": round(time.monotonic() - self.started, 3),
+            "limits": {"requests": self.max_requests, "durationSeconds": self.max_duration,
+                       "responseBytes": self.max_bytes, "delayMs": int(self.delay * 1000)},
+            "state": "PARTIAL" if self.reason else "AVAILABLE", "reason": self.reason,
+        }
+
+
+TRANSIENT_KUBECTL = re.compile(r"(?i)(too many requests|\b429\b|\b5\d\d\b|timeout|temporar|connection reset|server is currently unable)")
+
+
+def run_kubectl(command: list[str], timeout: int, budget: ApiBudget, retries: int) -> subprocess.CompletedProcess[str]:
+    last = subprocess.CompletedProcess(command, 75, "", "collection did not run")
+    for attempt in range(retries + 1):
+        try:
+            budget.before_request(retry=attempt > 0)
+        except CollectionBudgetExceeded as error:
+            return subprocess.CompletedProcess(command, 75, "", str(error))
+        last = run(command, timeout)
+        budget.after_response(last)
+        if last.returncode == 0 or attempt >= retries or not TRANSIENT_KUBECTL.search(last.stderr or ""):
+            return last
+        time.sleep(min(10.0, (2 ** attempt) + random.random()))
+    return last
+
+def api_resources(timeout: int, budget: ApiBudget, retries: int) -> tuple[set[str], set[str], dict[str, Any]]:
     result: dict[str, Any] = {"state": "AVAILABLE", "namespaced": [], "cluster": []}
     discovered: list[set[str]] = []
     for flag, key in (("true", "namespaced"), ("false", "cluster")):
-        response = run(["kubectl", "api-resources", "--verbs=list", f"--namespaced={flag}", "-o", "name"], timeout)
+        response = run_kubectl(["kubectl", "api-resources", "--verbs=list", f"--namespaced={flag}", "-o", "name"], timeout, budget, retries)
         if response.returncode:
             result["state"] = "UNAVAILABLE"
             result.setdefault("errors", []).append(response.stderr.strip() or f"api-resources {flag} failed")
@@ -340,8 +447,14 @@ def choose_resource(candidates: Iterable[str], available: set[str]) -> str | Non
 
 def collect_universal_inventory(directory: Path, namespaced: set[str], cluster: set[str],
                                 raw: dict[str, dict[str, Any]], coverage: dict[str, Any],
-                                timeout: int, chunk_size: int, workers: int) -> dict[str, Any]:
+                                timeout: int, chunk_size: int, workers: int, budget: ApiBudget,
+                                retries: int, namespace: str = "", resume: bool = False) -> dict[str, Any]:
     """Inventory every listable API; unknown resources persist identity only."""
+    inventory_path = directory / "universal-inventory.json"
+    if resume and inventory_path.is_file():
+        previous = load_json(inventory_path, {})
+        if isinstance(previous, dict) and isinstance(previous.get("resources"), list):
+            return {key: value for key, value in previous.items() if key != "resources"} | {"resumed": True}
     entries: list[dict[str, Any]] = []
     covered: set[str] = set()
     for key, result in coverage.items():
@@ -367,18 +480,18 @@ def collect_universal_inventory(directory: Path, namespaced: set[str], cluster: 
         resource, scope = target
         command = ["kubectl", "get", resource]
         if scope == "namespaced":
-            command.append("-A")
+            command += ["-n", namespace] if namespace else ["-A"]
         command += ["-o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,KIND:.kind,APIVERSION:.apiVersion",
                     "--no-headers", f"--chunk-size={chunk_size}", f"--request-timeout={timeout}s"]
-        response = run(command, max(timeout * 2, 30))
+        response = run_kubectl(command, max(timeout * 2, 30), budget, retries)
         objects = []
         if response.returncode == 0:
             for line in response.stdout.splitlines():
                 columns = line.split()
                 if len(columns) >= 4:
-                    namespace, name, kind, api_version = columns[:4]
+                    object_namespace, name, kind, api_version = columns[:4]
                     objects.append({"apiVersion": api_version, "kind": kind,
-                                    "namespace": "-" if namespace == "<none>" else namespace, "name": name})
+                                    "namespace": "-" if object_namespace == "<none>" else object_namespace, "name": name})
         return {"resource": resource, "scope": scope,
                 "state": "AVAILABLE" if response.returncode == 0 else "UNAVAILABLE",
                 "count": len(objects), "deepCollected": False, "objects": objects,
@@ -399,8 +512,10 @@ def collect_universal_inventory(directory: Path, namespaced: set[str], cluster: 
     (directory / "universal-inventory.json").write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
     return {key: value for key, value in output.items() if key != "resources"}
 
-def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_workers: int) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    namespaced, cluster, api_inventory = api_resources(timeout)
+def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_workers: int,
+                 budget: ApiBudget, retries: int, namespace: str = "",
+                 resume: bool = False) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    namespaced, cluster, api_inventory = api_resources(timeout, budget, retries)
     (directory / "api-resources.json").write_text(json.dumps(api_inventory, ensure_ascii=False, indent=2), encoding="utf-8")
     raw: dict[str, dict[str, Any]] = {}
     coverage: dict[str, Any] = {}
@@ -408,6 +523,12 @@ def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_worke
         available = namespaced if is_namespaced else cluster
         resource = choose_resource(candidates, available)
         path = directory / filename
+        if resume and resource and path.is_file():
+            cached = load_json(path, None)
+            if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+                raw[key] = cached
+                coverage[key] = {"state": "AVAILABLE", "count": len(items(cached)), "resource": resource, "resumed": True}
+                continue
         if not resource:
             payload = {"apiVersion": "v1", "kind": "List", "items": []}
             path.write_text(json.dumps(payload), encoding="utf-8")
@@ -416,9 +537,9 @@ def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_worke
             continue
         command = ["kubectl", "get", resource]
         if is_namespaced:
-            command.append("-A")
+            command += ["-n", namespace] if namespace else ["-A"]
         command += ["-o", "json", f"--chunk-size={chunk_size}", f"--request-timeout={timeout}s"]
-        response = run(command, max(timeout * 3, 60))
+        response = run_kubectl(command, max(timeout * 3, 60), budget, retries)
         try:
             payload = json.loads(response.stdout) if response.returncode == 0 else {"items": []}
         except json.JSONDecodeError:
@@ -430,8 +551,8 @@ def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_worke
         else:
             coverage[key] = {"state": "AVAILABLE", "count": len(items(payload)), "resource": resource}
         path.write_text(json.dumps(sanitize_resource_list(key, payload), ensure_ascii=False, indent=2), encoding="utf-8")
-    universal = collect_universal_inventory(directory, namespaced, cluster, raw, coverage, timeout, chunk_size, inventory_workers)
-    return raw, {"apiResources": api_inventory, "resources": coverage, "universalInventory": universal}
+    universal = collect_universal_inventory(directory, namespaced, cluster, raw, coverage, timeout, chunk_size, inventory_workers, budget, retries, namespace, resume)
+    return raw, {"apiResources": api_inventory, "resources": coverage, "universalInventory": universal, "requestBudget": budget.summary(), "namespaceScope": namespace or "all"}
 
 
 def existing_resources(directory: Path) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
@@ -564,6 +685,8 @@ class Assessment:
         self.technology_workloads: dict[str, set[str]] = defaultdict(set)
         self.capacity: list[dict[str, Any]] = []
         self.sanitized_snapshots: list[str] = []
+        self.semantic_summary: dict[str, Any] = {}
+        self.aws_eks = load_json(directory / "aws-eks-assessment.json", {})
         self.base = {
             "nodes": load_json(directory / "nodes.json", {"items": []}),
             "pods": load_json(directory / "pods.json", {"items": []}),
@@ -575,15 +698,31 @@ class Assessment:
 
     def add(self, severity: str, category: str, check: str, detail: str, recommendation: str = "",
             namespace: str = "-", workload: str = "-", container: str = "-",
-            source: str = "", technology: str = "", evidence: str = "snapshot") -> None:
-        status = {"CRIT": "OPEN", "WARN": "OPEN", "INFO": "REVIEW", "PASS": "COMPLIANT", "N/A": "NOT_APPLICABLE"}[severity]
-        raw_id = "|".join((category, check, namespace, workload, container, detail))
+            source: str = "", technology: str = "", evidence: str = "snapshot",
+            rule_id: str = "", confidence: str = "HIGH", applicability: str = "APPLICABLE") -> None:
+        status_map = {
+            "CRIT": "OPEN", "WARN": "OPEN", "INFO": "REVIEW", "PASS": "COMPLIANT",
+            "N/A": "NOT_APPLICABLE", "UNKNOWN": "UNKNOWN", "PARTIAL": "PARTIAL",
+        }
+        if severity not in status_map:
+            raise ValueError(f"unsupported finding severity: {severity}")
+        slug = lambda value: re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+        canonical_rule = rule_id or f"k8s.{slug(category)}.{slug(check)}"
+        resource_key = "|".join((namespace or "-", workload or "-", container or "-"))
+        finding_id = hashlib.sha256(f"{canonical_rule}|{resource_key}".encode()).hexdigest()[:16]
+        evidence_hash = hashlib.sha256(detail.encode()).hexdigest()[:16]
+        if severity == "N/A":
+            applicability = "NOT_APPLICABLE"
+        if severity in {"UNKNOWN", "PARTIAL"} and confidence == "HIGH":
+            confidence = "LOW"
         self.findings.append({
-            "id": hashlib.sha256(raw_id.encode()).hexdigest()[:16], "severity": severity,
-            "status": status, "category": category, "check": check,
-            "namespace": namespace, "workload": workload, "container": container,
-            "detail": detail, "recommendation": recommendation,
+            "id": finding_id, "fingerprint": finding_id, "ruleId": canonical_rule,
+            "resourceKey": resource_key, "evidenceHash": evidence_hash,
+            "severity": severity, "status": status_map[severity], "category": category,
+            "check": check, "namespace": namespace, "workload": workload,
+            "container": container, "detail": detail, "recommendation": recommendation,
             "technology": technology, "evidence": evidence,
+            "confidence": confidence, "applicability": applicability,
             "source": source or SOURCE_URLS.get(category.lower(), ""),
         })
 
@@ -594,6 +733,28 @@ class Assessment:
         # ReplicaSets and controller-owned Pods are inventory-only because their PodSpec is
         # already represented by the owning workload.
         return result
+
+    def integrate_aws_eks(self) -> None:
+        """Merge the independent AWS/EKS evidence without changing K8s gates."""
+        if not isinstance(self.aws_eks, dict) or not self.aws_eks:
+            self.add(
+                "UNKNOWN", "EKS", "AWS/EKS assessment artifact",
+                "aws-eks-assessment.json was not produced; Kubernetes evidence remains valid.",
+                "Run aws_eks_assessment.py with explicit read-only AWS access when this is an EKS cluster.",
+                evidence="collector-artifact", rule_id="eks.collection.artifact", confidence="LOW",
+                applicability="UNKNOWN",
+            )
+            return
+        existing = {item.get("fingerprint") or item.get("id") for item in self.findings}
+        for finding in self.aws_eks.get("findings") or []:
+            if not isinstance(finding, dict):
+                continue
+            fingerprint = finding.get("fingerprint") or finding.get("id")
+            if fingerprint and fingerprint in existing:
+                continue
+            self.findings.append(copy.deepcopy(finding))
+            if fingerprint:
+                existing.add(fingerprint)
 
     def cluster_health(self) -> None:
         nodes, pods = items(self.base["nodes"]), items(self.base["pods"])
@@ -980,26 +1141,29 @@ class Assessment:
         self.cluster_health()
         self.analyze_workloads()
         self.analyze_rbac_and_storage()
+        self.semantic_summary = apply_semantic_assessment(self)
+        self.integrate_aws_eks()
         technologies = self.analyze_technologies()
         telemetry = self.prometheus_capacity()
         self.extension_coverage()
         self.manifests()
         self.persist_sanitized_snapshots()
-        order = {"CRIT": 0, "WARN": 1, "INFO": 2, "N/A": 3, "PASS": 4}
-        self.findings.sort(key=lambda x: (order[x["severity"]], x["category"], x["namespace"], x["workload"], x["check"]))
+        order = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
+        self.findings.sort(key=lambda x: (order.get(x["severity"], 9), x["category"], x["namespace"], x["workload"], x["check"]))
         counts = Counter(x["severity"] for x in self.findings)
         categories: list[dict[str, Any]] = []
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for finding in self.findings: grouped[finding["category"]].append(finding)
         for category, values in sorted(grouped.items()):
             severities = {x["severity"] for x in values}
-            state = next((level for level in ("CRIT", "WARN", "INFO", "PASS", "N/A") if level in severities), "N/A")
+            state = next((level for level in ("CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A") if level in severities), "N/A")
             categories.append({"name": category, "state": state, "counts": dict(Counter(x["severity"] for x in values))})
         return {
             "schemaVersion": SCHEMA_VERSION, "generatedAt": utcnow(), "readOnly": True,
             "safety": {"kubectlVerbs": ["get", "list"], "secrets": "metadata-only", "environmentValues": "redacted-except-runtime-tuning", "eventMessages": "omitted", "mutations": 0},
             "summary": {
                 "checks": len(self.findings), "critical": counts["CRIT"], "warnings": counts["WARN"],
+                "unknown": counts["UNKNOWN"], "partial": counts["PARTIAL"],
                 "info": counts["INFO"], "passed": counts["PASS"], "notApplicable": counts["N/A"],
                 "workloads": len(self.workloads), "containers": sum(len(x["containers"]) for x in self.workloads),
                 "technologiesDetected": sum(x["state"] == "DETECTED" for x in technologies),
@@ -1010,8 +1174,16 @@ class Assessment:
             "collection": self.collection, "categories": categories, "findings": self.findings,
             "workloads": self.workloads, "technologies": technologies,
             "capacityRecommendations": self.capacity,
+            "semantic": self.semantic_summary,
+            "awsEks": {
+                "state": self.aws_eks.get("state", "UNKNOWN") if isinstance(self.aws_eks, dict) else "UNKNOWN",
+                "reason": self.aws_eks.get("reason", "") if isinstance(self.aws_eks, dict) else "",
+                "summary": self.aws_eks.get("summary", {}) if isinstance(self.aws_eks, dict) else {},
+                "coverage": self.aws_eks.get("coverage", {}) if isinstance(self.aws_eks, dict) else {},
+                "inventory": self.aws_eks.get("inventory", {}) if isinstance(self.aws_eks, dict) else {},
+            },
             "prometheus": {"state": telemetry.get("state", "DISABLED"), "window": telemetry.get("window"), "reason": telemetry.get("reason", "")},
-            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json"},
+            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json"},
         }
 
 
@@ -1022,11 +1194,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--chunk-size", type=int, default=200)
     parser.add_argument("--inventory-workers", type=int, default=4)
+    parser.add_argument("--api-delay-ms", type=int, default=int(os.getenv("ASSESSMENT_API_DELAY_MS", "100")))
+    parser.add_argument("--retries", type=int, default=int(os.getenv("ASSESSMENT_API_RETRIES", "3")))
+    parser.add_argument("--max-requests", type=int, default=int(os.getenv("ASSESSMENT_MAX_REQUESTS", "1000")))
+    parser.add_argument("--max-duration", type=int, default=int(os.getenv("ASSESSMENT_MAX_DURATION", "1800")))
+    parser.add_argument("--max-response-mb", type=int, default=int(os.getenv("ASSESSMENT_MAX_RESPONSE_MB", "256")))
+    parser.add_argument("--namespace", default=os.getenv("ASSESSMENT_NAMESPACE", ""), help="optional namespaced collection scope")
+    parser.add_argument("--resume", action="store_true", help="reuse valid resource snapshots already present")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if not 5 <= args.timeout <= 300: parser.error("--timeout must be between 5 and 300")
     if not 50 <= args.chunk_size <= 1000: parser.error("--chunk-size must be between 50 and 1000")
     if not 1 <= args.inventory_workers <= 16: parser.error("--inventory-workers must be between 1 and 16")
+    if not 0 <= args.api_delay_ms <= 5000: parser.error("--api-delay-ms must be between 0 and 5000")
+    if not 0 <= args.retries <= 8: parser.error("--retries must be between 0 and 8")
+    if not 10 <= args.max_requests <= 100000: parser.error("--max-requests must be between 10 and 100000")
+    if not 60 <= args.max_duration <= 86400: parser.error("--max-duration must be between 60 and 86400")
+    if not 16 <= args.max_response_mb <= 4096: parser.error("--max-response-mb must be between 16 and 4096")
+    if args.namespace and not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", args.namespace): parser.error("invalid --namespace")
     return args
 
 
@@ -1036,7 +1221,12 @@ def main() -> int:
     if not directory.is_dir():
         print(f"snapshot directory not found: {directory}", file=sys.stderr)
         return 2
-    raw, collection = collect_live(directory, args.timeout, args.chunk_size, args.inventory_workers) if args.collect_live else existing_resources(directory)
+    budget = ApiBudget(args.max_requests, args.max_duration, args.max_response_mb * 1024 * 1024, args.api_delay_ms)
+    raw, collection = (
+        collect_live(directory, args.timeout, args.chunk_size, args.inventory_workers,
+                     budget, args.retries, args.namespace, args.resume)
+        if args.collect_live else existing_resources(directory)
+    )
     result = Assessment(directory, raw, collection).result()
     output = args.output.resolve() if args.output else directory / "comprehensive-assessment.json"
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

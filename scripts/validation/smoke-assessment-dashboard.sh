@@ -41,6 +41,7 @@ paths=(
   "/technologies?collection=$COLLECTION"
   "/capacity?collection=$COLLECTION"
   "/prometheus?collection=$COLLECTION"
+  "/aws?collection=$COLLECTION"
   "/coverage?collection=$COLLECTION"
   "/compare?collection=$COLLECTION"
   "/export?collection=$COLLECTION"
@@ -84,6 +85,12 @@ grep -Fq 'Prometheus — visão operacional' <<<"$prometheus_page"
 grep -Fq 'CPU / request' <<<"$prometheus_page"
 grep -Fq 'Exibir métricas técnicas e percentis completos' <<<"$prometheus_page"
 grep -Fq 'Runtime e tuning descobertos automaticamente' <<<"$prometheus_page"
+grep -Fq 'Saúde do Prometheus' <<<"$prometheus_page"
+grep -Fq 'Sinais simplificados e tecnologias' <<<"$prometheus_page"
+
+aws_page="$(curl -fsS "$BASE_URL/aws?collection=$COLLECTION")"
+grep -Fq 'AWS / Amazon EKS' <<<"$aws_page"
+grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
 
 runtime_count="$(jq '[.workloads[] | select((.runtimeDetected // []) | length > 0)] | length' "$DIR/prometheus-telemetry.json")"
 if ((runtime_count > 0)); then

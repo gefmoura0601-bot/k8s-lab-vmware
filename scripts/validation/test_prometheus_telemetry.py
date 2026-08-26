@@ -107,6 +107,53 @@ class PrometheusTelemetryTests(unittest.TestCase):
         self.assertEqual(config["DOTNET_API_KEY"], "<redacted>")
         self.assertNotIn("UNRELATED_SETTING", config)
 
+    def test_technology_is_detected_from_arbitrary_manifest(self) -> None:
+        rabbit = {
+            "name": "broker",
+            "image": "registry.example/messaging/rabbitmq:3.13",
+            "env": [],
+        }
+        nginx = {
+            "name": "edge",
+            "image": "registry.example/nginx:1.27",
+            "env": [],
+        }
+        self.assertEqual(telemetry.container_technologies(rabbit), {"RabbitMQ"})
+        self.assertEqual(telemetry.container_technologies(nginx), {"NGINX"})
+
+    def test_rabbitmq_metric_is_correlated_without_lab_specific_names(self) -> None:
+        metric = "rabbitmq_queue_messages_ready"
+        discovery = self.discovery_with_series(
+            metric,
+            {
+                "__name__": metric,
+                "namespace": "tenant-messaging",
+                "pod": "broker-service-6b9f7d8b8c-ab123",
+            },
+        )
+        target = telemetry.WorkloadTarget("tenant-messaging", "broker-service")
+        candidates = telemetry.candidate_map(discovery)
+        technologies, bindings, missing = telemetry.technology_bindings(
+            discovery, target, candidates
+        )
+        self.assertIn("RabbitMQ", technologies)
+        self.assertIn("rabbitmq_messages_ready", bindings)
+        self.assertNotIn("rabbitmq_messages_ready", missing)
+
+    def test_simple_metrics_are_human_readable(self) -> None:
+        rows = telemetry.simple_metrics(
+            {
+                "cpu": {
+                    "state": "AVAILABLE",
+                    "unit": "cores",
+                    "mean": 0.2,
+                    "p95": 0.5,
+                    "peak": 0.8,
+                }
+            }
+        )
+        self.assertEqual(rows[0]["p95"], "50.0% de 1 vCPU")
+        self.assertEqual(rows[0]["assessment"], "evidência disponível")
     def test_embedded_credentials_are_rejected(self) -> None:
         with self.assertRaises(telemetry.TelemetryError):
             telemetry.validate_url("https://user:password@prometheus.example")
