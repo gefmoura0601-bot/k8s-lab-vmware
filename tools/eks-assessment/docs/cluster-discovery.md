@@ -1,6 +1,6 @@
 # EKS / Kubernetes cluster discovery
 
-`scripts/validation/eks-cluster-discovery.sh` produces a read-only technical
+`tools/eks-assessment/src/eks-cluster-discovery.sh` produces a read-only technical
 inventory of the cluster. It is an original implementation following the
 safety and report-organisation approach of the AWS EKS Cluster Discovery Tool.
 
@@ -18,7 +18,7 @@ namespace, type, creation date and key names.
 Run a complete report from the master node:
 
 ```bash
-bash /workspace/scripts/validation/eks-cluster-discovery.sh \
+bash /workspace/tools/eks-assessment/src/eks-cluster-discovery.sh \
   --delay-ms 150 --timeout 20s \
   --output-dir /tmp/eks-discovery --combined-report
 ```
@@ -27,7 +27,7 @@ For a production-sized cluster, start with a targeted namespace and a more
 conservative delay/output limit:
 
 ```bash
-bash /workspace/scripts/validation/eks-cluster-discovery.sh \
+bash /workspace/tools/eks-assessment/src/eks-cluster-discovery.sh \
   --namespace my-namespace --large-cluster --delay-ms 500 \
   --output-dir /tmp/eks-discovery
 ```
@@ -38,11 +38,11 @@ as `N/A`; timeouts or inaccessible APIs are counted as `unavailable` in the
 summary and make the command return a non-zero status.
 
 O inventário textual é correlacionado pelo scanner
-`scripts/validation/eks_comprehensive_assessment.py`, que analisa cada workload
+`tools/eks-assessment/src/eks_comprehensive_assessment.py`, que analisa cada workload
 e container, classifica itens não aplicáveis como `N/A` e gera as evidências
 sanitizadas consumidas pelo dashboard.
 
 Prometheus telemetry remains an optional, read-only source in
-`scripts/validation/prometheus_telemetry.py`: it requires an explicit URL,
+`tools/eks-assessment/src/prometheus_telemetry.py`: it requires an explicit URL,
 uses HTTP GET only and feeds statistical capacity recommendations without
 changing workloads, gates or baselines.

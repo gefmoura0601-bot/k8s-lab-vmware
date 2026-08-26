@@ -2,8 +2,10 @@
 # Starts a real read-only collection, cancels it, and verifies bounded cleanup.
 set -euo pipefail
 
+TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$TOOL_ROOT/../.." && pwd)"
 BASE_URL="${ASSESSMENT_BASE_URL:-http://127.0.0.1:8765}"
-ROOT="${ASSESSMENT_ROOT:-/workspace/assessment}"
+ROOT="${ASSESSMENT_ROOT:-$REPOSITORY_ROOT/assessment}"
 page="$(curl -fsS "$BASE_URL/collect")"
 token="$(sed -n 's/.*name="action_token" value="\([A-Za-z0-9_-]*\)".*/\1/p' <<<"$page" | head -1)"
 [[ -n "$token" ]] || { echo "action token not found" >&2; exit 1; }

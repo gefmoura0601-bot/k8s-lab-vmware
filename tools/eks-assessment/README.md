@@ -14,15 +14,15 @@ Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso c
 O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard web:
 
 ```bash
-bash /workspace/scripts/validation/eks-assessment-menu.sh
+bash /workspace/tools/eks-assessment/bin/eks-assessment.sh
 ```
 
 Para iniciar somente a web:
 
 ```bash
-python3.11 /workspace/scripts/validation/assessment_dashboard.py \
+python3.11 /workspace/tools/eks-assessment/src/assessment_dashboard.py \
   --root /workspace/assessment \
-  --static /workspace/app/eks-assessment-dashboard/public \
+  --static /workspace/tools/eks-assessment/web/public \
   --host 0.0.0.0 --port 8765
 ```
 
@@ -36,21 +36,21 @@ Abra `http://<ip-do-master>:8765`. O botão **Coletar agora** executa o pipeline
 - após TERM há 10s de graça e então KILL, evitando `kubectl`, `aws`, helpers ou port-forwards órfãos;
 - artefatos parciais são preservados com estado `CANCELLED` ou `TIMED_OUT`, nunca como coleta concluída.
 
-Smoke de cancelamento real: `bash /workspace/scripts/validation/smoke-assessment-cancellation.sh`.
+Smoke de cancelamento real: `bash /workspace/tools/eks-assessment/tests/smoke-assessment-cancellation.sh`.
 
 ## Scanner direto
 
 Para analisar uma coleta existente sem consultar novamente o cluster:
 
 ```bash
-python3.11 /workspace/scripts/validation/eks_comprehensive_assessment.py \
+python3.11 /workspace/tools/eks-assessment/src/eks_comprehensive_assessment.py \
   --snapshot-dir /workspace/assessment/<coleta>
 ```
 
 Para atualizar o inventário read-only antes da análise:
 
 ```bash
-python3.11 /workspace/scripts/validation/eks_comprehensive_assessment.py \
+python3.11 /workspace/tools/eks-assessment/src/eks_comprehensive_assessment.py \
   --snapshot-dir /workspace/assessment/<coleta> \
   --collect-live --timeout 30 --chunk-size 200 \
   --inventory-workers 4 --api-delay-ms 100 \

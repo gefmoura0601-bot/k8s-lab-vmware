@@ -4,8 +4,8 @@ set -euo pipefail
 # Read-only EKS assessment. Produces a point-in-time health and best-practices
 # report, including Prometheus baseline data, without changing cluster state.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-AWS_SCANNER="$ROOT/scripts/validation/aws_eks_assessment.py"
+TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AWS_SCANNER="$TOOL_ROOT/src/aws_eks_assessment.py"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-monitoring}"

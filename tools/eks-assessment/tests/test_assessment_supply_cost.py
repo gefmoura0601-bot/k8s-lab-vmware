@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import aws_eks_assessment
 from eks_semantic_assessment import SemanticRules

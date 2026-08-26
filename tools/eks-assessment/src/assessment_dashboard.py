@@ -1157,8 +1157,8 @@ class Handler(BaseHTTPRequestHandler):
             codes: list[int] = []
             components: list[str] = []
             runs = [
-                ("assessment", "assessment.log", ["bash", str(self.repository / "scripts/validation/assess-eks.sh")], 900),
-                ("discovery", "discovery.log", ["bash", str(self.repository / "scripts/validation/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
+                ("assessment", "assessment.log", ["bash", str(self.repository / "src/assess-eks.sh")], 900),
+                ("discovery", "discovery.log", ["bash", str(self.repository / "src/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
             ]
             for component, logfile, args, timeout in runs:
                 result = SUPERVISOR.run(component, args, cwd=self.repository, env=env, timeout=timeout)
@@ -1183,7 +1183,7 @@ class Handler(BaseHTTPRequestHandler):
             if prometheus_url:
                 command = [
                     sys.executable,
-                    str(self.repository / "scripts/validation/prometheus_telemetry.py"),
+                    str(self.repository / "src/prometheus_telemetry.py"),
                     "--url", prometheus_url,
                     "--window", window,
                     "--workloads-file", str(output / "workloads.json"),
@@ -1207,7 +1207,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
             scanner_command = [
                 sys.executable,
-                str(self.repository / "scripts/validation/eks_comprehensive_assessment.py"),
+                str(self.repository / "src/eks_comprehensive_assessment.py"),
                 "--snapshot-dir", str(output),
                 "--collect-live",
                 "--timeout", "30",
@@ -1250,7 +1250,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             validator = SUPERVISOR.run(
                 "artifact-validation",
-                [sys.executable, str(self.repository / "scripts/validation/validate_assessment_artifacts.py"), str(output)],
+                [sys.executable, str(self.repository / "src/validate_assessment_artifacts.py"), str(output)],
                 cwd=self.repository,
                 env=env,
                 timeout=300,
@@ -1290,7 +1290,7 @@ def utc_iso() -> str:
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="0.0.0.0"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
-    Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Handler.static.parent.parent.parent.resolve(); Handler.root.mkdir(parents=True, exist_ok=True)
+    Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Path(__file__).resolve().parents[1]; Handler.root.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
 

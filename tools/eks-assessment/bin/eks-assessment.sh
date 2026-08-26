@@ -2,13 +2,14 @@
 # Interactive read-only EKS/Kubernetes assessment operator menu.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTROOT="${ASSESSMENT_ROOT:-$ROOT/assessment}"
-ASSESS="$ROOT/scripts/validation/assess-eks.sh"
-DISCOVERY="$ROOT/scripts/validation/eks-cluster-discovery.sh"
-TELEMETRY="$ROOT/scripts/validation/prometheus_telemetry.py"
-SCANNER="$ROOT/scripts/validation/eks_comprehensive_assessment.py"
-VALIDATOR="$ROOT/scripts/validation/validate_assessment_artifacts.py"
+TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$TOOL_ROOT/../.." && pwd)"
+OUTROOT="${ASSESSMENT_ROOT:-$REPOSITORY_ROOT/assessment}"
+ASSESS="$TOOL_ROOT/src/assess-eks.sh"
+DISCOVERY="$TOOL_ROOT/src/eks-cluster-discovery.sh"
+TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
+SCANNER="$TOOL_ROOT/src/eks_comprehensive_assessment.py"
+VALIDATOR="$TOOL_ROOT/src/validate_assessment_artifacts.py"
 PORT="${DASHBOARD_PORT:-8765}"
 MAX_DURATION_SECONDS="${ASSESSMENT_MAX_DURATION_SECONDS:-1800}"
 ACTIVE_PID=""
@@ -216,7 +217,7 @@ web(){
     echo "Dashboard ativo (PID $(cat "$pid"))."
   else
     need python3.11
-    nohup python3.11 "$ROOT/scripts/validation/assessment_dashboard.py" --root "$OUTROOT" --static "$ROOT/app/eks-assessment-dashboard/public" --host 0.0.0.0 --port "$PORT" > "$log" 2>&1 &
+    nohup python3.11 "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" > "$log" 2>&1 &
     echo $! > "$pid"; sleep 1
   fi
   WEB_MANAGED_BY_MENU=1

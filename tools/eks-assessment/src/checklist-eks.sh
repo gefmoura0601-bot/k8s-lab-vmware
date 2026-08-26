@@ -51,7 +51,7 @@ check_telemetry() {
 }
 
 require kubectl; require jq; [[ -r "$TOPOLOGY" ]] || { echo "ERRO: módulo de topologia ausente" >&2; exit 1; }
-# shellcheck source=scripts/validation/checklist-eks-topology.sh
+# shellcheck source=tools/eks-assessment/src/checklist-eks-topology.sh
 source "$TOPOLOGY"
 printf '\n== EKS CHECKLIST (somente leitura) ==\n'; check_cluster_health; check_baseline_practices; run_topology_checks; check_telemetry
 printf '\nResumo: PASS=%s WARN=%s FAIL=%s NÃO_AVALIADO=%s\n' "$pass" "$warn" "$fail" "$na"

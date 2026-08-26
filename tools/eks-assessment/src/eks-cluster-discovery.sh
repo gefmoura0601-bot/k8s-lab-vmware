@@ -30,8 +30,8 @@ Read-only inventory and health report. Secret values are never collected.
   -h, --help               Show this help
 
 Examples:
-  ./scripts/validation/eks-cluster-discovery.sh -n apps -o ./assessment
-  ./scripts/validation/eks-cluster-discovery.sh -L --delay-ms 500 -o ./assessment
+  ./tools/eks-assessment/src/eks-cluster-discovery.sh -n apps -o ./assessment
+  ./tools/eks-assessment/src/eks-cluster-discovery.sh -L --delay-ms 500 -o ./assessment
 EOF
 }
 

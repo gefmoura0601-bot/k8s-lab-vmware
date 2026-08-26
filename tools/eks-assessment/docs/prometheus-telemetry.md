@@ -1,13 +1,13 @@
 # Telemetria Prometheus opcional
 
-`scripts/validation/prometheus_telemetry.py` é um coletor Python 3.10+ adaptativo, somente leitura e sem dependências externas. A URL do Prometheus é sempre explícita: não há descoberta automática de endpoint, credenciais no código ou mutações no cluster.
+`tools/eks-assessment/src/prometheus_telemetry.py` é um coletor Python 3.10+ adaptativo, somente leitura e sem dependências externas. A URL do Prometheus é sempre explícita: não há descoberta automática de endpoint, credenciais no código ou mutações no cluster.
 
 ## Execução no master
 
 Para analisar todos os Deployments de um snapshot:
 
 ```bash
-python3.11 /workspace/scripts/validation/prometheus_telemetry.py \
+python3.11 /workspace/tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 7d \
   --workloads-file /workspace/assessment/<coleta>/workloads.json \
@@ -17,14 +17,14 @@ python3.11 /workspace/scripts/validation/prometheus_telemetry.py \
 Para alvos pontuais:
 
 ```bash
-python3.11 /workspace/scripts/validation/prometheus_telemetry.py \
+python3.11 /workspace/tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 1d \
   --workload payments/api \
   --workload checkout/web
 ```
 
-A forma recomendada é abrir o menu com `bash /workspace/scripts/validation/eks-assessment-menu.sh`, escolher a web e informar a URL no formulário de **Coletar agora** ou **Novo baseline**.
+A forma recomendada é abrir o menu com `bash /workspace/tools/eks-assessment/bin/eks-assessment.sh`, escolher a web e informar a URL no formulário de **Coletar agora** ou **Novo baseline**.
 
 ## Descoberta automática
 
@@ -62,6 +62,6 @@ A aba **Prometheus** apresenta percentuais de request/limit e heap, além de ver
 ## Testes
 
 ```bash
-cd /workspace/scripts/validation
+cd /workspace/tools/eks-assessment
 python3.11 -m unittest -v test_assessment_cancellation.py test_assessment_supply_cost.py test_prometheus_telemetry.py test_eks_assessment.py
 ```

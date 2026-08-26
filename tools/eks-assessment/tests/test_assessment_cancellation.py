@@ -9,6 +9,8 @@ import time
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from assessment_process_supervisor import CollectionSupervisor
 
 
@@ -53,7 +55,7 @@ class CollectionSupervisorTests(unittest.TestCase):
         supervisor.finish()
 
     def test_menu_has_group_cleanup_and_total_budget(self) -> None:
-        menu = Path(__file__).with_name("eks-assessment-menu.sh").read_text(encoding="utf-8")
+        menu = (Path(__file__).resolve().parents[1] / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
         self.assertIn("trap cancel_on_signal INT TERM", menu)
         self.assertIn('kill -TERM -- "-$ACTIVE_PID"', menu)
         self.assertIn("ASSESSMENT_MAX_DURATION_SECONDS", menu)
