@@ -28,7 +28,11 @@ DIR="$ROOT/$COLLECTION"
 health="$(curl -fsS "$BASE_URL/api/health")"
 jq -e '.ok == true and .readOnly == true' >/dev/null <<<"$health"
 
+collection_status="$(curl -fsS "$BASE_URL/api/collection-status")"
+jq -e '.active == false and (.status | type == "string")' >/dev/null <<<"$collection_status"
+
 paths=(
+  "/api/collection-status"
   "/?collection=$COLLECTION"
   "/assessment?collection=$COLLECTION"
   "/problems?collection=$COLLECTION"
@@ -91,6 +95,11 @@ grep -Fq 'Sinais simplificados e tecnologias' <<<"$prometheus_page"
 aws_page="$(curl -fsS "$BASE_URL/aws?collection=$COLLECTION")"
 grep -Fq 'AWS / Amazon EKS' <<<"$aws_page"
 grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
+
+collect_page="$(curl -fsS "$BASE_URL/collect")"
+grep -Fq 'máximo 30 min' <<<"$collect_page"
+unauthorized_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/collect")"
+[[ "$unauthorized_code" == "403" ]] || { echo "unauthenticated collection was not rejected" >&2; exit 1; }
 
 runtime_count="$(jq '[.workloads[] | select((.runtimeDetected // []) | length > 0)] | length' "$DIR/prometheus-telemetry.json")"
 if ((runtime_count > 0)); then

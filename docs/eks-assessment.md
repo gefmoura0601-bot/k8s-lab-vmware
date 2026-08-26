@@ -28,6 +28,16 @@ python3.11 /workspace/scripts/validation/assessment_dashboard.py \
 
 Abra `http://<ip-do-master>:8765`. O botão **Coletar agora** executa o pipeline completo. Escolha o perfil de impacto, um namespace opcional ou o cluster inteiro. A URL Prometheus é opcional, mas precisa ser explicitamente informada; usuário/senha embutidos na URL são rejeitados.
 
+## Limites e cancelamento
+
+- perfis Web: baixo impacto 15 min, conservador 30 min e exaustivo 60 min;
+- no menu, `ASSESSMENT_MAX_DURATION_SECONDS` define o teto total (padrão 1800s; faixa 60–7200s);
+- `Ctrl+C`, `SIGTERM`, o botão **Cancelar coleta** ou a saída do menu encerram o grupo completo de processos;
+- após TERM há 10s de graça e então KILL, evitando `kubectl`, `aws`, helpers ou port-forwards órfãos;
+- artefatos parciais são preservados com estado `CANCELLED` ou `TIMED_OUT`, nunca como coleta concluída.
+
+Smoke de cancelamento real: `bash /workspace/scripts/validation/smoke-assessment-cancellation.sh`.
+
 ## Scanner direto
 
 Para analisar uma coleta existente sem consultar novamente o cluster:
@@ -59,6 +69,8 @@ python3.11 /workspace/scripts/validation/eks_comprehensive_assessment.py \
 - Services/EndpointSlices, Ingress/backends, Gateway API, Istio, PVC/PV, StorageClass, VolumeSnapshot e evidência Velero;
 - Argo CD, Kyverno, Karpenter, cert-manager, External Secrets, Velero, Strimzi, RabbitMQ Cluster Operator, CloudNativePG, ServiceMonitor, PodMonitor e PrometheusRule quando instalados;
 - imagens mutáveis, tags/digests e configuração de supply chain observável;
+- scan ECR read-only das imagens utilizadas, evidência de vulnerabilidade e lacunas de assinatura/SBOM;
+- backup/restore, snapshots, PVC/PV órfãos, LoadBalancers sem endpoints, fragmentação de requests e prontidão Spot;
 - detecção e checks específicos para Java, .NET, Kafka, RabbitMQ, Nginx, API gateways, PostgreSQL e Redis;
 - inventário de todas as APIs listáveis, com budget, retry/backoff, limite de resposta, retomada e escopo opcional;
 

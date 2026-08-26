@@ -170,3 +170,6 @@ h2 { margin-top: 28px; }
   .tab { white-space: nowrap; }
   .content { padding: 14px; }
 }
+.inline-action{display:inline-flex;margin:0}
+.inline-action input{display:none}
+.button.danger,.danger{border-color:#f87171;color:#fecaca;background:#7f1d1d}

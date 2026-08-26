@@ -63,5 +63,5 @@ A aba **Prometheus** apresenta percentuais de request/limit e heap, além de ver
 
 ```bash
 cd /workspace/scripts/validation
-python3.11 -m unittest -v test_prometheus_telemetry.py test_eks_assessment.py
+python3.11 -m unittest -v test_assessment_cancellation.py test_assessment_supply_cost.py test_prometheus_telemetry.py test_eks_assessment.py
 ```

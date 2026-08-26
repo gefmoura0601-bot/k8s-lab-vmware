@@ -9,6 +9,8 @@ import json
 import math
 import os
 import re
+import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -17,7 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
+from assessment_process_supervisor import CollectionSupervisor
+
 LOCK = threading.Lock()
+SUPERVISOR = CollectionSupervisor()
+ACTION_TOKEN = secrets.token_urlsafe(32)
 PLACEHOLDERS = {"", "cluster", "not-detected", "eks-production"}
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Rollout", "Job", "CronJob"}
 SEVERITY_ORDER = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
@@ -334,7 +340,10 @@ class Handler(BaseHTTPRequestHandler):
             nav.append(f'<a class="tab {"active" if key == active else ""}" href="{href}">{esc(label)}</a>')
         options = "".join(f'<option value="{esc(x.name)}" {"selected" if directory and x == directory else ""}>{esc(x.name)}{" • baseline" if metadata(x).get("baseline") else ""}</option>' for x in self.directories()) or '<option>Nenhuma coleta</option>'
         picker = f'<form class="picker" method="get"><label>Coleta<select name="collection">{options}</select></label><button>Carregar</button></form>'
+        control = SUPERVISOR.status()
         actions = f'<a class="button" href="/?{cq}">Atualizar tela</a><a class="button" href="/collect">Coletar agora</a><a class="button" href="/collect?baseline=1">Novo baseline</a>'
+        if control.get("active"):
+            actions += f'<form class="inline-action" method="post" action="/cancel"><input type="hidden" name="action_token" value="{ACTION_TOKEN}"><button class="button danger" type="submit">Cancelar coleta</button></form>'
         if directory: actions += f'<a class="button" href="/export?{cq}">Exportar</a>'
         return f'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title><link rel="stylesheet" href="/styles.css"></head><body><header><div class="environment">AMBIENTE DE ASSESSMENT <span>{esc(value.get("clusterName"))}</span></div><div class="top"><strong>EKS <em>ENVIRONMENT</em></strong><span class="health">READ-ONLY</span><span class="headline">{esc(ident or "sem coleta")}</span><div class="actions">{actions}</div></div></header><main><aside>{"".join(nav)}</aside><section class="content">{picker}{body}</section></main></body></html>'
 
@@ -1005,15 +1014,24 @@ class Handler(BaseHTTPRequestHandler):
             for item in ("1d", "3d", "7d", "14d", "30d")
         )
         profiles = (
-            '<option value="low-impact">Baixo impacto</option>'
-            '<option value="conservative" selected>Conservador (recomendado)</option>'
-            '<option value="exhaustive">Exaustivo</option>'
+            '<option value="low-impact">Baixo impacto — máximo 15 min</option>'
+            '<option value="conservative" selected>Conservador — máximo 30 min (recomendado)</option>'
+            '<option value="exhaustive">Exaustivo — máximo 60 min</option>'
         )
+        control = SUPERVISOR.status()
+        control_html = ""
+        if control.get("active"):
+            control_html = (
+                f'<div class="message warn">Coleta <b>{esc(control.get("collection"))}</b> em execução: '
+                f'{esc(control.get("component"))}; restam no máximo {esc(control.get("remainingSeconds"))}s. '
+                f'<form class="inline-action" method="post" action="/cancel"><input type="hidden" name="action_token" value="{ACTION_TOKEN}"><button class="button danger" type="submit">Cancelar agora</button></form></div>'
+            )
         body = (
-            f'<h1>{"Novo baseline" if baseline else "Nova coleta"}</h1>'
+            f'<h1>{"Novo baseline" if baseline else "Nova coleta"}</h1>{control_html}'
             '<p>Assessment adaptativo e somente leitura. O perfil controla concorrência e orçamento, '
             'não muda os critérios. URL Prometheus é opcional, explícita e não pode conter credenciais.</p>'
             f'<form class="collect" method="post" action="/collect">'
+            f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
             f'<input type="hidden" name="baseline" value="{1 if baseline else 0}">'
             f'<label>Ambiente detectado<input value="{esc(environment)}" disabled></label>'
             '<label>Identificador da mudança<input name="label" value="manual" required></label>'
@@ -1032,6 +1050,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path); path, query = parsed.path, parse_qs(parsed.query); directory = self.selected(query)
         if path == "/api/health": return self.send_json({"ok": True, "readOnly": True, "clusterName": cluster()[1]})
         if path == "/api/collections": return self.send_json([{"id": x.name, **metadata(x)} for x in self.directories()])
+        if path == "/api/collection-status": return self.send_json(SUPERVISOR.status())
         if path == "/": return self.send_html(self.overview(directory))
         if path == "/resources": return self.send_html(self.resources_page(directory, query))
         if path == "/problems": return self.send_html(self.problems(directory, query))
@@ -1056,27 +1075,45 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "Rota não encontrada"}, 404)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/collect":
+        path = urlparse(self.path).path
+        if path not in {"/collect", "/cancel"}:
             return self.send_json({"error": "Rota não encontrada"}, 404)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self.send_json({"error": "Content-Length inválido"}, 400)
+        if length > 65536:
+            return self.send_json({"error": "Formulário excede o limite"}, 413)
+        form = parse_qs(self.rfile.read(length).decode("utf-8"))
+        supplied_token = form.get("action_token", [""])[0]
+        local_request = self.client_address[0] in {"127.0.0.1", "::1"}
+        if path == "/cancel":
+            if not local_request and not secrets.compare_digest(supplied_token, ACTION_TOKEN):
+                return self.send_json({"error": "Token de ação inválido"}, 403)
+            SUPERVISOR.cancel("operator requested cancellation")
+            self.send_response(303)
+            self.send_header("Location", "/collect")
+            self.end_headers()
+            return
+        if not secrets.compare_digest(supplied_token, ACTION_TOKEN):
+            return self.send_json({"error": "Token de ação inválido"}, 403)
         if not LOCK.acquire(blocking=False):
             return self.send_html(
                 self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'),
                 409,
             )
+        collection_started = False
+        final_status = "FAILED"
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length > 65536:
-                return self.send_json({"error": "Formulário excede o limite"}, 413)
-            form = parse_qs(self.rfile.read(length).decode("utf-8"))
             context, detected = cluster()
             label = re.sub(r"[^A-Za-z0-9._-]", "-", form.get("label", ["manual"])[0])[:64] or "manual"
             baseline = form.get("baseline", ["0"])[0] == "1"
             phase = "before" if baseline else "manual"
             profile = form.get("profile", ["conservative"])[0]
             profiles = {
-                "low-impact": {"workers": "2", "delay": "250", "requests": "500", "response": "256"},
-                "conservative": {"workers": "4", "delay": "100", "requests": "1500", "response": "512"},
-                "exhaustive": {"workers": "8", "delay": "25", "requests": "5000", "response": "1024"},
+                "low-impact": {"workers": "2", "delay": "250", "requests": "500", "response": "256", "duration": "900"},
+                "conservative": {"workers": "4", "delay": "100", "requests": "1500", "response": "512", "duration": "1800"},
+                "exhaustive": {"workers": "8", "delay": "25", "requests": "5000", "response": "1024", "duration": "3600"},
             }
             profile_values = profiles.get(profile, profiles["conservative"])
             namespace = form.get("namespace", [""])[0].strip()
@@ -1086,6 +1123,27 @@ class Handler(BaseHTTPRequestHandler):
             ident = f"eks-{stamp}-{phase}-{label}"
             output = self.root / ident
             output.mkdir(parents=True)
+            max_duration = int(profile_values["duration"])
+            SUPERVISOR.start(ident, max_duration)
+            collection_started = True
+            initial_metadata = {
+                "id": ident,
+                "createdAt": utc_iso(),
+                "clusterName": detected,
+                "eksClusterName": eks_cluster_name() or None,
+                "context": context,
+                "baseline": baseline,
+                "profile": profile,
+                "namespaceScope": namespace or "*",
+                "status": "RUNNING",
+                "completed": False,
+                "cancelled": False,
+                "maxDurationSeconds": max_duration,
+                "readOnly": True,
+                "collectorComponents": [],
+                "collectorExitCodes": [],
+            }
+            (output / "metadata.json").write_text(json.dumps(initial_metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             env = {
                 **os.environ,
                 "OUTPUT_DIR": str(output),
@@ -1103,7 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("discovery", "discovery.log", ["bash", str(self.repository / "scripts/validation/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
             ]
             for component, logfile, args, timeout in runs:
-                result = run(args, cwd=self.repository, env=env, timeout=timeout)
+                result = SUPERVISOR.run(component, args, cwd=self.repository, env=env, timeout=timeout)
                 (output / logfile).write_text(result.stdout + result.stderr, encoding="utf-8")
                 components.append(component)
                 codes.append(result.returncode)
@@ -1112,7 +1170,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pvcs.json": ["kubectl", "get", "pvc", "-A", "-o", "json"],
                 "hpas.json": ["kubectl", "get", "hpa", "-A", "-o", "json"],
             }.items():
-                result = run(args, timeout=120)
+                result = SUPERVISOR.run(f"inventory-{filename}", args, timeout=120)
                 (output / filename).write_text(
                     result.stdout if result.returncode == 0 else '{"items":[]}',
                     encoding="utf-8",
@@ -1131,7 +1189,7 @@ class Handler(BaseHTTPRequestHandler):
                     "--workloads-file", str(output / "workloads.json"),
                     "--workers", profile_values["workers"],
                 ]
-                result = run(command, cwd=self.repository, env=env, timeout=1800)
+                result = SUPERVISOR.run("prometheus", command, cwd=self.repository, env=env, timeout=1800)
                 telemetry_path.write_text(
                     result.stdout or json.dumps({"state": "UNAVAILABLE", "reason": result.stderr}),
                     encoding="utf-8",
@@ -1157,25 +1215,31 @@ class Handler(BaseHTTPRequestHandler):
                 "--inventory-workers", profile_values["workers"],
                 "--api-delay-ms", profile_values["delay"],
                 "--max-requests", profile_values["requests"],
-                "--max-duration", "3600",
+                "--max-duration", profile_values["duration"],
                 "--max-response-mb", profile_values["response"],
             ]
             if namespace:
                 scanner_command.extend(["--namespace", namespace])
-            scanner = run(scanner_command, cwd=self.repository, env=env, timeout=3900)
+            scanner = SUPERVISOR.run("comprehensive", scanner_command, cwd=self.repository, env=env, timeout=max_duration)
             (output / "comprehensive-assessment.log").write_text(scanner.stdout + scanner.stderr, encoding="utf-8")
             components.append("comprehensive")
             codes.append(scanner.returncode)
+            control = SUPERVISOR.status()
+            interim_status = control.get("stopKind") or ("FAILED" if any(codes) else "RUNNING")
             value = {
                 "id": ident,
-                "createdAt": utc_iso(),
+                "createdAt": initial_metadata["createdAt"],
                 "clusterName": detected,
                 "eksClusterName": eks_cluster_name() or None,
                 "context": context,
                 "baseline": baseline,
                 "profile": profile,
                 "namespaceScope": namespace or "*",
-                "completed": not any(codes),
+                "status": interim_status,
+                "completed": False,
+                "cancelled": interim_status == "CANCELLED",
+                "cancelReason": control.get("reason") or None,
+                "maxDurationSeconds": max_duration,
                 "readOnly": True,
                 "collectorComponents": components,
                 "collectorExitCodes": codes,
@@ -1184,7 +1248,8 @@ class Handler(BaseHTTPRequestHandler):
                 json.dumps(value, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            validator = run(
+            validator = SUPERVISOR.run(
+                "artifact-validation",
                 [sys.executable, str(self.repository / "scripts/validation/validate_assessment_artifacts.py"), str(output)],
                 cwd=self.repository,
                 env=env,
@@ -1193,9 +1258,16 @@ class Handler(BaseHTTPRequestHandler):
             (output / "artifact-smoke.log").write_text(validator.stdout + validator.stderr, encoding="utf-8")
             components.append("smoke")
             codes.append(validator.returncode)
+            control = SUPERVISOR.status()
+            final_status = control.get("stopKind") or ("FAILED" if any(codes) else "COMPLETED")
             value["collectorComponents"] = components
             value["collectorExitCodes"] = codes
-            value["completed"] = not any(codes)
+            value["status"] = final_status
+            value["completed"] = final_status == "COMPLETED"
+            value["cancelled"] = final_status == "CANCELLED"
+            value["cancelReason"] = control.get("reason") or None
+            value["finishedAt"] = utc_iso()
+            SUPERVISOR.finish(final_status)
             (output / "metadata.json").write_text(
                 json.dumps(value, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -1204,8 +1276,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", f"/?collection={ident}")
             self.end_headers()
         except Exception as error:
+            control = SUPERVISOR.status()
+            final_status = control.get("stopKind") or "FAILED"
             self.send_html(self.layout("Erro", f'<div class="message bad">{esc(error)}</div>'), 500)
         finally:
+            if collection_started and SUPERVISOR.status().get("active"):
+                SUPERVISOR.finish(final_status)
             LOCK.release()
 
 def utc_iso() -> str:
@@ -1215,7 +1291,22 @@ def utc_iso() -> str:
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="0.0.0.0"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
     Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Handler.static.parent.parent.parent.resolve(); Handler.root.mkdir(parents=True, exist_ok=True)
-    print(f"EKS dashboard Python: http://{args.host}:{args.port}", flush=True); ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.daemon_threads = True
+
+    def shutdown_signal(_signum, _frame):
+        SUPERVISOR.cancel("dashboard received termination signal")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, shutdown_signal)
+    print(f"EKS dashboard Python: http://{args.host}:{args.port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        SUPERVISOR.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ SOURCES = {
     "upgrade": "https://docs.aws.amazon.com/eks/latest/userguide/update-cluster.html",
     "supply": "https://docs.aws.amazon.com/eks/latest/best-practices/image-security.html",
     "dr": "https://kubernetes.io/docs/concepts/storage/volume-snapshots/",
+    "cost": "https://docs.aws.amazon.com/eks/latest/best-practices/cost-opt.html",
 }
 DANGEROUS_CAPABILITIES = {
     "SYS_ADMIN",
@@ -1146,21 +1147,35 @@ class SemanticRules:
                 "Remediate current policy violations or register approved, expiring exceptions.",
                 source=SOURCES["security"],
             )
+        image_summary: dict[str, Any] = {}
         image_evidence = self.a.directory / "image-assessment.json"
         if image_evidence.is_file():
             try:
                 image_data = json.loads(image_evidence.read_text(encoding="utf-8"))
+                image_summary = image_data.get("summary") or {}
             except (OSError, json.JSONDecodeError):
-                image_data = {}
-            vulnerable = int(nested(image_data, "summary", "critical", fallback=0) or 0)
-            unsigned = int(nested(image_data, "summary", "unsigned", fallback=0) or 0)
+                image_summary = {}
+        else:
+            aws_evidence = self.a.directory / "aws-eks-assessment.json"
+            try:
+                aws_data = json.loads(aws_evidence.read_text(encoding="utf-8")) if aws_evidence.is_file() else {}
+                image_summary = nested(aws_data, "inventory", "imageSupplyChain", fallback={}) or {}
+            except (OSError, json.JSONDecodeError):
+                image_summary = {}
+        if image_summary:
+            vulnerable = int(image_summary.get("critical") or 0)
+            high = int(image_summary.get("high") or 0)
+            unsigned = int(image_summary.get("unsigned") or 0)
+            signature_state = str(image_summary.get("signatureState") or ("UNSIGNED" if unsigned else "UNKNOWN"))
+            sbom_state = str(image_summary.get("sbomState") or "UNKNOWN")
+            severity = "CRIT" if vulnerable else "WARN" if high or unsigned else "PARTIAL" if "UNKNOWN" in {signature_state, sbom_state} else "PASS"
             self.add(
-                "CRIT" if vulnerable else "WARN" if unsigned else "PASS",
+                severity,
                 "k8s.supply.image-evidence",
                 "SupplyChain",
                 "Image SBOM/signature/vulnerability evidence",
-                f"criticalVulnerabilities={vulnerable}; unsigned={unsigned}",
-                "Block unapproved critical vulnerabilities and enforce trusted provenance.",
+                f"criticalVulnerabilities={vulnerable}; highVulnerabilities={high}; unsigned={unsigned}; signatureState={signature_state}; sbomState={sbom_state}",
+                "Block unapproved vulnerabilities and enforce trusted provenance, signatures and SBOM attestations.",
                 source=SOURCES["supply"],
             )
         elif self.workloads:
@@ -1174,6 +1189,147 @@ class SemanticRules:
                 source=SOURCES["supply"],
             )
 
+    def cost_and_capacity_efficiency(self) -> None:
+        pods = items(self.base.get("pods"))
+        pvcs = items(self.base.get("pvcs"))
+        pvs = items(self.raw.get("persistentvolumes"))
+        services = items(self.raw.get("services"))
+        endpoint_slices = items(self.raw.get("endpointslices"))
+        nodes = items(self.base.get("nodes"))
+
+        referenced_claims = {
+            (str(metadata(pod).get("namespace") or "default"), str(volume.get("persistentVolumeClaim", {}).get("claimName")))
+            for pod in pods
+            for volume in (pod.get("spec") or {}).get("volumes") or []
+            if volume.get("persistentVolumeClaim", {}).get("claimName")
+        }
+        unreferenced = [
+            f"{metadata(pvc).get('namespace')}/{metadata(pvc).get('name')}"
+            for pvc in pvcs
+            if str(nested(pvc, "status", "phase", fallback="")) == "Bound"
+            and (str(metadata(pvc).get("namespace") or "default"), str(metadata(pvc).get("name"))) not in referenced_claims
+        ]
+        if pvcs:
+            self.add(
+                "INFO" if unreferenced else "PASS",
+                "k8s.cost.pvc-unreferenced",
+                "Cost",
+                "PVC attachment evidence",
+                f"claims={len(pvcs)}; notReferencedByCurrentPods={len(unreferenced)}; sample={','.join(unreferenced[:20]) or 'none'}",
+                "Confirm scale-to-zero, retention and owner intent before deleting any unreferenced PVC.",
+                source=SOURCES["cost"],
+                confidence="MEDIUM",
+            )
+        released = [
+            str(metadata(pv).get("name") or "-")
+            for pv in pvs
+            if str(nested(pv, "status", "phase", fallback="")) in {"Released", "Failed"}
+        ]
+        if pvs:
+            self.add(
+                "WARN" if released else "PASS",
+                "k8s.cost.pv-released",
+                "Cost",
+                "Released or failed PersistentVolumes",
+                f"volumes={len(pvs)}; releasedOrFailed={len(released)}; sample={','.join(released[:20]) or 'none'}",
+                "Review reclaim policy and data-retention approval before reclaiming storage.",
+                source=SOURCES["cost"],
+            )
+
+        endpoint_services: set[tuple[str, str]] = set()
+        for endpoint_slice in endpoint_slices:
+            meta = metadata(endpoint_slice)
+            service_name = str((meta.get("labels") or {}).get("kubernetes.io/service-name") or "")
+            ready = any(
+                endpoint.get("addresses") and (endpoint.get("conditions") or {}).get("ready") is not False
+                for endpoint in endpoint_slice.get("endpoints") or []
+            )
+            if service_name and ready:
+                endpoint_services.add((str(meta.get("namespace") or "default"), service_name))
+        load_balancers = [service for service in services if str((service.get("spec") or {}).get("type")) == "LoadBalancer"]
+        no_endpoints = [
+            f"{metadata(service).get('namespace')}/{metadata(service).get('name')}"
+            for service in load_balancers
+            if (service.get("spec") or {}).get("selector")
+            and (str(metadata(service).get("namespace") or "default"), str(metadata(service).get("name"))) not in endpoint_services
+        ]
+        if load_balancers:
+            self.add(
+                "WARN" if no_endpoints else "PASS",
+                "k8s.cost.loadbalancer-endpoints",
+                "Cost",
+                "LoadBalancer backend utilization",
+                f"loadBalancers={len(load_balancers)}; selectorServicesWithoutReadyEndpoints={len(no_endpoints)}; sample={','.join(no_endpoints[:20]) or 'none'}",
+                "Validate traffic and ownership before releasing an apparently unused cloud load balancer.",
+                source=SOURCES["cost"],
+                confidence="MEDIUM",
+            )
+
+        capacity_types: Counter[str] = Counter()
+        node_ratios: list[float] = []
+        total_cpu = total_requested_cpu = total_memory = total_requested_memory = 0.0
+        pods_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for pod in pods:
+            node_name = str(nested(pod, "spec", "nodeName", fallback=""))
+            if node_name:
+                pods_by_node[node_name].append(pod)
+        for node in nodes:
+            labels = metadata(node).get("labels") or {}
+            capacity_type = str(labels.get("eks.amazonaws.com/capacityType") or labels.get("karpenter.sh/capacity-type") or "").upper()
+            if capacity_type:
+                capacity_types[capacity_type] += 1
+            name = str(metadata(node).get("name") or "")
+            alloc_cpu = cpu_cores(nested(node, "status", "allocatable", "cpu")) or 0.0
+            alloc_memory = memory_bytes(nested(node, "status", "allocatable", "memory")) or 0.0
+            requested_cpu = sum(pod_request(pod.get("spec") or {}, "cpu") for pod in pods_by_node.get(name, []))
+            requested_memory = sum(pod_request(pod.get("spec") or {}, "memory") for pod in pods_by_node.get(name, []))
+            total_cpu += alloc_cpu; total_requested_cpu += requested_cpu
+            total_memory += alloc_memory; total_requested_memory += requested_memory
+            if alloc_cpu and alloc_memory:
+                node_ratios.append(max(requested_cpu / alloc_cpu, requested_memory / alloc_memory))
+        if total_cpu and total_memory:
+            cpu_percent = 100 * total_requested_cpu / total_cpu
+            memory_percent = 100 * total_requested_memory / total_memory
+            spread = 100 * (max(node_ratios) - min(node_ratios)) if len(node_ratios) > 1 else 0.0
+            self.add(
+                "INFO" if max(cpu_percent, memory_percent) < 25 or spread > 50 else "PASS",
+                "k8s.cost.request-fragmentation",
+                "Cost",
+                "Requested-capacity distribution",
+                f"cpuRequests={cpu_percent:.1f}%; memoryRequests={memory_percent:.1f}%; nodeUtilizationSpread={spread:.1f}pp",
+                "Correlate p95 usage and disruption headroom before resizing nodes or requests; low requests alone do not prove waste.",
+                source=SOURCES["cost"],
+                confidence="LOW",
+            )
+        if capacity_types:
+            spot = capacity_types.get("SPOT", 0)
+            on_demand = capacity_types.get("ON_DEMAND", 0) + capacity_types.get("ON-DEMAND", 0)
+            self.add(
+                "WARN" if spot and not on_demand else "PASS",
+                "k8s.cost.capacity-type-distribution",
+                "Cost",
+                "Spot and On-Demand distribution",
+                f"capacityTypes={dict(capacity_types)}",
+                "Keep disruption-tolerant Spot capacity diversified and retain an intentional baseline for critical workloads.",
+                source=SOURCES["cost"],
+            )
+            if spot:
+                workload_text = " ".join(
+                    f"{metadata(item).get('name','')} " + " ".join(str(container.get('image') or '') for container in pod_template(item)[1].get('containers') or [])
+                    for item in self.workloads
+                ).lower()
+                termination_handler = "node-termination-handler" in workload_text
+                karpenter = bool(items(self.raw.get("karpenter_nodepools")))
+                self.add(
+                    "PASS" if termination_handler else "PARTIAL" if karpenter else "WARN",
+                    "k8s.reliability.spot-interruption",
+                    "Reliability",
+                    "Spot interruption handling evidence",
+                    f"spotNodes={spot}; nodeTerminationHandler={termination_handler}; karpenterDetected={karpenter}",
+                    "Verify interruption queue/events, graceful draining, PDBs and workload recovery under forced Spot interruption.",
+                    source=SOURCES["cost"],
+                    confidence="MEDIUM" if termination_handler else "LOW",
+                )
     def technology_operators(self) -> None:
         for kafka in items(self.raw.get("strimzi_kafkas")):
             namespace, kind, name = object_ref(kafka)
@@ -1267,6 +1423,7 @@ class SemanticRules:
         self.rbac_and_admission()
         self.storage_and_dr()
         self.upgrade_and_supply_chain()
+        self.cost_and_capacity_efficiency()
         self.technology_operators()
         self.collection_coverage()
         return {
@@ -1281,6 +1438,7 @@ class SemanticRules:
                 "rbac-admission",
                 "storage-dr",
                 "upgrade-supply-chain",
+                "cost-efficiency",
                 "technology-operators",
                 "coverage",
             ],

@@ -10,6 +10,96 @@ TELEMETRY="$ROOT/scripts/validation/prometheus_telemetry.py"
 SCANNER="$ROOT/scripts/validation/eks_comprehensive_assessment.py"
 VALIDATOR="$ROOT/scripts/validation/validate_assessment_artifacts.py"
 PORT="${DASHBOARD_PORT:-8765}"
+MAX_DURATION_SECONDS="${ASSESSMENT_MAX_DURATION_SECONDS:-1800}"
+ACTIVE_PID=""
+ACTIVE_COMPONENT=""
+COLLECTION_CANCELLED=0
+COLLECTION_TIMED_OUT=0
+COLLECTION_STARTED_EPOCH=0
+WEB_MANAGED_BY_MENU=0
+
+[[ "$MAX_DURATION_SECONDS" =~ ^[0-9]+$ ]] || MAX_DURATION_SECONDS=1800
+((MAX_DURATION_SECONDS < 60)) && MAX_DURATION_SECONDS=60
+((MAX_DURATION_SECONDS > 7200)) && MAX_DURATION_SECONDS=7200
+
+terminate_active(){
+  local attempt
+  [[ -n "$ACTIVE_PID" ]] || return 0
+  if kill -0 "$ACTIVE_PID" 2>/dev/null; then
+    echo "Encerrando $ACTIVE_COMPONENT (PID $ACTIVE_PID)..." >&2
+    kill -TERM -- "-$ACTIVE_PID" 2>/dev/null || kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+    for attempt in {1..50}; do
+      kill -0 "$ACTIVE_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$ACTIVE_PID" 2>/dev/null; then
+      kill -KILL -- "-$ACTIVE_PID" 2>/dev/null || kill -KILL "$ACTIVE_PID" 2>/dev/null || true
+    fi
+    wait "$ACTIVE_PID" 2>/dev/null || true
+  fi
+  ACTIVE_PID=""; ACTIVE_COMPONENT=""
+}
+
+cancel_on_signal(){
+  COLLECTION_CANCELLED=1
+  echo >&2
+  echo "Cancelamento solicitado; preservando a coleta parcial como CANCELLED." >&2
+  terminate_active
+}
+
+cleanup_menu(){
+  terminate_active
+  if ((WEB_MANAGED_BY_MENU == 1)) && command -v curl >/dev/null 2>&1; then
+    curl -fsS -X POST "http://127.0.0.1:$PORT/cancel" >/dev/null 2>&1 || true
+  fi
+}
+
+remaining_seconds(){
+  local elapsed
+  elapsed=$(( $(date +%s) - COLLECTION_STARTED_EPOCH ))
+  printf '%s\n' $((MAX_DURATION_SECONDS - elapsed))
+}
+
+run_bounded(){
+  local component="$1" component_timeout="$2" logfile="$3" remaining effective rc
+  shift 3
+  remaining="$(remaining_seconds)"
+  if ((remaining <= 0)); then
+    COLLECTION_TIMED_OUT=1
+    printf 'Tempo total de %ss esgotado antes de %s.\n' "$MAX_DURATION_SECONDS" "$component" | tee -a "$logfile"
+    return 124
+  fi
+  effective="$component_timeout"; ((effective > remaining)) && effective="$remaining"
+  ACTIVE_COMPONENT="$component"
+  printf '[%s] %s (limite %ss; restante total %ss)\n' "$(date -u +%FT%TZ)" "$component" "$effective" "$remaining" | tee -a "$logfile"
+  setsid timeout --signal=TERM --kill-after=10s "${effective}s" "$@" > >(tee -a "$logfile") 2>&1 &
+  ACTIVE_PID=$!
+  if wait "$ACTIVE_PID"; then rc=0; else rc=$?; fi
+  ACTIVE_PID=""; ACTIVE_COMPONENT=""
+  if ((COLLECTION_CANCELLED == 1)); then return 130; fi
+  if ((rc == 124 || rc == 137)); then COLLECTION_TIMED_OUT=1; return 124; fi
+  return "$rc"
+}
+
+run_bounded_capture(){
+  local component="$1" component_timeout="$2" stdout_file="$3" stderr_file="$4" remaining effective rc
+  shift 4
+  remaining="$(remaining_seconds)"
+  if ((remaining <= 0)); then COLLECTION_TIMED_OUT=1; return 124; fi
+  effective="$component_timeout"; ((effective > remaining)) && effective="$remaining"
+  ACTIVE_COMPONENT="$component"
+  printf '[%s] %s (limite %ss; restante total %ss)\n' "$(date -u +%FT%TZ)" "$component" "$effective" "$remaining" | tee -a "$stderr_file"
+  setsid timeout --signal=TERM --kill-after=10s "${effective}s" "$@" > "$stdout_file" 2> >(tee -a "$stderr_file" >&2) &
+  ACTIVE_PID=$!
+  if wait "$ACTIVE_PID"; then rc=0; else rc=$?; fi
+  ACTIVE_PID=""; ACTIVE_COMPONENT=""
+  if ((COLLECTION_CANCELLED == 1)); then return 130; fi
+  if ((rc == 124 || rc == 137)); then COLLECTION_TIMED_OUT=1; return 124; fi
+  return "$rc"
+}
+
+trap cancel_on_signal INT TERM
+trap cleanup_menu EXIT
 
 need(){ command -v "$1" >/dev/null || { echo "ERRO: $1 ausente" >&2; exit 1; }; }
 collections(){ find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%f\n' 2>/dev/null | sort; }
@@ -26,65 +116,65 @@ cluster_identity(){
 
 write_metadata(){
   local out="$1" id="$2" phase="$3" cluster_name="$4" cluster_context="$5" baseline="$6" completed="$7" codes="$8"
-  jq -n --arg id "$id" --arg phase "$phase" --arg created "$(date -u +%FT%TZ)" \
-    --arg cluster "$cluster_name" --arg context "$cluster_context" \
-    --argjson baseline "$baseline" --argjson completed "$completed" --argjson codes "$codes" \
-    '{id:$id,phase:$phase,createdAt:$created,clusterName:$cluster,context:$context,baseline:$baseline,completed:$completed,readOnly:true,collectorExitCodes:$codes}' > "$out/metadata.json"
+  local status="${9:-$([[ "$completed" == true ]] && echo COMPLETED || echo FAILED)}" reason="${10:-}" max_duration="${11:-$MAX_DURATION_SECONDS}" created
+  created="$(jq -r '.createdAt // empty' "$out/metadata.json" 2>/dev/null || true)"; created="${created:-$(date -u +%FT%TZ)}"
+  jq -n --arg id "$id" --arg phase "$phase" --arg created "$created" --arg finished "$(date -u +%FT%TZ)" \
+    --arg cluster "$cluster_name" --arg context "$cluster_context" --arg status "$status" --arg reason "$reason" \
+    --argjson baseline "$baseline" --argjson completed "$completed" --argjson codes "$codes" --argjson maxDuration "$max_duration" \
+    '{id:$id,phase:$phase,createdAt:$created,finishedAt:(if $status=="RUNNING" then null else $finished end),clusterName:$cluster,context:$context,baseline:$baseline,status:$status,completed:$completed,cancelled:($status=="CANCELLED"),cancelReason:(if $reason=="" then null else $reason end),maxDurationSeconds:$maxDuration,readOnly:true,collectorExitCodes:$codes}' > "$out/metadata.json"
   cp "$out/metadata.json" "$out/menu-metadata.json"
 }
 
 collect(){
-  local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name
-  local assess_rc discovery_rc telemetry_rc scanner_rc validator_rc completed baseline codes code
+  local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason
+  local assess_rc=125 discovery_rc=125 telemetry_rc=125 scanner_rc=125 validator_rc=125 completed=false baseline=false codes code
+  COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH="$(date +%s)"
   read -r -p "Identificador da mudança ($phase): " label
   label="${label:-manual}"; label="${label//[^a-zA-Z0-9._-]/-}"
-  id="eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}"; out="$OUTROOT/$id"; mkdir -p "$out"
-  IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
-  echo "== Coleta $phase: $id | cluster: $cluster_name =="
-
-  set +e
-  OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" bash "$ASSESS" | tee "$out/assessment.log"
-  assess_rc="${PIPESTATUS[0]}"
-  bash "$DISCOVERY" --output-dir "$out/discovery" --combined-report | tee "$out/discovery.log"
-  discovery_rc="${PIPESTATUS[0]}"
-  set -e
-
   prom_url="${PROMETHEUS_URL:-}"; prom_window="${PROMETHEUS_WINDOW:-7d}"
   read -r -p "URL explícita do Prometheus (Enter = ${prom_url:-DISABLED}): " answer
   prom_url="${answer:-$prom_url}"
   read -r -p "Janela Prometheus 1d/3d/7d/14d/30d [${prom_window}]: " answer
-  prom_window="${answer:-$prom_window}"
-  [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
-  if [[ -n "$prom_url" ]]; then
-    set +e
-    python3.11 "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json" > "$out/prometheus-telemetry.json" 2> "$out/prometheus-telemetry.log"
-    telemetry_rc=$?
-    set -e
-  else
-    printf '%s\n' '{"state":"DISABLED","reason":"PROMETHEUS_URL not explicitly configured","workloads":[]}' > "$out/prometheus-telemetry.json"
-    telemetry_rc=0
+  prom_window="${answer:-$prom_window}"; [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
+
+  id="eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}"; out="$OUTROOT/$id"; mkdir -p "$out"
+  IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
+  [[ "$phase" == before ]] && baseline=true
+  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS"
+  echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s =="
+  echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
+
+  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+    if run_bounded discovery 900 "$out/discovery.log" bash "$DISCOVERY" --output-dir "$out/discovery" --combined-report; then discovery_rc=0; else discovery_rc=$?; fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+    if [[ -n "$prom_url" ]]; then
+      if run_bounded_capture prometheus 1200 "$out/prometheus-telemetry.json" "$out/prometheus-telemetry.log" python3.11 "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json"; then telemetry_rc=0; else telemetry_rc=$?; fi
+    else
+      printf '%s\n' '{"state":"DISABLED","reason":"PROMETHEUS_URL not explicitly configured","workloads":[]}' > "$out/prometheus-telemetry.json"
+      telemetry_rc=0
+    fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" python3.11 "$SCANNER" --snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}" --resume; then scanner_rc=0; else scanner_rc=$?; fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+    if run_bounded artifact-validation 300 "$out/artifact-smoke.log" python3.11 "$VALIDATOR" "$out"; then validator_rc=0; else validator_rc=$?; fi
   fi
 
-  set +e
-  python3.11 "$SCANNER" --snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 | tee "$out/comprehensive-assessment.log"
-  scanner_rc="${PIPESTATUS[0]}"
-  set -e
-
-  completed=true
-  for code in "$assess_rc" "$discovery_rc" "$telemetry_rc" "$scanner_rc"; do ((code == 0)) || completed=false; done
-  baseline=false; [[ "$phase" == before ]] && baseline=true
-  codes="$(jq -nc --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson s "$scanner_rc" '[$a,$d,$t,$s]')"
-  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes"
-
-  set +e
-  python3.11 "$VALIDATOR" "$out" | tee "$out/artifact-smoke.log"
-  validator_rc="${PIPESTATUS[0]}"
-  set -e
-  codes="$(jq -nc --argjson current "$codes" --argjson validator "$validator_rc" '$current + [$validator]')"
-  ((validator_rc == 0)) || completed=false
-  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes"
-  echo "Salvo em $out"
+  codes="$(jq -nc --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" '[$a,$d,$t,$s,$v]')"
+  status=COMPLETED; reason=''; completed=true
+  if ((COLLECTION_CANCELLED == 1)); then status=CANCELLED; reason='operator requested cancellation'; completed=false
+  elif ((COLLECTION_TIMED_OUT == 1)); then status=TIMED_OUT; reason="collection exceeded ${MAX_DURATION_SECONDS}s"; completed=false
+  else
+    for code in "$assess_rc" "$discovery_rc" "$telemetry_rc" "$scanner_rc" "$validator_rc"; do ((code == 0)) || { status=FAILED; completed=false; }; done
+  fi
+  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS"
+  COLLECTION_STARTED_EPOCH=0
+  echo "Salvo em $out | status: $status"
   echo "Contexto: $cluster_context | códigos [assessment, discovery, Prometheus, scanner, smoke]: $codes"
+  return 0
 }
 
 compare(){
@@ -129,16 +219,17 @@ web(){
     nohup python3.11 "$ROOT/scripts/validation/assessment_dashboard.py" --root "$OUTROOT" --static "$ROOT/app/eks-assessment-dashboard/public" --host 0.0.0.0 --port "$PORT" > "$log" 2>&1 &
     echo $! > "$pid"; sleep 1
   fi
+  WEB_MANAGED_BY_MENU=1
   host="$(hostname -I | awk '{print $1}')"
   echo "Abra: http://$host:$PORT"
   echo "Log: $log"
 }
 
-need kubectl; need jq; mkdir -p "$OUTROOT"
+need kubectl; need jq; need timeout; need setsid; mkdir -p "$OUTROOT"
 while :; do
   cat <<EOF
 
-=== EKS ASSESSMENT MENU (READ-ONLY) ===
+=== EKS ASSESSMENT MENU (READ-ONLY | LIMITE ${MAX_DURATION_SECONDS}s) ===
 1) Coleta ANTES do deploy
 2) Coleta DEPOIS do deploy
 3) Comparar coletas

@@ -106,6 +106,30 @@ def flatten(value: Any, prefix: str = "") -> dict[str, str]:
     return result
 
 
+def workload_images(path: Path | None) -> set[str]:
+    if path is None or not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    found: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            image = value.get("image")
+            if isinstance(image, str) and image and not any(char.isspace() for char in image):
+                found.add(image)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
+    return found
+
+
 class AwsCollector:
     def __init__(
         self,
@@ -116,6 +140,7 @@ class AwsCollector:
         delay_ms: int,
         max_requests: int,
         account_security: bool,
+        workloads_file: Path | None = None,
     ):
         self.cluster = cluster
         self.region = region
@@ -124,6 +149,7 @@ class AwsCollector:
         self.delay = delay_ms / 1000.0
         self.max_requests = max_requests
         self.account_security = account_security
+        self.workloads_file = workloads_file
         self.requests = 0
         self.retry_count = 0
         self.coverage: dict[str, dict[str, Any]] = {}
@@ -830,6 +856,100 @@ class AwsCollector:
         if isinstance(self.inventory.get("cluster"), dict):
             self.inventory["cluster"]["zones"] = sorted(zones)
 
+    def collect_ecr_supply_chain(self) -> None:
+        images = sorted(workload_images(self.workloads_file))
+        ecr_images: list[tuple[str, str, str, str]] = []
+        for image in images:
+            match = re.match(r"^(?:\d{12}\.)?dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?/(.+)$", image)
+            if not match:
+                continue
+            image_region, reference = match.groups()
+            if "@" in reference:
+                repository, identity = reference.rsplit("@", 1)
+                identity_key = "imageDigest"
+            elif ":" in reference.rsplit("/", 1)[-1]:
+                repository, identity = reference.rsplit(":", 1)
+                identity_key = "imageTag"
+            else:
+                repository, identity, identity_key = reference, "latest", "imageTag"
+            ecr_images.append((image_region, repository, identity_key, identity))
+
+        critical = high = evaluated = unknown = 0
+        for image_region, repository, identity_key, identity in ecr_images[:100]:
+            resource_hash = hashlib.sha256(f"{image_region}/{repository}@{identity}".encode()).hexdigest()[:16]
+            if self.region and image_region != self.region:
+                unknown += 1
+                self.add(
+                    "UNKNOWN",
+                    "eks.supply.ecr-image-scan",
+                    "SupplyChain",
+                    "ECR image scanning and provenance",
+                    "Image is hosted in a different AWS region; scan evidence was not queried by this regional assessment.",
+                    "Run a bounded read-only image scan assessment in every referenced ECR region.",
+                    resource=f"ecr-image:{resource_hash}",
+                )
+                continue
+            response = self.call(
+                f"ecr-image:{resource_hash}",
+                ["ecr", "describe-images", "--repository-name", repository, "--image-ids", f"{identity_key}={identity}"],
+                optional=True,
+            )
+            detail = ((response or {}).get("imageDetails") or [{}])[0]
+            scan_status = str(nested(detail, "imageScanStatus", "status", fallback="UNKNOWN"))
+            counts = nested(detail, "imageScanFindingsSummary", "findingSeverityCounts", fallback={}) or {}
+            if not counts and scan_status in {"COMPLETE", "ACTIVE"}:
+                scan = self.call(
+                    f"ecr-scan:{resource_hash}",
+                    ["ecr", "describe-image-scan-findings", "--repository-name", repository, "--image-id", f"{identity_key}={identity}"],
+                    optional=True,
+                )
+                counts = nested(scan or {}, "imageScanFindings", "findingSeverityCounts", fallback={}) or {}
+                scan_status = str(nested(scan or {}, "imageScanStatus", "status", fallback=scan_status))
+            image_critical = int(counts.get("CRITICAL") or 0)
+            image_high = int(counts.get("HIGH") or 0)
+            critical += image_critical; high += image_high
+            available = bool(detail) and scan_status not in {"UNKNOWN", "FAILED", "UNSUPPORTED_IMAGE"}
+            evaluated += int(available); unknown += int(not available)
+            severity = "CRIT" if image_critical else "WARN" if image_high else "PARTIAL" if available else "UNKNOWN"
+            self.add(
+                severity,
+                "eks.supply.ecr-image-scan",
+                "SupplyChain",
+                "ECR image scanning and provenance",
+                f"scanStatus={scan_status}; critical={image_critical}; high={image_high}; digestPresent={bool(detail.get('imageDigest'))}; signatureEvidence=UNKNOWN",
+                "Remediate critical/high findings and provide signature, attestation and SBOM verification evidence before release.",
+                resource=f"ecr-image:{resource_hash}",
+                confidence="MEDIUM" if available else "LOW",
+            )
+        if len(ecr_images) > 100:
+            self.add(
+                "PARTIAL",
+                "eks.supply.ecr-scan-budget",
+                "SupplyChain",
+                "ECR image scan coverage",
+                f"ecrImages={len(ecr_images)}; evaluatedLimit=100",
+                "Use a separate bounded registry assessment for the remaining images.",
+            )
+        elif images and not ecr_images:
+            self.add(
+                "N/A",
+                "eks.supply.ecr-image-scan",
+                "SupplyChain",
+                "Amazon ECR image scanning",
+                f"imagesDiscovered={len(images)}; ecrImages=0",
+                "Use the equivalent scanning, SBOM and signing evidence from the configured registry.",
+                applicability="NOT_APPLICABLE",
+            )
+        self.inventory["imageSupplyChain"] = {
+            "imagesDiscovered": len(images),
+            "ecrImages": len(ecr_images),
+            "evaluated": evaluated,
+            "unknown": unknown,
+            "critical": critical,
+            "high": high,
+            "signatureState": "UNKNOWN",
+            "sbomState": "UNKNOWN",
+        }
     def collect_guardduty(self) -> None:
         if not self.account_security:
             self.add(
@@ -914,6 +1034,7 @@ class AwsCollector:
         self.collect_identity(bool(nested(cluster, "identity", "oidc", "issuer")))
         self.collect_insights()
         self.collect_network(cluster)
+        self.collect_ecr_supply_chain()
         self.collect_guardduty()
         unavailable = sum(
             item.get("state") == "UNAVAILABLE" for item in self.coverage.values()
@@ -1030,6 +1151,7 @@ def main() -> int:
     parser.add_argument("--cluster", default=detected_cluster)
     parser.add_argument("--region", default=detected_region)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--workloads-file", type=Path, help="sanitized/live workload inventory used only to identify referenced ECR images")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--api-delay-ms", type=int, default=100)
@@ -1044,6 +1166,9 @@ def main() -> int:
         parser.error("--api-delay-ms must be between 0 and 5000")
     if not 10 <= args.max_requests <= 5000:
         parser.error("--max-requests must be between 10 and 5000")
+    workloads_file = args.workloads_file
+    if workloads_file is None and args.output is not None:
+        workloads_file = args.output.resolve().parent / "workloads.json"
     collector = AwsCollector(
         args.cluster.strip(),
         args.region.strip(),
@@ -1052,6 +1177,7 @@ def main() -> int:
         args.api_delay_ms,
         args.max_requests,
         args.include_account_security,
+        workloads_file.resolve() if workloads_file is not None else None,
     )
     result = collector.result()
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
