@@ -42,6 +42,7 @@ O endpoint público do laboratório é
 - [Backup, reconstrução e recuperação](docs/disaster-recovery.md)
 - [Solução de problemas](docs/troubleshooting.md)
 - [Observabilidade de runtime Java e .NET](docs/runtime-observability.md)
+- [Assessment read-only de EKS/Kubernetes](tools/eks-assessment/README.md)
 - [Aplicação bancária de exemplo](app/README-banking.md)
 
 ## Estado saudável esperado

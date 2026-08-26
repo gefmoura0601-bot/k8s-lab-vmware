@@ -1,0 +1,31 @@
+name: EKS Assessment CI
+
+on:
+  pull_request:
+    paths:
+      - "tools/eks-assessment/**"
+      - ".github/workflows/eks-assessment-ci.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "tools/eks-assessment/**"
+      - ".github/workflows/eks-assessment-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Validate shell scripts
+        run: |
+          mapfile -t scripts < <(find tools/eks-assessment -type f -name '*.sh' -print)
+          shellcheck "${scripts[@]}"
+      - name: Validate Python and tests
+        run: |
+          python3 -m compileall -q tools/eks-assessment/src tools/eks-assessment/tests
+          cd tools/eks-assessment
+          PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
