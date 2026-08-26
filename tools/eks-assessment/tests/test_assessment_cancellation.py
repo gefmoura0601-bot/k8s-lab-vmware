@@ -60,6 +60,9 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn('kill -TERM -- "-$ACTIVE_PID"', menu)
         self.assertIn("ASSESSMENT_MAX_DURATION_SECONDS", menu)
         self.assertIn("--kill-after=10s", menu)
+        self.assertIn("dashboard_process_matches", menu)
+        self.assertIn("dashboard_ready", menu)
+        self.assertIn('"$TOOL_ROOT/web/public"', menu)
 
 
 if __name__ == "__main__":
