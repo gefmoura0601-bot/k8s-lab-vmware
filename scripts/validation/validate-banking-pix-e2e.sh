@@ -4,6 +4,8 @@ set -euo pipefail
 INGRESS_URL="${INGRESS_URL:-https://192.168.109.151:31882}"
 HOST_HEADER="${HOST_HEADER:-nginx.lab.local}"
 PASSWORD="${BANKING_E2E_PASSWORD:-MouraPixLab2026!}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fixture_script="${script_dir}/banking-e2e-fixture.sh"
 PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-monitoring}"
 PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-kube-prometheus-stack-prometheus}"
 
@@ -13,8 +15,6 @@ port="${authority##*:}"
 base_url="https://${HOST_HEADER}:${port}/bank"
 resolve=(--resolve "${HOST_HEADER}:${port}:${ip}")
 work_dir="$(mktemp -d)"
-sender_id=""
-receiver_id=""
 
 new_uuid() {
   if [[ -r /proc/sys/kernel/random/uuid ]]; then
@@ -31,58 +31,60 @@ new_uuid() {
 
 transaction_id="$(new_uuid)"
 reversal_id="$(new_uuid)"
-funding_journal_id="$(new_uuid)"
+run_id="$(new_uuid)"
+sender_cpf="$(bash "${fixture_script}" cpf "${run_id}" 3)"
+receiver_cpf="$(bash "${fixture_script}" cpf "${run_id}" 4)"
 
 cleanup() {
-  status=$?
+  local status=$? cleanup_failed=0
+  trap - EXIT
   set +e
-  if [[ -n "${sender_id}" && -n "${receiver_id}" ]]; then
-    kubectl -n databases exec statefulset/postgres -- psql -U appuser -d appdb -v ON_ERROR_STOP=1 -c \
-      "BEGIN;
-       DELETE FROM transaction_service.transactions WHERE id='${transaction_id}'::uuid;
-       DELETE FROM account_service.ledger_entries WHERE journal_id IN ('${transaction_id}'::uuid,'${reversal_id}'::uuid,'${funding_journal_id}'::uuid);
-       DELETE FROM account_service.processed_transfers WHERE transaction_id IN ('${reversal_id}'::uuid,'${transaction_id}'::uuid);
-       DELETE FROM account_service.pix_keys WHERE account_id IN ('${sender_id}'::uuid,'${receiver_id}'::uuid);
-       DELETE FROM account_service.accounts WHERE id IN ('${sender_id}'::uuid,'${receiver_id}'::uuid);
-       COMMIT;" >/dev/null
+  if ! bash "${fixture_script}" cleanup "${run_id}" >/dev/null 2>&1; then
+    cleanup_failed=1
+    echo 'ERRO: a fixture não conseguiu remover os dados temporários do teste PIX' >&2
   fi
-  rm -rf -- "${work_dir}"
+  if [[ -n "${work_dir}" && -d "${work_dir}" && "${work_dir}" == /tmp/* ]]; then
+    rm -rf -- "${work_dir}"
+  else
+    cleanup_failed=1
+    echo 'ERRO: recusa ao remover um diretório temporário inesperado' >&2
+  fi
+  if [[ "${status}" -eq 0 && "${cleanup_failed}" -ne 0 ]]; then
+    status=1
+  fi
   exit "${status}"
 }
 trap cleanup EXIT
 
 require_cmd() { command -v "$1" >/dev/null || { echo "ERRO: comando obrigatório ausente: $1" >&2; exit 1; }; }
 for command in kubectl curl jq base64; do require_cmd "${command}"; done
+[[ -r "${fixture_script}" ]] || { echo "ERRO: fixture ausente: ${fixture_script}" >&2; exit 1; }
 
 kubectl -n banking rollout status deployment/account-service deployment/transaction-service --timeout=240s
+bash "${fixture_script}" wait
 
 register() {
-  local role="$1" cookie="$2" output="$3" payload status
-  payload="$(jq -nc --arg owner "PIX E2E ${role} $(date +%s)-${RANDOM}" --arg password "${PASSWORD}" \
-    '{ownerName:$owner,password:$password}')"
-  status="$(curl -ksS "${resolve[@]}" -c "${cookie}" -o "${output}" -w '%{http_code}' \
-    -H 'Content-Type: application/json' --data-binary "${payload}" "${base_url}/auth/register")"
+  local role="$1" cpf="$2" cookie="$3" output="$4" payload status
+  payload="$(jq -nc --arg owner "E2E:${run_id}:pix-${role}" --arg cpf "${cpf}" --arg password "${PASSWORD}" \
+    '{ownerName:$owner,cpf:$cpf,password:$password}')"
+  status="$(printf '%s' "${payload}" | curl -ksS "${resolve[@]}" -c "${cookie}" -o "${output}" -w '%{http_code}' \
+    -H 'Content-Type: application/json' --data-binary @- "${base_url}/auth/register")"
   [[ "${status}" == "201" ]] || { echo "ERRO: registro ${role} retornou HTTP ${status}" >&2; cat "${output}" >&2; exit 1; }
   jq -e '.id and (.accountNumber | test("^[0-9]{8}$"))' "${output}" >/dev/null
 }
 
-register sender "${work_dir}/sender.cookies" "${work_dir}/sender.json"
-register receiver "${work_dir}/receiver.cookies" "${work_dir}/receiver.json"
+register sender "${sender_cpf}" "${work_dir}/sender.cookies" "${work_dir}/sender.json"
+register receiver "${receiver_cpf}" "${work_dir}/receiver.cookies" "${work_dir}/receiver.json"
+unset sender_cpf receiver_cpf
 sender_id="$(jq -r .id "${work_dir}/sender.json")"
-receiver_id="$(jq -r .id "${work_dir}/receiver.json")"
+
 
 pix_status="$(curl -ksS "${resolve[@]}" -b "${work_dir}/receiver.cookies" -o "${work_dir}/pix.json" -w '%{http_code}' \
   -X PUT "${base_url}/accounts/me/pix-key")"
 [[ "${pix_status}" == "200" ]] || { echo "ERRO: criação da chave PIX retornou HTTP ${pix_status}" >&2; exit 1; }
 pix_key="$(jq -er .pixKey "${work_dir}/pix.json")"
 
-kubectl -n databases exec statefulset/postgres -- psql -U appuser -d appdb -v ON_ERROR_STOP=1 -c \
-  "BEGIN;
-   UPDATE account_service.accounts SET balance=100.00 WHERE id='${sender_id}'::uuid;
-   INSERT INTO account_service.ledger_entries(journal_id,account_id,signed_amount,entry_type)
-   VALUES ('${funding_journal_id}'::uuid,'${sender_id}'::uuid,100.00,'PIX_E2E_FUNDING'),
-          ('${funding_journal_id}'::uuid,NULL,-100.00,'SYSTEM_OFFSET');
-   COMMIT;" >/dev/null
+bash "${fixture_script}" fund "${run_id}" "${sender_id}" 100.00 >/dev/null
 
 transfer_payload="$(jq -nc --arg source "${sender_id}" --arg pix "${pix_key}" --arg password "${PASSWORD}" \
   '{sourceAccountId:$source,pixKey:$pix,amount:0.01,description:"PIX E2E automatizado",password:$password}')"

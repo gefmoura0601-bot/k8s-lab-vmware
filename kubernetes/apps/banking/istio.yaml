@@ -33,6 +33,32 @@ spec:
     "8080":
       mode: PERMISSIVE
 ---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: acquirer-service-metrics
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: acquirer-service
+  portLevelMtls:
+    "8080":
+      mode: PERMISSIVE
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: store-service-metrics
+  namespace: banking
+spec:
+  selector:
+    matchLabels:
+      app: store-service
+  portLevelMtls:
+    "8080":
+      mode: PERMISSIVE
+---
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
@@ -55,6 +81,16 @@ spec:
   gateways:
     - nginx-lab/nginx-lab-gateway
   http:
+    - match:
+        - uri:
+            exact: /store
+        - uri:
+            prefix: /store/
+      route:
+        - destination:
+            host: store-service.banking.svc.cluster.local
+            port:
+              number: 80
     - match:
         - uri:
             prefix: /banking
@@ -127,6 +163,14 @@ spec:
         - operation:
             methods: [GET, POST]
             paths: [/internal/v1/transfers, "/internal/v1/transfers/{*}/reversals", /internal/v1/auth/authorize, /internal/v1/auth/confirm, /internal/v1/pix-keys/*]
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/banking/sa/acquirer-service
+      to:
+        - operation:
+            methods: [POST]
+            paths: [/internal/v1/card-payments]
     - to:
         - operation:
             methods: [GET]
@@ -179,3 +223,49 @@ spec:
         - operation:
             methods: [GET]
             paths: [/healthz]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: acquirer-service
+  namespace: banking
+spec:
+  selector:
+    matchLabels: {app: acquirer-service}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/banking/sa/store-service
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: [/internal/v1/payments, /internal/v1/payments/*]
+    - to:
+        - operation:
+            methods: [GET]
+            paths: [/health/*, /metrics]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: store-service
+  namespace: banking
+spec:
+  selector:
+    matchLabels: {app: store-service}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-system/sa/istio-ingressgateway
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: [/store, /store/*, /healthz]
+    - to:
+        - operation:
+            methods: [GET]
+            paths: [/healthz, /metrics]

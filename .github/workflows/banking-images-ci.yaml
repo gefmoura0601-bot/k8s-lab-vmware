@@ -6,6 +6,8 @@ on:
     paths:
       - app/account-service-java/**
       - app/transaction-service-dotnet/**
+      - app/acquirer-service-dotnet/**
+      - app/store-service-go/**
       - .github/workflows/banking-images-ci.yaml
   workflow_dispatch:
 
@@ -22,7 +24,7 @@ jobs:
   build-test-publish:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -55,6 +57,20 @@ jobs:
           push: true
           tags: ghcr.io/${{ steps.meta.outputs.owner }}/transaction-service-dotnet:${{ steps.meta.outputs.tag }}
 
+      - name: Build and publish Acquirer Service
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: app/acquirer-service-dotnet
+          push: true
+          tags: ghcr.io/${{ steps.meta.outputs.owner }}/acquirer-service-dotnet:${{ steps.meta.outputs.tag }}
+
+      - name: Build and publish Store Service
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: app/store-service-go
+          push: true
+          tags: ghcr.io/${{ steps.meta.outputs.owner }}/store-service-go:${{ steps.meta.outputs.tag }}
+
       - name: Update GitOps image references
         shell: bash
         run: |
@@ -64,6 +80,12 @@ jobs:
           sed -i \
             "s|image: ghcr.io/.*/transaction-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/transaction-service-dotnet:${{ steps.meta.outputs.tag }}|" \
             kubernetes/apps/banking/transaction-service.yaml
+          sed -i \
+            "s|image: ghcr.io/.*/acquirer-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/acquirer-service-dotnet:${{ steps.meta.outputs.tag }}|" \
+            kubernetes/apps/banking/acquirer-service.yaml
+          sed -i \
+            "s|image: ghcr.io/.*/store-service-go:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/store-service-go:${{ steps.meta.outputs.tag }}|" \
+            kubernetes/apps/banking/store-service.yaml
 
       - name: Create GitOps update PR
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
@@ -76,3 +98,5 @@ jobs:
           add-paths: |
             kubernetes/apps/banking/account-service.yaml
             kubernetes/apps/banking/transaction-service.yaml
+            kubernetes/apps/banking/acquirer-service.yaml
+            kubernetes/apps/banking/store-service.yaml

@@ -22,7 +22,7 @@ data:
           "title": "Typha targets UP",
           "datasource": "Prometheus",
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
-          "targets": [{"refId": "A", "expr": "sum(up{namespace=\calico-system\,service=\calico-typha-metrics\})"}],
+          "targets": [{"refId": "A", "expr": "sum(up{namespace=\"calico-system\",service=\"calico-typha-metrics\"})"}],
           "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "yellow", "value": 1}, {"color": "green", "value": 2}]}}}
         },
         {
@@ -31,7 +31,7 @@ data:
           "title": "CPU por Typha",
           "datasource": "Prometheus",
           "gridPos": {"h": 8, "w": 9, "x": 6, "y": 0},
-          "targets": [{"refId": "A", "expr": "rate(process_cpu_seconds_total{namespace=\calico-system\,service=\calico-typha-metrics\}[5m])", "legendFormat": "{{pod}}"}]
+          "targets": [{"refId": "A", "expr": "rate(process_cpu_seconds_total{namespace=\"calico-system\",service=\"calico-typha-metrics\"}[5m])", "legendFormat": "{{pod}}"}]
         },
         {
           "id": 3,
@@ -39,7 +39,7 @@ data:
           "title": "Memória residente",
           "datasource": "Prometheus",
           "gridPos": {"h": 8, "w": 9, "x": 15, "y": 0},
-          "targets": [{"refId": "A", "expr": "process_resident_memory_bytes{namespace=\calico-system\,service=\calico-typha-metrics\}", "legendFormat": "{{pod}}"}],
+          "targets": [{"refId": "A", "expr": "process_resident_memory_bytes{namespace=\"calico-system\",service=\"calico-typha-metrics\"}", "legendFormat": "{{pod}}"}],
           "fieldConfig": {"defaults": {"unit": "bytes"}}
         },
         {

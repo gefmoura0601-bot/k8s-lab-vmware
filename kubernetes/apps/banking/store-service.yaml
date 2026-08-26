@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: store-service
+  namespace: banking
+  labels: {app: store-service, team: banking, environment: lab}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: store-service}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: store-service, team: banking, environment: lab}
+    spec:
+      serviceAccountName: store-service
+      imagePullSecrets: [{name: ghcr-secret}]
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: store-service
+          image: ghcr.io/gefmoura0601-bot/store-service-go:bootstrap
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ACQUIRER_URL
+              value: http://acquirer-service.banking.svc.cluster.local
+          ports: [{name: http, containerPort: 8080}]
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            failureThreshold: 20
+            periodSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: store-service
+  namespace: banking
+  labels: {app: store-service, team: banking, environment: lab}
+spec:
+  selector: {app: store-service}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: store-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: store-service}

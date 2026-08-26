@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, money } from "./api";
+import { api, ApiRequestError, money } from "./api";
+import { CardsView } from "./CardsView";
+import { cpfDigits, formatCpf, isValidCpf } from "./cpf";
 import type { Account, DirectoryEntry, PixKey, Transaction } from "./types";
 export function App() {
   const [account, setAccount] = useState<Account | null>(null),
@@ -10,7 +12,7 @@ export function App() {
       "account",
     ),
     [mode, setMode] = useState<"login" | "register">("login"),
-    [view, setView] = useState<"home" | "transfer" | "history">("home"),
+    [view, setView] = useState<"home" | "transfer" | "cards" | "history">("home"),
     [busy, setBusy] = useState(true),
     [message, setMessage] = useState("");
   async function load() {
@@ -34,6 +36,11 @@ export function App() {
     e.preventDefault();
     const f = e.currentTarget,
       d = new FormData(f);
+    const cpf = mode === "register" ? cpfDigits(String(d.get("cpf"))) : "";
+    if (mode === "register" && !isValidCpf(cpf)) {
+      setMessage("Informe um CPF brasileiro válido.");
+      return;
+    }
     try {
       const a =
         mode === "login"
@@ -43,13 +50,23 @@ export function App() {
             )
           : await api.register(
               String(d.get("ownerName")),
+              cpf,
               String(d.get("password")),
             );
       setAccount(a);
       setMessage("");
       await load();
     } catch (x) {
-      setMessage((x as Error).message);
+      setMessage(
+        mode === "register" && x instanceof ApiRequestError && x.status === 409
+          ? "Não foi possível concluir o cadastro; revise os dados ou entre em contato com o suporte."
+          : (x as Error).message,
+      );
+    } finally {
+      const password = f.elements.namedItem("password");
+      if (password instanceof HTMLInputElement) password.value = "";
+      const cpfInput = f.elements.namedItem("cpf");
+      if (cpfInput instanceof HTMLInputElement) cpfInput.value = "";
     }
   }
   async function transfer(e: FormEvent<HTMLFormElement>) {
@@ -105,6 +122,31 @@ export function App() {
                   Titular
                   <input name="ownerName" maxLength={120} required />
                 </label>
+                <label>
+                  CPF
+                  <input
+                    name="cpf"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="000.000.000-00"
+                    maxLength={14}
+                    pattern="[0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2}"
+                    onInput={(event) => {
+                      event.currentTarget.value = formatCpf(event.currentTarget.value);
+                      const digits = cpfDigits(event.currentTarget.value);
+                      event.currentTarget.setCustomValidity(
+                        digits.length === 11 && !isValidCpf(digits) ? "CPF inválido." : "",
+                      );
+                    }}
+                    onBlur={(event) =>
+                      event.currentTarget.setCustomValidity(
+                        isValidCpf(event.currentTarget.value) ? "" : "CPF inválido.",
+                      )
+                    }
+                    required
+                  />
+                  <small>Usado somente para identificar sua conta no laboratório.</small>
+                </label>
               </>
             )}{" "}
             {mode === "login" && (
@@ -150,6 +192,7 @@ export function App() {
   const nav: [typeof view, string][] = [
     ["home", "Minha conta"],
     ["transfer", "Transferir"],
+    ["cards", "Cartões"],
     ["history", "Histórico"],
   ];
   return (
@@ -198,7 +241,10 @@ export function App() {
               <div>
                 <p>SALDO DISPONÍVEL</p>
                 <strong>{money(account.balance)}</strong>
-                <span>{account.ownerName}</span>
+                <span>
+                  {account.ownerName}
+                  {account.cpfMasked ? ` · CPF ${account.cpfMasked}` : ""}
+                </span>
               </div>
               <div className="monogram">MB</div>
             </div>
@@ -310,6 +356,7 @@ export function App() {
             </form>
           </section>
         )}
+        {view === "cards" && <CardsView />}
         {view === "history" && (
           <section>
             <div className="title">

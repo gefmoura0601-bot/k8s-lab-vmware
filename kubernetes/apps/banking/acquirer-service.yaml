@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquirer-service
+  namespace: banking
+  labels: {app: acquirer-service, team: banking, environment: lab}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: acquirer-service}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: acquirer-service, team: banking, environment: lab}
+    spec:
+      serviceAccountName: acquirer-service
+      imagePullSecrets: [{name: ghcr-secret}]
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: acquirer-service
+          image: ghcr.io/gefmoura0601-bot/acquirer-service-dotnet:bootstrap
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: IssuerUrl
+              value: http://account-service.banking.svc.cluster.local
+            - name: ConnectionStrings__Acquiring
+              valueFrom:
+                secretKeyRef:
+                  name: banking-db
+                  key: dotnet-connection-string
+            - name: ACQUIRER_IDEMPOTENCY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: banking-card-security
+                  key: acquirer-idempotency-secret
+          ports: [{name: http, containerPort: 8080}]
+          startupProbe:
+            httpGet: {path: /health/live, port: http}
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health/live, port: http}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /health/ready, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: 400m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1654
+            runAsGroup: 1654
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquirer-service
+  namespace: banking
+  labels: {app: acquirer-service, team: banking, environment: lab}
+spec:
+  selector: {app: acquirer-service}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: acquirer-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: acquirer-service}

@@ -66,3 +66,49 @@ spec:
           annotations:
             summary: "Taxa elevada de falhas PIX"
             description: "Mais de 20% das requisicoes PIX falharam ou foram rejeitadas nos ultimos 10 minutos."
+    - name: banking-cards
+      rules:
+        - alert: BankingCardAcquiringTechnicalFailures
+          expr: sum(rate(banking_card_acquiring_payments_total{status="technical_failure"}[10m])) > 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Falhas tecnicas na adquirencia de cartoes"
+            description: "A adquirencia nao conseguiu concluir uma ou mais chamadas ao emissor."
+        - alert: BankingStoreCheckoutTechnicalFailures
+          expr: sum(rate(store_checkout_requests_total{outcome="error"}[10m])) > 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Falhas tecnicas no checkout da loja"
+            description: "A loja nao conseguiu concluir um ou mais checkouts nos ultimos 10 minutos."
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: acquirer-service
+  namespace: banking
+  labels: {app: acquirer-service, team: banking, environment: lab, release: kube-prometheus-stack}
+spec:
+  selector:
+    matchLabels: {app: acquirer-service}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: store-service
+  namespace: banking
+  labels: {app: store-service, team: banking, environment: lab, release: kube-prometheus-stack}
+spec:
+  selector:
+    matchLabels: {app: store-service}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

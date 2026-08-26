@@ -4,11 +4,16 @@ resources:
   - namespace.yaml
   - serviceaccounts.yaml
   - banking-db-secret-sealed.yaml
+  - banking-e2e-db-secret-sealed.yaml
   - banking-session-secret-sealed.yaml
+  - banking-card-security-secret-sealed.yaml
   - ghcr-secret-sealed.yaml
   - account-service.yaml
   - transaction-service.yaml
   - banking-web.yaml
+  - acquirer-service.yaml
+  - store-service.yaml
+  - banking-e2e-fixture.yaml
   - autoscaling.yaml
   - networkpolicies.yaml
   - istio.yaml
@@ -16,6 +21,7 @@ resources:
   - runtime-dashboards.yaml
   - banking-web-dashboard.yaml
   - banking-pix-dashboard.yaml
+  - banking-cards-dashboard.yaml
 
 images:
   - name: ghcr.io/gefmoura0601-bot/banking-web

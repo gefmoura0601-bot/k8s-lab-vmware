@@ -62,6 +62,16 @@ spec:
                 secretKeyRef:
                   name: banking-session
                   key: session-secret
+            - name: BANKING_CARD_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: banking-card-security
+                  key: card-secret
+            - name: BANKING_IDENTITY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: banking-card-security
+                  key: identity-secret
           ports:
             - name: http
               containerPort: 8080

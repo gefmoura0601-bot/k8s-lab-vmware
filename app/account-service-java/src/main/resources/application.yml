@@ -24,6 +24,10 @@ server:
       charset: UTF-8
       enabled: true
       force: true
+banking:
+  # Stable key material: rotation requires migrating existing fingerprints and credentials.
+  card-secret: ${BANKING_CARD_SECRET:}
+  identity-secret: ${BANKING_IDENTITY_SECRET:}
 management:
   endpoints:
     web:

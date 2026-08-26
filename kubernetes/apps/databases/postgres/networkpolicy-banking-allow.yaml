@@ -21,6 +21,8 @@ spec:
                 values:
                   - account-service
                   - transaction-service
+                  - acquirer-service
+                  - banking-e2e-fixture
       ports:
         - protocol: TCP
           port: 5432

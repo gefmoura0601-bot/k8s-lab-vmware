@@ -35,9 +35,16 @@ public class AccountService {
 
     @Transactional
     public Account create(String number, String owner, String passwordHash, BigDecimal initialBalance) {
+        return create(number, owner, passwordHash, initialBalance, null, null);
+    }
+
+    @Transactional
+    public Account create(String number, String owner, String passwordHash, BigDecimal initialBalance,
+                          String cpfFingerprint, String cpfLast4) {
         var balance = money(initialBalance);
         if (balance.signum() < 0) throw new InvalidTransferException("initialBalance must not be negative");
-        var account = accounts.save(new Account(UUID.randomUUID(), number, owner.trim(), passwordHash, balance));
+        var account = accounts.saveAndFlush(new Account(
+            UUID.randomUUID(), number, owner.trim(), passwordHash, balance, cpfFingerprint, cpfLast4));
         if (balance.signum() != 0) {
             var journalId = UUID.randomUUID();
             ledger.save(new LedgerEntry(journalId, account.getId(), balance, "WELCOME_CREDIT"));
