@@ -1071,7 +1071,11 @@ class Handler(BaseHTTPRequestHandler):
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
         if path == "/styles.css":
-            data = (self.static / "styles.css").read_bytes(); self.send_response(200); self.send_header("Content-Type", "text/css; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); return self.wfile.write(data)
+            try:
+                data = (self.static / "styles.css").read_bytes()
+            except OSError:
+                return self.send_error(503, "Dashboard stylesheet unavailable")
+            self.send_response(200); self.send_header("Content-Type", "text/css; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); return self.wfile.write(data)
         return self.send_json({"error": "Rota não encontrada"}, 404)
 
     def do_POST(self):
@@ -1291,6 +1295,8 @@ def utc_iso() -> str:
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="0.0.0.0"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
     Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Path(__file__).resolve().parents[1]; Handler.root.mkdir(parents=True, exist_ok=True)
+    if not (Handler.static / "styles.css").is_file():
+        parser.error(f"dashboard stylesheet not found: {Handler.static / 'styles.css'}")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
 

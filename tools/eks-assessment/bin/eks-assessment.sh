@@ -211,14 +211,74 @@ terminal(){
   fi
 }
 
-web(){
-  local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" host
-  if [[ -r "$pid" ]] && kill -0 "$(cat "$pid")" 2>/dev/null; then
-    echo "Dashboard ativo (PID $(cat "$pid"))."
+dashboard_cmdline(){
+  local dashboard_pid="$1"
+  [[ "$dashboard_pid" =~ ^[0-9]+$ ]] || return 1
+  if [[ -r "/proc/$dashboard_pid/cmdline" ]]; then
+    tr '\0' ' ' < "/proc/$dashboard_pid/cmdline"
   else
-    need python3.11
-    nohup python3.11 "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" > "$log" 2>&1 &
-    echo $! > "$pid"; sleep 1
+    ps -p "$dashboard_pid" -o args= 2>/dev/null
+  fi
+}
+
+dashboard_process_matches(){
+  local dashboard_pid="$1" command_line
+  kill -0 "$dashboard_pid" 2>/dev/null || return 1
+  command_line="$(dashboard_cmdline "$dashboard_pid" 2>/dev/null || true)"
+  [[ "$command_line" == *"$TOOL_ROOT/src/assessment_dashboard.py"* ]] || return 1
+  [[ "$command_line" == *"--static $TOOL_ROOT/web/public"* ]]
+}
+
+dashboard_process_is_assessment(){
+  local dashboard_pid="$1" command_line
+  kill -0 "$dashboard_pid" 2>/dev/null || return 1
+  command_line="$(dashboard_cmdline "$dashboard_pid" 2>/dev/null || true)"
+  [[ "$command_line" == *"assessment_dashboard.py"* ]]
+}
+
+dashboard_ready(){
+  local response
+  response="$(curl -fsS --max-time 2 -o /dev/null -w '%{http_code} %{content_type}' "http://127.0.0.1:$PORT/styles.css" 2>/dev/null)" || return 1
+  [[ "$response" == "200 text/css"* ]]
+}
+
+stop_dashboard_process(){
+  local dashboard_pid="$1" attempt
+  kill -TERM "$dashboard_pid" 2>/dev/null || true
+  for ((attempt=0; attempt<30; attempt++)); do
+    kill -0 "$dashboard_pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -KILL "$dashboard_pid" 2>/dev/null || true
+}
+web(){
+  local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" host dashboard_pid="" attempt
+  need python3.11; need curl
+  [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
+  [[ -r "$pid" ]] && dashboard_pid="$(cat "$pid" 2>/dev/null || true)"
+
+  if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then
+    echo "Dashboard ativo (PID $dashboard_pid)."
+  else
+    if dashboard_process_is_assessment "$dashboard_pid"; then
+      echo "Dashboard obsoleto ou sem CSS (PID $dashboard_pid); reiniciando..."
+      stop_dashboard_process "$dashboard_pid"
+    elif [[ -n "$dashboard_pid" ]] && kill -0 "$dashboard_pid" 2>/dev/null; then
+      echo "Aviso: PID $dashboard_pid nao pertence ao assessment; ele nao sera encerrado." >&2
+    fi
+    rm -f "$pid"
+    nohup setsid python3.11 "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" < /dev/null > "$log" 2>&1 &
+    dashboard_pid=$!; echo "$dashboard_pid" > "$pid"
+    for ((attempt=0; attempt<30; attempt++)); do
+      if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then break; fi
+      sleep 0.1
+    done
+    if ! dashboard_process_matches "$dashboard_pid" || ! dashboard_ready; then
+      echo "ERRO: dashboard nao iniciou; consulte $log" >&2
+      stop_dashboard_process "$dashboard_pid"; rm -f "$pid"
+      return 1
+    fi
+    echo "Dashboard iniciado (PID $dashboard_pid)."
   fi
   WEB_MANAGED_BY_MENU=1
   host="$(hostname -I | awk '{print $1}')"

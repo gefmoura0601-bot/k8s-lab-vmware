@@ -34,6 +34,7 @@ collection_status="$(curl -fsS "$BASE_URL/api/collection-status")"
 jq -e '.active == false and (.status | type == "string")' >/dev/null <<<"$collection_status"
 
 paths=(
+  "/styles.css"
   "/api/collection-status"
   "/?collection=$COLLECTION"
   "/assessment?collection=$COLLECTION"
@@ -57,6 +58,9 @@ for path in "${paths[@]}"; do
   code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL$path")"
   [[ "$code" == "200" ]] || { echo "HTTP $code: $path" >&2; exit 1; }
 done
+
+stylesheet="$(curl -fsS "$BASE_URL/styles.css")"
+grep -Fq ':root {' <<<"$stylesheet" || { echo "dashboard stylesheet is empty or invalid" >&2; exit 1; }
 
 assert_all_names(){
   local kind="$1" file="$2" filter="$3" page name
