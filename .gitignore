@@ -21,3 +21,7 @@ backups/
 *.bak
 *.bkp.*
 .dr-backups/
+
+# Local EKS assessment outputs and reference checkout
+assessment/
+sample-eks-cluster-discovery-tool/
