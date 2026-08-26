@@ -24,18 +24,23 @@ check_cluster_health() {
   unready="$(printf '%s' "$nodes" | json_count '[.items[] | select(any(.status.conditions[]?; .type == "Ready" and .status != "True"))] | length')"
   pressure="$(printf '%s' "$nodes" | json_count '[.items[] | select(any(.status.conditions[]?; (.type == "MemoryPressure" or .type == "DiskPressure" or .type == "PIDPressure") and .status == "True"))] | length')"
   pending="$(printf '%s' "$pods" | json_count '[.items[] | select(.status.phase == "Pending")] | length')"; failed="$(printf '%s' "$pods" | json_count '[.items[] | select(.status.phase == "Failed")] | length')"
-  [[ "$unready" == 0 ]] && ok "Cluster nodes" "todos Ready" || critical "Cluster nodes" "$unready NotReady"
-  [[ "$pressure" == 0 ]] && ok "Node pressure" "sem pressão" || critical "Node pressure" "$pressure node(s) sob pressão"
-  [[ "$pending" == 0 ]] && ok "Pods Pending" "nenhum" || warning "Pods Pending" "$pending pod(s)"
-  [[ "$failed" == 0 ]] && ok "Pods Failed" "nenhum" || warning "Pods Failed" "$failed pod(s)"
+  if [[ "$unready" == 0 ]]; then ok "Cluster nodes" "todos Ready"; else critical "Cluster nodes" "$unready NotReady"; fi
+  if [[ "$pressure" == 0 ]]; then ok "Node pressure" "sem pressão"; else critical "Node pressure" "$pressure node(s) sob pressão"; fi
+  if [[ "$pending" == 0 ]]; then ok "Pods Pending" "nenhum"; else warning "Pods Pending" "$pending pod(s)"; fi
+  if [[ "$failed" == 0 ]]; then ok "Pods Failed" "nenhum"; else warning "Pods Failed" "$failed pod(s)"; fi
 }
 
 check_baseline_practices() {
   local pods netpol pdb hpa missing latest privileged pvc
   pods="$(kubectl get pods -A -o json)"; netpol="$(kubectl get netpol -A -o json | json_count '.items | length')"; pdb="$(kubectl get pdb -A -o json | json_count '.items | length')"; hpa="$(kubectl get hpa -A -o json | json_count '.items | length')"
   missing="$(printf '%s' "$pods" | json_count '[.items[] | .spec.containers[]? | select(.resources.requests == null or .resources.limits == null)] | length')"; latest="$(printf '%s' "$pods" | json_count '[.items[] | .spec.containers[]? | select(.image | test("(:latest$|^[^:]+$)"))] | length')"; privileged="$(printf '%s' "$pods" | json_count '[.items[] | .spec.containers[]? | select(.securityContext.privileged == true)] | length')"; pvc="$(kubectl get pvc -A -o json | json_count '[.items[] | select(.status.phase != "Bound")] | length')"
-  (( netpol > 0 )) && ok "NetworkPolicy" "$netpol policy object(s)" || warning "NetworkPolicy" "nenhuma policy"; (( pdb > 0 )) && ok "PDB" "$pdb PDB(s)" || warning "PDB" "nenhum PDB"; (( hpa > 0 )) && ok "HPA" "$hpa HPA(s)" || warning "HPA" "nenhum HPA"
-  [[ "$missing" == 0 ]] && ok "Requests/Limits" "todos definidos" || warning "Requests/Limits" "$missing container(s) sem recursos"; [[ "$latest" == 0 ]] && ok "Image tags" "sem latest/untagged" || warning "Image tags" "$latest image(ns)"; [[ "$privileged" == 0 ]] && ok "Privileged" "nenhum" || critical "Privileged" "$privileged container(s)"; [[ "$pvc" == 0 ]] && ok "PVC" "todos Bound" || warning "PVC" "$pvc PVC(s) não Bound"
+  if ((netpol > 0)); then ok "NetworkPolicy" "$netpol policy object(s)"; else warning "NetworkPolicy" "nenhuma policy"; fi
+  if ((pdb > 0)); then ok "PDB" "$pdb PDB(s)"; else warning "PDB" "nenhum PDB"; fi
+  if ((hpa > 0)); then ok "HPA" "$hpa HPA(s)"; else warning "HPA" "nenhum HPA"; fi
+  if [[ "$missing" == 0 ]]; then ok "Requests/Limits" "todos definidos"; else warning "Requests/Limits" "$missing container(s) sem recursos"; fi
+  if [[ "$latest" == 0 ]]; then ok "Image tags" "sem latest/untagged"; else warning "Image tags" "$latest image(ns)"; fi
+  if [[ "$privileged" == 0 ]]; then ok "Privileged" "nenhum"; else critical "Privileged" "$privileged container(s)"; fi
+  if [[ "$pvc" == 0 ]]; then ok "PVC" "todos Bound"; else warning "PVC" "$pvc PVC(s) não Bound"; fi
 }
 
 check_telemetry() {
@@ -45,6 +50,8 @@ check_telemetry() {
   "$PYTHON_BIN" "$TELEMETRY" "${args[@]}"; warning "Prometheus" "informativo; não altera gates/baselines"
 }
 
-require kubectl; require jq; [[ -r "$TOPOLOGY" ]] || { echo "ERRO: módulo de topologia ausente" >&2; exit 1; }; source "$TOPOLOGY"
+require kubectl; require jq; [[ -r "$TOPOLOGY" ]] || { echo "ERRO: módulo de topologia ausente" >&2; exit 1; }
+# shellcheck source=scripts/validation/checklist-eks-topology.sh
+source "$TOPOLOGY"
 printf '\n== EKS CHECKLIST (somente leitura) ==\n'; check_cluster_health; check_baseline_practices; run_topology_checks; check_telemetry
 printf '\nResumo: PASS=%s WARN=%s FAIL=%s NÃO_AVALIADO=%s\n' "$pass" "$warn" "$fail" "$na"

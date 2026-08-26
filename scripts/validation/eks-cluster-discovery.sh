@@ -195,7 +195,7 @@ run_section 44 'Argo CD application health' get applications -n argocd -o custom
 run_section 45 'Prometheus stack' get deployment,statefulset,service -n monitoring
 run_section 46 'Prometheus discovery objects' get servicemonitor,podmonitor,prometheusrule "${scope[@]}"
 run_section 47 'Metrics APIs' get --raw /apis/metrics.k8s.io/v1beta1/nodes
-run_section 48 'Recent warnings and events' get events "${scope[@]}" --field-selector type=Warning --sort-by=.lastTimestamp
+run_section 48 "Warnings and events (requested lookback: $SINCE)" get events "${scope[@]}" --field-selector type=Warning --sort-by=.lastTimestamp
 run_section 49 'API services' get apiservice
 
 summary="Discovery summary: sections=$sections succeeded=$succeeded n/a=$not_applicable unavailable=$failed"

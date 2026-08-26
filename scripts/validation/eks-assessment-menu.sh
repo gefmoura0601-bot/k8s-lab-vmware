@@ -28,7 +28,7 @@ terminate_active(){
   if kill -0 "$ACTIVE_PID" 2>/dev/null; then
     echo "Encerrando $ACTIVE_COMPONENT (PID $ACTIVE_PID)..." >&2
     kill -TERM -- "-$ACTIVE_PID" 2>/dev/null || kill -TERM "$ACTIVE_PID" 2>/dev/null || true
-    for attempt in {1..50}; do
+    for ((attempt=0; attempt<50; attempt++)); do
       kill -0 "$ACTIVE_PID" 2>/dev/null || break
       sleep 0.1
     done

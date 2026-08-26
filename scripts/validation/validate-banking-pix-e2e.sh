@@ -77,7 +77,7 @@ register sender "${sender_cpf}" "${work_dir}/sender.cookies" "${work_dir}/sender
 register receiver "${receiver_cpf}" "${work_dir}/receiver.cookies" "${work_dir}/receiver.json"
 unset sender_cpf receiver_cpf
 sender_id="$(jq -r .id "${work_dir}/sender.json")"
-receiver_id="$(jq -r .id "${work_dir}/receiver.json")"
+
 
 pix_status="$(curl -ksS "${resolve[@]}" -b "${work_dir}/receiver.cookies" -o "${work_dir}/pix.json" -w '%{http_code}' \
   -X PUT "${base_url}/accounts/me/pix-key")"
