@@ -44,10 +44,18 @@ $updated = $withoutManagedBlock + "`r`n`r`n" + $managedBlock + "`r`n"
 
 if ($updated -ne $current) {
     if ($PSCmdlet.ShouldProcess($hostsPath, 'Criar backup e atualizar os nomes permanentes do laboratório')) {
-        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
         $backupPath = "$hostsPath.k8s-vmware-$timestamp.bak"
-        Copy-Item -LiteralPath $hostsPath -Destination $backupPath
-        [IO.File]::WriteAllText($hostsPath, $updated, [Text.ASCIIEncoding]::new())
+        $temporaryPath = Join-Path (Split-Path -Parent $hostsPath) "hosts.k8s-vmware-$timestamp.tmp"
+        try {
+            [IO.File]::WriteAllText($temporaryPath, $updated, [Text.ASCIIEncoding]::new())
+            [IO.File]::Replace($temporaryPath, $hostsPath, $backupPath, $true)
+        }
+        finally {
+            if (Test-Path -LiteralPath $temporaryPath) {
+                Remove-Item -LiteralPath $temporaryPath -Force
+            }
+        }
         & ipconfig.exe /flushdns | Out-Null
         Write-Host "Arquivo hosts atualizado. Backup: $backupPath"
     }
