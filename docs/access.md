@@ -1,5 +1,46 @@
 # Acessos
 
+## URLs permanentes do laboratório
+
+O Istio publica as interfaces na rede privada VMware pelo IP
+`192.168.109.151` e pela porta HTTPS `31882`. Não é necessário manter túnel SSH
+aberto.
+
+| Componente | URL |
+|---|---|
+| Grafana | `https://grafana.lab.local:31882` |
+| Prometheus | `https://prometheus.lab.local:31882` |
+| Argo CD | `https://argocd.lab.local:31882` |
+| RabbitMQ Management | `https://rabbitmq.lab.local:31882` |
+| Bank Moura | `https://bank-moura.lab.local:31882` |
+| APIs legadas do lab | `https://nginx.lab.local:31882` |
+
+Abra um PowerShell como Administrador, na raiz do repositório, e execute uma
+vez:
+
+```powershell
+.\scripts\configure-lab-urls.ps1
+```
+
+O script mantém um bloco próprio no arquivo `hosts`, cria um backup antes de
+alterá-lo e limpa o cache DNS. O certificado é emitido pela CA local versionada
+em `kubernetes/platform/istio/tls/lab-local-ca.crt`. Para também confiar nessa
+CA no Windows e remover o aviso do navegador, use explicitamente:
+
+```powershell
+.\scripts\configure-lab-urls.ps1 -TrustCertificate
+```
+
+Essa confiança é adequada somente para este laboratório privado. Não publique
+esses endpoints na Internet: em particular, o Prometheus não possui uma camada
+própria de autenticação.
+
+Valide os cinco endpoints no master com:
+
+```bash
+bash /workspace/scripts/validation/validate-permanent-urls.sh
+```
+
 ## SSH e kubectl
 
 No PowerShell, a partir da raiz do repositório:
@@ -23,11 +64,11 @@ Assim, depois de executar `sudo -i`, use normalmente:
 kubectl get nodes
 ```
 
-## Padrão de túnel
+## Túnel de contingência
 
-Serviços `ClusterIP` não são acessíveis diretamente pelo browser do Windows. O
-túnel deve ficar aberto em um terminal e o browser usa `localhost`. Descubra o
-IP atual do Service antes de criar o túnel:
+Se o ingress não estiver disponível, ainda é possível acessar um Service
+`ClusterIP` por túnel. O túnel deve ficar aberto em um terminal e o browser usa
+`localhost`. Descubra o IP atual do Service antes de criá-lo:
 
 ```bash
 kubectl -n <namespace> get svc <service> -o wide
@@ -46,6 +87,8 @@ Use o IP `192.168.109.151`, pois o nome `k8s-master` só funciona se estiver no
 DNS ou em `C:\Windows\System32\drivers\etc\hosts`.
 
 ## Argo CD
+
+Acesso principal: `https://argocd.lab.local:31882`.
 
 Descubra o Service:
 
@@ -76,6 +119,8 @@ recuperação não for mais necessária.
 
 ## Grafana
 
+Acesso principal: `https://grafana.lab.local:31882`.
+
 Descubra Service, IP e credencial:
 
 ```bash
@@ -87,8 +132,9 @@ kubectl -n monitoring get secret <SECRET_GRAFANA> \
   -o jsonpath='{.data.admin-password}' | base64 -d; echo
 ```
 
-Abra um túnel da porta local `3000` para a porta HTTP `80` do ClusterIP e acesse
-`http://localhost:3000`. O dashboard `Kubernetes Complete Overview` reúne capacidade, workloads, Calico,
+Como contingência, abra um túnel da porta local `3000` para a porta HTTP `80`
+do ClusterIP e acesse `http://localhost:3000`. O dashboard
+`Kubernetes Complete Overview` reúne capacidade, workloads, Calico,
 Typha e a seção `Alertas e Incidentes`, alimentada pelas regras do Prometheus.
 Os demais dashboards principais são:
 
@@ -103,17 +149,34 @@ No dashboard do memory lab, use a janela `Last 15 minutes` durante os workflows
 de validação. Os painéis `Pods por node`, `Nodes Ready`, `Pods pendentes` e
 `Tempo pendente para reagendamento` mostram o teste de falha dos workers.
 
+## Prometheus
+
+Acesso principal para consulta: `https://prometheus.lab.local:31882`. Não há
+autenticação nativa nesse endpoint; ele deve permanecer restrito à rede privada
+do laboratório.
+
+Para o assessment executado no master, prefira o endereço interno do Service.
+Isso evita depender do DNS do Windows e da confiança na CA local:
+
+```bash
+export PROMETHEUS_URL="http://$(kubectl -n monitoring get svc \
+  kube-prometheus-stack-prometheus \
+  -o jsonpath='{.spec.clusterIP}'):9090"
+```
+
 ## RabbitMQ
 
-O Service é `rabbitmq` no namespace `messaging`. Descubra os NodePorts:
+Acesso principal: `https://rabbitmq.lab.local:31882`.
+
+O Service é `rabbitmq` no namespace `messaging`. Descubra suas portas:
 
 ```bash
 kubectl -n messaging get svc rabbitmq
 ```
 
 A interface de gerenciamento usa a porta de serviço `15672`; AMQP usa `5672`.
-Prefira um túnel para a interface administrativa e acesse
-`http://localhost:15672`.
+O endpoint permanente publica somente a interface web. O protocolo AMQP não é
+exposto por esse Gateway.
 
 As chaves do Secret devem ser inspecionadas antes da leitura:
 
@@ -128,13 +191,15 @@ kubectl -n messaging get secret rabbitmq-secret \
 
 ## APIs pelo Istio
 
-Adicione ao arquivo `hosts` do Windows, se desejar resolução normal:
+O script de configuração mantém este bloco no arquivo `hosts` do Windows:
 
 ```text
-192.168.109.151 nginx.lab.local
+192.168.109.151 nginx.lab.local grafana.lab.local prometheus.lab.local argocd.lab.local rabbitmq.lab.local bank-moura.lab.local
 ```
 
-Depois acesse `https://nginx.lab.local:31882`. Para testes CLI sem alterar DNS:
+Use `https://bank-moura.lab.local:31882` para a aplicação web e
+`https://nginx.lab.local:31882` para os caminhos históricos do laboratório.
+Para testes CLI sem alterar DNS:
 
 ```bash
 curl -sk --resolve nginx.lab.local:31882:192.168.109.151 \

@@ -1,0 +1,34 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: platform-access-gateway
+  namespace: nginx-lab
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http-platform-access
+        protocol: HTTP
+      hosts:
+        - grafana.lab.local
+        - prometheus.lab.local
+        - argocd.lab.local
+        - rabbitmq.lab.local
+        - bank-moura.lab.local
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https-platform-access
+        protocol: HTTPS
+      hosts:
+        - grafana.lab.local
+        - prometheus.lab.local
+        - argocd.lab.local
+        - rabbitmq.lab.local
+        - bank-moura.lab.local
+      tls:
+        mode: SIMPLE
+        credentialName: nginx-lab-istio-tls

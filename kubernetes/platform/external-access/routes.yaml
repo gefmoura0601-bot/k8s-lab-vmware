@@ -1,0 +1,144 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: grafana-external
+  namespace: nginx-lab
+spec:
+  hosts:
+    - grafana.lab.local
+  gateways:
+    - platform-access-gateway
+  http:
+    - route:
+        - destination:
+            host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+            port:
+              number: 80
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: prometheus-external
+  namespace: nginx-lab
+spec:
+  hosts:
+    - prometheus.lab.local
+  gateways:
+    - platform-access-gateway
+  http:
+    - route:
+        - destination:
+            host: kube-prometheus-stack-prometheus.monitoring.svc.cluster.local
+            port:
+              number: 9090
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: argocd-external
+  namespace: nginx-lab
+spec:
+  hosts:
+    - argocd.lab.local
+  gateways:
+    - platform-access-gateway
+  http:
+    - route:
+        - destination:
+            host: argocd-server.argocd.svc.cluster.local
+            port:
+              number: 443
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: argocd-external-tls
+  namespace: nginx-lab
+spec:
+  host: argocd-server.argocd.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+      - port:
+          number: 443
+        tls:
+          mode: SIMPLE
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: rabbitmq-external
+  namespace: nginx-lab
+spec:
+  hosts:
+    - rabbitmq.lab.local
+  gateways:
+    - platform-access-gateway
+  http:
+    - route:
+        - destination:
+            host: rabbitmq.messaging.svc.cluster.local
+            port:
+              number: 15672
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: bank-moura-external
+  namespace: nginx-lab
+spec:
+  hosts:
+    - bank-moura.lab.local
+  gateways:
+    - platform-access-gateway
+  http:
+    - match:
+        - uri:
+            exact: /store
+        - uri:
+            prefix: /store/
+      route:
+        - destination:
+            host: store-service.banking.svc.cluster.local
+            port:
+              number: 80
+    - match:
+        - uri:
+            prefix: /bank/auth
+      rewrite:
+        uriRegexRewrite:
+          match: ^/bank/auth(.*)
+          rewrite: /api/v1/auth\1
+      route:
+        - destination:
+            host: account-service.banking.svc.cluster.local
+            port:
+              number: 80
+    - match:
+        - uri:
+            prefix: /bank/accounts
+      rewrite:
+        uriRegexRewrite:
+          match: ^/bank/accounts(.*)
+          rewrite: /api/v1/accounts\1
+      route:
+        - destination:
+            host: account-service.banking.svc.cluster.local
+            port:
+              number: 80
+    - match:
+        - uri:
+            prefix: /bank/transactions
+      rewrite:
+        uriRegexRewrite:
+          match: ^/bank/transactions(.*)
+          rewrite: /api/v1/transactions\1
+      route:
+        - destination:
+            host: transaction-service.banking.svc.cluster.local
+            port:
+              number: 80
+    - route:
+        - destination:
+            host: banking-web.banking.svc.cluster.local
+            port:
+              number: 80
