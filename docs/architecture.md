@@ -11,7 +11,7 @@ Browser / terminal
         |
         +-- SSH (192.168.109.151) --> k8s-master --> Kubernetes API
         |
-        +-- HTTPS :31882 ----------> Istio ingressgateway
+        +-- HTTPS *.lab.local:31882 -> Istio ingressgateway
                                             |
                    +------------------------+---------------------+
                    |                        |                     |
@@ -49,8 +49,8 @@ atualizada junto com qualquer upgrade.
 `platform-root` implementa o padrão App of Apps. Ele cria as aplicações de
 plataforma e workloads:
 
-- plataforma: Istio, KEDA, Kyverno, Metrics Server, monitoring, logging,
-  Sealed Secrets, VPA e governance;
+- plataforma: Istio, acesso externo privado, KEDA, Kyverno, Metrics Server,
+  monitoring, logging, Sealed Secrets, VPA e governance;
 - dados: PostgreSQL e RabbitMQ;
 - workloads: banking, nginx-lab, postgres-api, cpu-producer e cpu-worker.
 

@@ -26,6 +26,7 @@ resources:
   - messaging-application.yaml
   - logging-app.yaml
   - tracing-application.yaml
+  - apps/external-access.yaml
 
   # Workloads
   - nginx-application.yaml

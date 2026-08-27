@@ -25,8 +25,9 @@ administrar o ambiente; o cluster e o `kubectl` executam nas VMs.
 | `k8s-worker-01` | `192.168.109.153` | worker | 4 vCPU / 4 GiB |
 | `k8s-worker-02` | `192.168.109.155` | worker | 4 vCPU / 6 GiB |
 
-O endpoint público do laboratório é
-`https://nginx.lab.local:31882`, com certificado autoassinado.
+Os endpoints privados e permanentes de Argo CD, Grafana, Prometheus, RabbitMQ,
+Bank Moura e das APIs usam o Istio em `https://<servico>.lab.local:31882`.
+Consulte [Acessos](docs/access.md) para configurar os nomes e a CA local.
 
 ## Comece aqui
 
