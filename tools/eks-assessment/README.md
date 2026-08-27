@@ -14,12 +14,28 @@ Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso c
 
 Execute a partir da raiz do repositório em qualquer host Linux autorizado, como estação administrativa, bastion, runner de CI/CD ou contêiner operacional, que tenha:
 
-- Bash, Python 3.11+, `kubectl`, `jq`, `curl`, `timeout` e `setsid`;
+- Bash, Python 3.10+, `kubectl`, `jq`, `curl`, `timeout` e `setsid`;
 - kubeconfig/contexto apontando para o cluster e RBAC somente leitura;
 - conectividade com a API Kubernetes e, quando utilizado, com o Prometheus;
 - AWS CLI e credenciais AWS somente leitura apenas para o enriquecimento específico de EKS.
 
 O host não precisa pertencer ao cluster. Em EKS, o assessment não acessa hosts do control plane, etcd ou processos internos; ele usa a API Kubernetes e, opcionalmente, as configurações gerenciadas expostas pelas APIs AWS.
+
+## Preflight
+
+Antes de coletar, valide dependências, contexto, API, RBAC e integrações opcionais:
+
+```bash
+bash tools/eks-assessment/src/assessment-preflight.sh
+```
+
+O menu e o botão web de coleta executam esse preflight automaticamente e não criam uma coleta quando há falha obrigatória. Restrições em APIs opcionais deixam a cobertura `PARTIAL`; ambiente não EKS e Prometheus não configurado ficam `N/A`.
+
+O interpretador Python 3.10+ é selecionado automaticamente. Para fixar um binário compatível:
+
+```bash
+PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
+```
 
 ## Executar o menu
 
@@ -32,7 +48,7 @@ bash tools/eks-assessment/bin/eks-assessment.sh
 Para iniciar somente a web:
 
 ```bash
-python3.11 tools/eks-assessment/src/assessment_dashboard.py \
+python3 tools/eks-assessment/src/assessment_dashboard.py \
   --root assessment \
   --static tools/eks-assessment/web/public \
   --host 0.0.0.0 --port 8765
@@ -63,14 +79,14 @@ Smoke de cancelamento real: `bash tools/eks-assessment/tests/smoke-assessment-ca
 Para analisar uma coleta existente sem consultar novamente o cluster:
 
 ```bash
-python3.11 tools/eks-assessment/src/eks_comprehensive_assessment.py \
+python3 tools/eks-assessment/src/eks_comprehensive_assessment.py \
   --snapshot-dir assessment/<coleta>
 ```
 
 Para atualizar o inventário read-only antes da análise:
 
 ```bash
-python3.11 tools/eks-assessment/src/eks_comprehensive_assessment.py \
+python3 tools/eks-assessment/src/eks_comprehensive_assessment.py \
   --snapshot-dir assessment/<coleta> \
   --collect-live --timeout 30 --chunk-size 200 \
   --inventory-workers 4 --api-delay-ms 100 \
@@ -99,6 +115,8 @@ A detecção de tecnologia usa imagem, nome, comando e variáveis de tuning perm
 ## Prometheus e capacidade
 
 `prometheus_telemetry.py` usa somente `GET`. O endpoint é informado explicitamente, mas o catálogo de métricas e os labels são descobertos automaticamente por `/api/v1/label/__name__/values`, `/api/v1/metadata` e `/api/v1/series`; as estatísticas vêm de `/api/v1/query_range`. Não existem nomes fixos de namespace, aplicação ou label.
+
+O baseline opcional via proxy de Service só é consultado quando `PROMETHEUS_NAMESPACE` e `PROMETHEUS_SERVICE` forem ambos informados. Não há namespace ou Service padrão do lab; a telemetria principal continua usando somente a URL explícita.
 
 Ele suporta `1d`, `3d`, `7d`, `14d` e `30d` e coleta por Deployment:
 

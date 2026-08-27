@@ -1039,8 +1039,8 @@ class Handler(BaseHTTPRequestHandler):
             '<label>Namespace (vazio = cluster inteiro)<input name="namespace" placeholder="namespace opcional"></label>'
             '<label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label>'
             '<label><input type="checkbox" name="account_security" value="1"> Incluir GuardDuty/runtime security (requer permissão de conta)</label>'
-            '<label>Namespace do baseline Prometheus<input name="prometheus_namespace" value="monitoring"></label>'
-            '<label>Service do baseline Prometheus<input name="prometheus_service" value="kube-prometheus-stack-prometheus"></label>'
+            '<label>Namespace do Service Prometheus (opcional)<input name="prometheus_namespace" placeholder="informar explicitamente"></label>'
+            '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
             '<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" placeholder="http://prometheus.example:9090"></label>'
             f'<label>Janela histórica<select name="prometheus_window">{windows}</select></label>'
             '<button>Iniciar assessment read-only</button></form>'
@@ -1123,6 +1123,30 @@ class Handler(BaseHTTPRequestHandler):
             namespace = form.get("namespace", [""])[0].strip()
             if namespace and not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", namespace):
                 return self.send_html(self.layout("Erro", '<div class="message bad">Namespace inválido.</div>'), 400)
+            prometheus_url = form.get("prometheus_url", [""])[0].strip() or os.environ.get("PROMETHEUS_URL", "").strip()
+            runtime_env = {
+                **os.environ,
+                "EKS_CLUSTER_NAME": eks_cluster_name(),
+                "AWS_REGION": form.get("region", [""])[0].strip(),
+                "PROMETHEUS_URL": prometheus_url,
+                "PROMETHEUS_NAMESPACE": form.get("prometheus_namespace", [""])[0].strip(),
+                "PROMETHEUS_SERVICE": form.get("prometheus_service", [""])[0].strip(),
+                "PYTHON_BIN": sys.executable,
+                "ASSESSMENT_NAMESPACE": namespace,
+                "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
+            }
+            preflight = run(
+                ["bash", str(self.repository / "src/assessment-preflight.sh")],
+                cwd=self.repository,
+                env=runtime_env,
+                timeout=60,
+            )
+            preflight_log = (preflight.stdout + preflight.stderr).strip()
+            if preflight.returncode != 0:
+                return self.send_html(
+                    self.layout("Preflight", f'<div class="message bad">Preflight falhou.</div><pre>{esc(preflight_log)}</pre>'),
+                    503,
+                )
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             ident = f"eks-{stamp}-{phase}-{label}"
             output = self.root / ident
@@ -1134,7 +1158,7 @@ class Handler(BaseHTTPRequestHandler):
                 "id": ident,
                 "createdAt": utc_iso(),
                 "clusterName": detected,
-                "eksClusterName": eks_cluster_name() or None,
+                "eksClusterName": runtime_env["EKS_CLUSTER_NAME"] or None,
                 "context": context,
                 "baseline": baseline,
                 "profile": profile,
@@ -1144,22 +1168,14 @@ class Handler(BaseHTTPRequestHandler):
                 "cancelled": False,
                 "maxDurationSeconds": max_duration,
                 "readOnly": True,
-                "collectorComponents": [],
-                "collectorExitCodes": [],
+                "collectorComponents": ["preflight"],
+                "collectorExitCodes": [0],
             }
             (output / "metadata.json").write_text(json.dumps(initial_metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-            env = {
-                **os.environ,
-                "OUTPUT_DIR": str(output),
-                "EKS_CLUSTER_NAME": eks_cluster_name(),
-                "AWS_REGION": form.get("region", [""])[0].strip(),
-                "PROMETHEUS_NAMESPACE": form.get("prometheus_namespace", ["monitoring"])[0],
-                "PROMETHEUS_SERVICE": form.get("prometheus_service", ["kube-prometheus-stack-prometheus"])[0],
-                "ASSESSMENT_NAMESPACE": namespace,
-                "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
-            }
-            codes: list[int] = []
-            components: list[str] = []
+            (output / "preflight.log").write_text(preflight_log + "\n", encoding="utf-8")
+            env = {**runtime_env, "OUTPUT_DIR": str(output)}
+            codes: list[int] = [0]
+            components: list[str] = ["preflight"]
             runs = [
                 ("assessment", "assessment.log", ["bash", str(self.repository / "src/assess-eks.sh")], 900),
                 ("discovery", "discovery.log", ["bash", str(self.repository / "src/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
@@ -1179,7 +1195,6 @@ class Handler(BaseHTTPRequestHandler):
                     result.stdout if result.returncode == 0 else '{"items":[]}',
                     encoding="utf-8",
                 )
-            prometheus_url = form.get("prometheus_url", [""])[0].strip() or os.environ.get("PROMETHEUS_URL", "").strip()
             window = form.get("prometheus_window", [os.environ.get("PROMETHEUS_WINDOW", "7d")])[0]
             if window not in {"1d", "3d", "7d", "14d", "30d"}:
                 window = "7d"

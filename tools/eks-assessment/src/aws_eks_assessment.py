@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only AWS/EKS control-plane, identity, data-plane and network assessment.
+"""Read-only AWS/EKS managed-configuration, identity, data-plane and network assessment.
 
 Only AWS list/describe/get operations are used. Credentials, secret values and
 account identifiers are never persisted. Missing AWS access is UNKNOWN; a
@@ -325,16 +325,16 @@ class AwsCollector:
             "PASS" if not missing else "WARN",
             "eks.observability.control-plane-logs",
             "Observability",
-            "Control-plane logs",
+            "EKS API and audit logging",
             f"enabled={','.join(enabled_logs) or 'none'}; missing={','.join(missing) or 'none'}",
-            "Enable and retain all EKS control-plane log types with protected log access.",
+            "Enable and retain all EKS API, audit, authenticator, scheduler and controller-manager log types with protected access.",
         )
         health = issues(cluster.get("health") or {})
         self.add(
             "CRIT" if health else "PASS",
             "eks.control-plane.health",
             "Health",
-            "EKS control-plane health",
+            "EKS managed-cluster health",
             "; ".join(health) if health else "No EKS health issues reported.",
             "Resolve EKS health issues before workload or version changes.",
         )
@@ -420,7 +420,7 @@ class AwsCollector:
                 "DataPlane",
                 "Managed node group health",
                 f"status={status}; version={version}; clusterVersion={cluster_version}; issues={'; '.join(health) or 'none'}",
-                "Resolve health issues and align node-group and control-plane versions.",
+                "Resolve health issues and align managed node-group and EKS cluster versions.",
                 f"nodegroup/{name}",
             )
             scaling = node.get("scalingConfig") or {}
@@ -741,7 +741,7 @@ class AwsCollector:
                 "Upgrade",
                 "EKS Cluster Insights coverage",
                 "No open insight was returned." if state == "AVAILABLE" else f"collectionState={state}",
-                "Refresh and review EKS insights before control-plane changes.",
+                "Refresh and review EKS insights before managed-cluster version changes.",
             )
         self.inventory["clusterInsights"] = summaries
 
@@ -1016,7 +1016,7 @@ class AwsCollector:
                 "UNKNOWN",
                 "eks.collection.control-plane",
                 "EKS",
-                "AWS EKS control-plane collection",
+                "AWS EKS managed-configuration collection",
                 reason,
                 "Configure read-only AWS permissions and verify cluster name/region.",
             )
