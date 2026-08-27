@@ -10,6 +10,8 @@ DISCOVERY="$TOOL_ROOT/src/eks-cluster-discovery.sh"
 TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
 SCANNER="$TOOL_ROOT/src/eks_comprehensive_assessment.py"
 VALIDATOR="$TOOL_ROOT/src/validate_assessment_artifacts.py"
+PREFLIGHT="$TOOL_ROOT/src/assessment-preflight.sh"
+PYTHON_BIN="${PYTHON_BIN:-}"
 PORT="${DASHBOARD_PORT:-8765}"
 MAX_DURATION_SECONDS="${ASSESSMENT_MAX_DURATION_SECONDS:-1800}"
 ACTIVE_PID=""
@@ -103,6 +105,22 @@ trap cancel_on_signal INT TERM
 trap cleanup_menu EXIT
 
 need(){ command -v "$1" >/dev/null || { echo "ERRO: $1 ausente" >&2; exit 1; }; }
+select_python(){
+  local candidate
+  if [[ -n "$PYTHON_BIN" ]]; then
+    command -v "$PYTHON_BIN" >/dev/null 2>&1 && "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1
+    return
+  fi
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
+      PYTHON_BIN="$candidate"; return 0
+    fi
+  done
+  return 1
+}
+run_preflight(){
+  PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" bash "$PREFLIGHT"
+}
 collections(){ find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%f\n' 2>/dev/null | sort; }
 
 cluster_identity(){
@@ -129,7 +147,7 @@ write_metadata(){
 collect(){
   local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason
   local assess_rc=125 discovery_rc=125 telemetry_rc=125 scanner_rc=125 validator_rc=125 completed=false baseline=false codes code
-  COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH="$(date +%s)"
+  COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH=0
   read -r -p "Identificador da mudança ($phase): " label
   label="${label:-manual}"; label="${label//[^a-zA-Z0-9._-]/-}"
   prom_url="${PROMETHEUS_URL:-}"; prom_window="${PROMETHEUS_WINDOW:-7d}"
@@ -138,30 +156,35 @@ collect(){
   read -r -p "Janela Prometheus 1d/3d/7d/14d/30d [${prom_window}]: " answer
   prom_window="${answer:-$prom_window}"; [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
 
-  id="eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}"; out="$OUTROOT/$id"; mkdir -p "$out"
   IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
+  if ! run_preflight "$prom_url" "$eks_name"; then
+    echo "Coleta não iniciada: corrija os itens FAIL do preflight." >&2
+    return 1
+  fi
+  COLLECTION_STARTED_EPOCH="$(date +%s)"
+  id="eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}"; out="$OUTROOT/$id"; mkdir -p "$out"
   [[ "$phase" == before ]] && baseline=true
   write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS"
   echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s =="
   echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
 
-  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
+  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" PYTHON_BIN="$PYTHON_BIN" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
     if run_bounded discovery 900 "$out/discovery.log" bash "$DISCOVERY" --output-dir "$out/discovery" --combined-report; then discovery_rc=0; else discovery_rc=$?; fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
     if [[ -n "$prom_url" ]]; then
-      if run_bounded_capture prometheus 1200 "$out/prometheus-telemetry.json" "$out/prometheus-telemetry.log" python3.11 "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json"; then telemetry_rc=0; else telemetry_rc=$?; fi
+      if run_bounded_capture prometheus 1200 "$out/prometheus-telemetry.json" "$out/prometheus-telemetry.log" "$PYTHON_BIN" "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json"; then telemetry_rc=0; else telemetry_rc=$?; fi
     else
       printf '%s\n' '{"state":"DISABLED","reason":"PROMETHEUS_URL not explicitly configured","workloads":[]}' > "$out/prometheus-telemetry.json"
       telemetry_rc=0
     fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
-    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" python3.11 "$SCANNER" --snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}" --resume; then scanner_rc=0; else scanner_rc=$?; fi
+    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" "$PYTHON_BIN" "$SCANNER" --snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}" --resume; then scanner_rc=0; else scanner_rc=$?; fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
-    if run_bounded artifact-validation 300 "$out/artifact-smoke.log" python3.11 "$VALIDATOR" "$out"; then validator_rc=0; else validator_rc=$?; fi
+    if run_bounded artifact-validation 300 "$out/artifact-smoke.log" "$PYTHON_BIN" "$VALIDATOR" "$out"; then validator_rc=0; else validator_rc=$?; fi
   fi
 
   codes="$(jq -nc --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" '[$a,$d,$t,$s,$v]')"
@@ -253,7 +276,8 @@ stop_dashboard_process(){
 }
 web(){
   local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" host dashboard_pid="" attempt
-  need python3.11; need curl
+  [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
+  need curl
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
   [[ -r "$pid" ]] && dashboard_pid="$(cat "$pid" 2>/dev/null || true)"
 
@@ -267,7 +291,7 @@ web(){
       echo "Aviso: PID $dashboard_pid nao pertence ao assessment; ele nao sera encerrado." >&2
     fi
     rm -f "$pid"
-    nohup setsid python3.11 "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" < /dev/null > "$log" 2>&1 &
+    nohup setsid "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" < /dev/null > "$log" 2>&1 &
     dashboard_pid=$!; echo "$dashboard_pid" > "$pid"
     for ((attempt=0; attempt<30; attempt++)); do
       if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then break; fi
@@ -286,22 +310,27 @@ web(){
   echo "Log: $log"
 }
 
-need kubectl; need jq; need timeout; need setsid; mkdir -p "$OUTROOT"
+need kubectl; need jq; need curl; need timeout; need setsid
+select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+[[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
+mkdir -p "$OUTROOT"
 while :; do
   cat <<EOF
 
-=== EKS ASSESSMENT MENU (READ-ONLY | LIMITE ${MAX_DURATION_SECONDS}s) ===
+=== KUBERNETES / EKS ASSESSMENT (READ-ONLY | LIMITE ${MAX_DURATION_SECONDS}s) ===
 1) Coleta ANTES do deploy
 2) Coleta DEPOIS do deploy
 3) Comparar coletas
 4) Dashboard no terminal
 5) Publicar dashboard web (porta $PORT)
+6) Validar ambiente (preflight)
 0) Sair
 EOF
   read -r -p 'Opção: ' op
   case "$op" in
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
-    5) web;; 0) exit 0;; *) echo 'Opção inválida.';;
+    5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";;
+    0) exit 0;; *) echo 'Opção inválida.';;
   esac
   [[ "$op" == 0 ]] || read -r -p 'Enter para continuar…' _
 done

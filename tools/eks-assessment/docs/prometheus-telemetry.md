@@ -9,7 +9,7 @@ O host precisa apenas alcançar a URL explícita do Prometheus e ler o snapshot 
 Para analisar todos os Deployments de um snapshot a partir da raiz do repositório:
 
 ```bash
-python3.11 tools/eks-assessment/src/prometheus_telemetry.py \
+python3 tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 7d \
   --workloads-file assessment/<coleta>/workloads.json \
@@ -19,7 +19,7 @@ python3.11 tools/eks-assessment/src/prometheus_telemetry.py \
 Para alvos pontuais:
 
 ```bash
-python3.11 tools/eks-assessment/src/prometheus_telemetry.py \
+python3 tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 1d \
   --workload payments/api \
@@ -63,7 +63,9 @@ A aba **Prometheus** apresenta percentuais de request/limit e heap, além de ver
 
 ## Testes
 
+O comando abaixo replica a descoberta usada no CI:
+
 ```bash
 cd tools/eks-assessment
-python3.11 -m unittest -v test_assessment_cancellation.py test_assessment_supply_cost.py test_prometheus_telemetry.py test_eks_assessment.py
+PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 ```

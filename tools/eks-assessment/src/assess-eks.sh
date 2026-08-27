@@ -8,11 +8,25 @@ TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AWS_SCANNER="$TOOL_ROOT/src/aws_eks_assessment.py"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
-PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-monitoring}"
-PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-kube-prometheus-stack-prometheus}"
+PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-}"
+PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-assessment/eks-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "ERRO: comando obrigatório ausente: $1" >&2; exit 1; }; }
+select_python() {
+  local candidate
+  if [[ -n "$PYTHON_BIN" ]]; then
+    command -v "$PYTHON_BIN" >/dev/null 2>&1 && "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1
+    return
+  fi
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
+      PYTHON_BIN="$candidate"; return 0
+    fi
+  done
+  return 1
+}
 info() { printf '\n[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
 
@@ -35,6 +49,7 @@ section() { printf '\n## %s\n' "$*" >>"$REPORT"; }
 bullet() { printf -- '- %s\n' "$*" >>"$REPORT"; }
 
 context="$(kubectl config current-context)"
+cluster_ref="$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || true)"
 kubectl version -o json >"$OUTPUT_DIR/kubernetes-version.json"
 kubectl get nodes -o json >"$OUTPUT_DIR/nodes.json"
 kubectl get pods -A -o json >"$OUTPUT_DIR/pods.json"
@@ -111,31 +126,44 @@ prom_query() {
   printf '%s\t%s\t%s\n' "$name" "${value:-no-series}" "$query" >>"$METRICS"
 }
 
-section "Prometheus baseline"
-info "Coletando linha de base do Prometheus"
-prom_query nodes_ready 'sum(kube_node_status_condition{condition="Ready",status="true"})'
-prom_query pods_pending 'sum(kube_pod_status_phase{phase="Pending"})'
-prom_query pod_restarts_24h 'sum(increase(kube_pod_container_status_restarts_total[24h]))'
-prom_query oom_killed_24h 'sum(max_over_time(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[24h]))'
-prom_query node_cpu_utilization '100 * sum(rate(node_cpu_seconds_total{mode!="idle"}[5m])) / sum(count without (cpu,mode) (node_cpu_seconds_total{mode="idle"}))'
-prom_query node_memory_utilization '100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))'
-prom_query apiserver_error_rate 'sum(rate(apiserver_request_total{code=~"5.."}[5m]))'
-prom_query pvc_low_space 'count((kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < 0.15)'
-bullet "Raw Prometheus responses: \`prometheus/*.json\`"
-bullet "Metric table: \`prometheus-baseline.tsv\`"
-
-if [[ -z "$EKS_CLUSTER_NAME" && "$context" =~ arn:aws:eks:[^:]+:[^:]+:cluster/(.+)$ ]]; then
-  EKS_CLUSTER_NAME="${BASH_REMATCH[1]}"
+section "Prometheus service-proxy baseline (optional)"
+if [[ -z "$PROMETHEUS_NAMESPACE" && -z "$PROMETHEUS_SERVICE" ]]; then
+  finding N/A observability "Prometheus service proxy" "namespace/service not explicitly configured; adaptive URL collector remains independent"
+  bullet "Service-proxy baseline: N/A (PROMETHEUS_NAMESPACE/PROMETHEUS_SERVICE não configurados)."
+elif [[ -z "$PROMETHEUS_NAMESPACE" || -z "$PROMETHEUS_SERVICE" ]]; then
+  finding UNKNOWN observability "Prometheus service proxy" "both PROMETHEUS_NAMESPACE and PROMETHEUS_SERVICE are required"
+  bullet "Service-proxy baseline: configuração explícita incompleta."
+else
+  info "Coletando linha de base pelo Service informado explicitamente"
+  prom_query nodes_ready 'sum(kube_node_status_condition{condition="Ready",status="true"})'
+  prom_query pods_pending 'sum(kube_pod_status_phase{phase="Pending"})'
+  prom_query pod_restarts_24h 'sum(increase(kube_pod_container_status_restarts_total[24h]))'
+  prom_query oom_killed_24h 'sum(max_over_time(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[24h]))'
+  prom_query node_cpu_utilization '100 * sum(rate(node_cpu_seconds_total{mode!="idle"}[5m])) / sum(count without (cpu,mode) (node_cpu_seconds_total{mode="idle"}))'
+  prom_query node_memory_utilization '100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))'
+  prom_query apiserver_error_rate 'sum(rate(apiserver_request_total{code=~"5.."}[5m]))'
+  prom_query pvc_low_space 'count((kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < 0.15)'
+  bullet "Raw Prometheus responses: \`prometheus/*.json\`"
+  bullet "Metric table: \`prometheus-baseline.tsv\`"
 fi
 
-section "AWS EKS best practices"
-info "Executando coletor AWS/EKS independente e somente leitura"
+if [[ -z "$EKS_CLUSTER_NAME" ]]; then
+  for context_value in "$cluster_ref" "$context"; do
+    if [[ "$context_value" =~ arn:[^:]+:eks:[^:]+:[^:]+:cluster/(.+)$ ]]; then
+      EKS_CLUSTER_NAME="${BASH_REMATCH[1]}"
+      break
+    fi
+  done
+fi
+
+section "AWS/EKS managed configuration (optional)"
+info "Executando enriquecimento AWS/EKS independente e somente leitura"
 aws_args=(--output "$OUTPUT_DIR/aws-eks-assessment.json")
 [[ -n "$EKS_CLUSTER_NAME" ]] && aws_args+=(--cluster "$EKS_CLUSTER_NAME")
 [[ -n "$AWS_REGION" ]] && aws_args+=(--region "$AWS_REGION")
 [[ "${ASSESSMENT_INCLUDE_ACCOUNT_SECURITY:-0}" == 1 ]] && aws_args+=(--include-account-security)
-if command -v python3.11 >/dev/null 2>&1 && [[ -r "$AWS_SCANNER" ]]; then
-  if python3.11 "$AWS_SCANNER" "${aws_args[@]}" >"$OUTPUT_DIR/aws-eks-assessment.log" 2>&1; then
+if select_python && [[ -r "$AWS_SCANNER" ]]; then
+  if "$PYTHON_BIN" "$AWS_SCANNER" "${aws_args[@]}" >"$OUTPUT_DIR/aws-eks-assessment.log" 2>&1; then
     jq -r '.findings[]? | [.severity, (.category | ascii_downcase), .check, .detail] | @tsv' "$OUTPUT_DIR/aws-eks-assessment.json" >>"$FINDINGS"
     aws_state="$(jq -r '.state // "UNKNOWN"' "$OUTPUT_DIR/aws-eks-assessment.json")"
     bullet "AWS/EKS collector state: $aws_state; evidence: aws-eks-assessment.json."
@@ -144,7 +172,7 @@ if command -v python3.11 >/dev/null 2>&1 && [[ -r "$AWS_SCANNER" ]]; then
     bullet "AWS/EKS collector failed; Kubernetes assessment remains valid."
   fi
 else
-  finding UNKNOWN eks "AWS/EKS collector" "Python 3.11 or aws_eks_assessment.py unavailable"
+  finding UNKNOWN eks "AWS/EKS collector" "Python 3.10+ or aws_eks_assessment.py unavailable"
   bullet "AWS/EKS evidence unavailable; Kubernetes assessment remains valid."
 fi
 section "Findings"

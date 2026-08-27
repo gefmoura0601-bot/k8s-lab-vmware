@@ -64,6 +64,25 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("dashboard_ready", menu)
         self.assertIn('"$TOOL_ROOT/web/public"', menu)
 
+    def test_menu_uses_preflight_and_portable_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        menu = (root / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
+        assessment = (root / "src" / "assess-eks.sh").read_text(encoding="utf-8")
+        dashboard = (root / "src" / "assessment_dashboard.py").read_text(encoding="utf-8")
+        preflight = (root / "src" / "assessment-preflight.sh").read_text(encoding="utf-8")
+        self.assertIn("assessment-preflight.sh", menu)
+        self.assertIn('"$PYTHON_BIN"', menu)
+        self.assertNotIn("need python3.11", menu)
+        self.assertIn('PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-}"', assessment)
+        self.assertIn('PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-}"', assessment)
+        self.assertNotIn('finding N/A eks "AWS/EKS collector"', assessment)
+        self.assertNotIn('value="monitoring"', dashboard)
+        self.assertNotIn('value="kube-prometheus-stack-prometheus"', dashboard)
+        self.assertIn("auth can-i", preflight)
+        self.assertNotIn("kubectl apply", preflight)
+        self.assertNotIn("kubectl patch", preflight)
+        self.assertNotIn("kubectl delete", preflight)
+
 
 if __name__ == "__main__":
     unittest.main()
