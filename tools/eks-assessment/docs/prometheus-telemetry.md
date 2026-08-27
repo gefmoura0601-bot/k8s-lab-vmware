@@ -2,29 +2,31 @@
 
 `tools/eks-assessment/src/prometheus_telemetry.py` é um coletor Python 3.10+ adaptativo, somente leitura e sem dependências externas. A URL do Prometheus é sempre explícita: não há descoberta automática de endpoint, credenciais no código ou mutações no cluster.
 
-## Execução no master
+## Execução a partir de um host autorizado
 
-Para analisar todos os Deployments de um snapshot:
+O host precisa apenas alcançar a URL explícita do Prometheus e ler o snapshot local. Ele não precisa ser um node do cluster. Quando o endpoint for privado, use uma estação, bastion, runner ou túnel aprovado com essa conectividade.
+
+Para analisar todos os Deployments de um snapshot a partir da raiz do repositório:
 
 ```bash
-python3.11 /workspace/tools/eks-assessment/src/prometheus_telemetry.py \
+python3.11 tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 7d \
-  --workloads-file /workspace/assessment/<coleta>/workloads.json \
+  --workloads-file assessment/<coleta>/workloads.json \
   --workers 3
 ```
 
 Para alvos pontuais:
 
 ```bash
-python3.11 /workspace/tools/eks-assessment/src/prometheus_telemetry.py \
+python3.11 tools/eks-assessment/src/prometheus_telemetry.py \
   --url http://prometheus.example:9090 \
   --window 1d \
   --workload payments/api \
   --workload checkout/web
 ```
 
-A forma recomendada é abrir o menu com `bash /workspace/tools/eks-assessment/bin/eks-assessment.sh`, escolher a web e informar a URL no formulário de **Coletar agora** ou **Novo baseline**.
+A forma recomendada é abrir o menu com `bash tools/eks-assessment/bin/eks-assessment.sh`, escolher a web e informar a URL no formulário de **Coletar agora** ou **Novo baseline**. O coletor não descobre o endpoint nem cria `port-forward` automaticamente.
 
 ## Descoberta automática
 
@@ -62,6 +64,6 @@ A aba **Prometheus** apresenta percentuais de request/limit e heap, além de ver
 ## Testes
 
 ```bash
-cd /workspace/tools/eks-assessment
+cd tools/eks-assessment
 python3.11 -m unittest -v test_assessment_cancellation.py test_assessment_supply_cost.py test_prometheus_telemetry.py test_eks_assessment.py
 ```
