@@ -50,4 +50,11 @@ chmod 0600 /vagrant/.cluster/join-command.sh
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply --server-side --force-conflicts -n argocd \
   -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+argocd_server_insecure="$(kubectl -n argocd get configmap argocd-cmd-params-cm \
+  -o jsonpath='{.data.server\.insecure}' 2>/dev/null || true)"
+kubectl apply --server-side -f /workspace/kubernetes/argocd/argocd-cmd-params-cm.yaml
+if [[ "${argocd_server_insecure}" != "true" ]]; then
+  kubectl -n argocd rollout restart deployment/argocd-server
+  kubectl -n argocd rollout status deployment/argocd-server --timeout=3m
+fi
 kubectl apply --server-side -f /workspace/kubernetes/argocd/root-app.yaml

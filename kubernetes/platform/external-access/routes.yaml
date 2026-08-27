@@ -47,23 +47,7 @@ spec:
         - destination:
             host: argocd-server.argocd.svc.cluster.local
             port:
-              number: 443
----
-apiVersion: networking.istio.io/v1
-kind: DestinationRule
-metadata:
-  name: argocd-external-tls
-  # DestinationRules are selected from the client proxy namespace. The
-  # ingress gateway runs in istio-system, so TLS origination must live here.
-  namespace: istio-system
-spec:
-  host: argocd-server.argocd.svc.cluster.local
-  trafficPolicy:
-    portLevelSettings:
-      - port:
-          number: 443
-        tls:
-          mode: SIMPLE
+              number: 80
 ---
 apiVersion: networking.istio.io/v1
 kind: VirtualService
