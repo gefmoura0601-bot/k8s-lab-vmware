@@ -53,7 +53,9 @@ apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
   name: argocd-external-tls
-  namespace: nginx-lab
+  # DestinationRules are selected from the client proxy namespace. The
+  # ingress gateway runs in istio-system, so TLS origination must live here.
+  namespace: istio-system
 spec:
   host: argocd-server.argocd.svc.cluster.local
   trafficPolicy:
