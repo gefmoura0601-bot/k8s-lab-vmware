@@ -96,13 +96,14 @@ Descubra o Service:
 kubectl -n argocd get svc argocd-server
 ```
 
-Crie um túnel da porta local `8085` para a porta HTTPS `443` do ClusterIP e
-acesse `https://localhost:8085`. O certificado é autoassinado.
+Como o TLS principal termina no Istio, o Argo CD opera em HTTP dentro do
+cluster. Para contingência, crie um túnel da porta local `8085` para a porta
+HTTP `80` do ClusterIP e acesse `http://localhost:8085`.
 
 ```powershell
 ssh.exe -N -i .\iac\vagrant\.vagrant\machines\k8s-master\vmware_desktop\private_key `
   -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes `
-  -L 127.0.0.1:8085:<CLUSTER_IP_ARGOCD>:443 `
+  -L 127.0.0.1:8085:<CLUSTER_IP_ARGOCD>:80 `
   vagrant@192.168.109.151
 ```
 

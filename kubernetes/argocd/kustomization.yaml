@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - argocd-cm-customizations.yaml
+  - argocd-cmd-params-cm.yaml
 
   # Keep the root Application self-managed after bootstrap.
   - root-app.yaml
