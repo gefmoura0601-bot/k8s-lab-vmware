@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import http.cookiejar
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -29,17 +31,28 @@ class DashboardAccessTests(unittest.TestCase):
 
     def test_token_is_exchanged_for_http_only_session_cookie(self) -> None:
         token = "a" * 43
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
         with tempfile.TemporaryDirectory() as directory:
             process = subprocess.Popen(
                 [sys.executable, str(DASHBOARD), "--root", directory, "--static", str(STATIC),
-                 "--host", "127.0.0.1", "--port", "0", "--access-token", token],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                 "--host", "127.0.0.1", "--port", str(port), "--access-token", token],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
             )
             try:
-                ready = process.stdout.readline().strip()
-                self.assertIn("EKS dashboard Python: http://127.0.0.1:", ready)
-                port = int(ready.rsplit(":", 1)[1])
                 base = f"http://127.0.0.1:{port}"
+                for _ in range(40):
+                    try:
+                        urllib.request.urlopen(base, timeout=0.25)
+                    except urllib.error.HTTPError as error:
+                        if error.code == 401:
+                            break
+                    except OSError:
+                        time.sleep(0.05)
+                else:
+                    self.fail("dashboard did not start")
+
                 with self.assertRaises(urllib.error.HTTPError) as denied:
                     urllib.request.urlopen(f"{base}/api/health", timeout=2)
                 self.assertEqual(denied.exception.code, 401)
@@ -53,7 +66,7 @@ class DashboardAccessTests(unittest.TestCase):
                 self.assertEqual(opener.open(f"{base}/api/health", timeout=2).status, 200)
             finally:
                 process.terminate()
-                process.communicate(timeout=5)
+                process.wait(timeout=5)
 
 
 if __name__ == "__main__":
