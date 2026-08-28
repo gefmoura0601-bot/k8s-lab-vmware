@@ -38,7 +38,7 @@ class DashboardAccessTests(unittest.TestCase):
             process = subprocess.Popen(
                 [sys.executable, str(DASHBOARD), "--root", directory, "--static", str(STATIC),
                  "--host", "127.0.0.1", "--port", str(port), "--access-token", token],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             try:
                 base = f"http://127.0.0.1:{port}"
@@ -66,7 +66,7 @@ class DashboardAccessTests(unittest.TestCase):
                 self.assertEqual(opener.open(f"{base}/api/health", timeout=2).status, 200)
             finally:
                 process.terminate()
-                process.wait(timeout=5)
+                process.communicate(timeout=5)
 
 
 if __name__ == "__main__":
