@@ -2,21 +2,18 @@
 """Authentication tests for the remotely exposed assessment dashboard."""
 from __future__ import annotations
 
-import http.cookiejar
-import socket
 import subprocess
 import sys
-import tempfile
-import time
 import unittest
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = ROOT / "src" / "assessment_dashboard.py"
 STATIC = ROOT / "web" / "public"
+sys.path.insert(0, str(ROOT / "src"))
+
+import assessment_dashboard as dashboard
 
 
 class DashboardAccessTests(unittest.TestCase):
@@ -29,44 +26,36 @@ class DashboardAccessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("requires an access token", result.stderr)
 
+    @staticmethod
+    def handler(path: str, cookie: str = ""):
+        instance = object.__new__(dashboard.Handler)
+        instance.path = path
+        instance.headers = {"Cookie": cookie}
+        instance.access_token = "a" * 43
+        instance.response_status = None
+        instance.response_headers = []
+        instance.send_response = lambda status: setattr(instance, "response_status", status)
+        instance.send_header = lambda name, value: instance.response_headers.append((name, value))
+        instance.end_headers = lambda: None
+        instance.send_html = lambda _value, status=200: setattr(instance, "response_status", status)
+        return instance
+
     def test_token_is_exchanged_for_http_only_session_cookie(self) -> None:
         token = "a" * 43
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        with tempfile.TemporaryDirectory() as directory:
-            process = subprocess.Popen(
-                [sys.executable, str(DASHBOARD), "--root", directory, "--static", str(STATIC),
-                 "--host", "127.0.0.1", "--port", str(port), "--access-token", token],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
-            )
-            try:
-                base = f"http://127.0.0.1:{port}"
-                for _ in range(40):
-                    try:
-                        urllib.request.urlopen(base, timeout=0.25)
-                    except urllib.error.HTTPError as error:
-                        if error.code == 401:
-                            break
-                    except OSError:
-                        time.sleep(0.05)
-                else:
-                    self.fail("dashboard did not start")
+        login = self.handler(f"/?access_token={token}")
+        self.assertFalse(login.authenticated())
+        self.assertEqual(login.response_status, 303)
+        self.assertIn(("Location", "/"), login.response_headers)
+        cookie = next(value for name, value in login.response_headers if name == "Set-Cookie")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
 
-                with self.assertRaises(urllib.error.HTTPError) as denied:
-                    urllib.request.urlopen(f"{base}/api/health", timeout=2)
-                self.assertEqual(denied.exception.code, 401)
+        session = self.handler("/api/health", f"assessment_session={token}")
+        self.assertTrue(session.authenticated())
 
-                jar = http.cookiejar.CookieJar()
-                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-                response = opener.open(f"{base}/?access_token={token}", timeout=2)
-                self.assertEqual(response.status, 200)
-                session = next(cookie for cookie in jar if cookie.name == "assessment_session")
-                self.assertTrue(session.has_nonstandard_attr("HttpOnly"))
-                self.assertEqual(opener.open(f"{base}/api/health", timeout=2).status, 200)
-            finally:
-                process.terminate()
-                process.wait(timeout=5)
+        denied = self.handler("/api/health")
+        self.assertFalse(denied.authenticated())
+        self.assertEqual(denied.response_status, 401)
 
 
 if __name__ == "__main__":
