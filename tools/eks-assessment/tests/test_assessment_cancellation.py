@@ -62,6 +62,8 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("--kill-after=10s", menu)
         self.assertIn("dashboard_process_matches", menu)
         self.assertIn("dashboard_ready", menu)
+        self.assertIn("dashboard_port_in_use", menu)
+        self.assertIn("Iniciar dashboard local seguro", menu)
         self.assertIn('"$TOOL_ROOT/web/public"', menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
