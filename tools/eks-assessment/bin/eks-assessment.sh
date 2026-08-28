@@ -291,6 +291,10 @@ dashboard_ready(){
   [[ "$response" == "200 text/css"* ]]
 }
 
+dashboard_port_in_use(){
+  (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
+}
+
 stop_dashboard_process(){
   local dashboard_pid="$1" attempt
   kill -TERM "$dashboard_pid" 2>/dev/null || true
@@ -317,6 +321,11 @@ web(){
       echo "Aviso: PID $dashboard_pid nao pertence ao assessment; ele nao sera encerrado." >&2
     fi
     rm -f "$pid"
+    if dashboard_port_in_use; then
+      echo "ERRO: a porta 127.0.0.1:$PORT já está em uso por outro processo." >&2
+      echo "Use DASHBOARD_PORT=<porta-livre> ou encerre explicitamente o processo responsável." >&2
+      return 1
+    fi
     nohup setsid "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 127.0.0.1 --port "$PORT" < /dev/null > "$log" 2>&1 &
     dashboard_pid=$!; echo "$dashboard_pid" > "$pid"
     for ((attempt=0; attempt<30; attempt++)); do
@@ -331,7 +340,8 @@ web(){
     echo "Dashboard iniciado (PID $dashboard_pid)."
   fi
   WEB_MANAGED_BY_MENU=1
-  echo "Abra: http://127.0.0.1:$PORT"
+  echo "Dashboard local: http://127.0.0.1:$PORT"
+  echo "Acesso remoto: crie um túnel SSH -L ${PORT}:127.0.0.1:${PORT} até este host."
   echo "Log: $log"
 }
 
@@ -347,7 +357,7 @@ while :; do
 2) Coleta DEPOIS do deploy
 3) Comparar coletas
 4) Dashboard no terminal
-5) Publicar dashboard web (porta $PORT)
+5) Iniciar dashboard local seguro (porta $PORT)
 6) Validar ambiente (preflight)
 0) Sair
 EOF
