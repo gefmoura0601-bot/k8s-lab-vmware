@@ -65,7 +65,7 @@ cd /workspace/tools/eks-assessment
 ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment.sh
 ```
 
-Selecione a opção 5 e abra a URL temporária exibida, normalmente `http://192.168.109.151:8765/?access_token=...`. Não é necessário túnel SSH. Se a porta estiver ocupada, o menu informa o conflito antes de iniciar; encerre a sessão antiga ou defina, por exemplo, `DASHBOARD_PORT=8766`.
+Selecione a opção 5 e abra a URL temporária exibida, normalmente `http://192.168.109.151:8765/?access_token=...`. Não é necessário túnel SSH. Se a porta estiver ocupada por outro dashboard do assessment, o menu permite usar a sessão atual, encerrá-la com `SIGTERM` e iniciar outra na mesma porta, ou escolher automaticamente a próxima porta livre. Um processo desconhecido nunca é encerrado: nesse caso, somente uma nova porta ou o retorno ao menu são oferecidos. Também é possível definir previamente, por exemplo, `DASHBOARD_PORT=8766`.
 
 ## Permissões mínimas
 
