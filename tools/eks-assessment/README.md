@@ -56,7 +56,7 @@ python3 tools/eks-assessment/src/assessment_dashboard.py \
   --host 127.0.0.1 --port 8765
 ```
 
-Na execução direta, o servidor permanece restrito a loopback. A opção 5 do menu faz exposição explícita em todas as interfaces, mostra a URL e mantém o processo preso ao terminal; `Ctrl+C` encerra o dashboard sem PID file ou processo em background. Use essa opção somente na rede privada do lab. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
+Na execução direta, o servidor permanece restrito a loopback. A opção 5 do menu faz exposição explícita em todas as interfaces, gera um access token temporário, mostra a URL de entrada e mantém o processo preso ao terminal. O token é removido da URL após o primeiro acesso e trocado por um cookie `HttpOnly` com `SameSite=Strict`; ele deixa de valer quando `Ctrl+C` encerra o processo. Não há PID file ou processo em background. Use essa opção somente na rede privada do lab. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
 
 No control plane do lab, preserve o diretório compartilhado de coletas e execute:
 
@@ -65,7 +65,7 @@ cd /workspace/tools/eks-assessment
 ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment.sh
 ```
 
-Selecione a opção 5 e abra a URL exibida, normalmente `http://192.168.109.151:8765`. Não é necessário túnel SSH. Se a porta estiver ocupada, o menu informa o conflito antes de iniciar; encerre a sessão antiga ou defina, por exemplo, `DASHBOARD_PORT=8766`.
+Selecione a opção 5 e abra a URL temporária exibida, normalmente `http://192.168.109.151:8765/?access_token=...`. Não é necessário túnel SSH. Se a porta estiver ocupada, o menu informa o conflito antes de iniciar; encerre a sessão antiga ou defina, por exemplo, `DASHBOARD_PORT=8766`.
 
 ## Permissões mínimas
 
@@ -138,7 +138,7 @@ A detecção de tecnologia usa imagem, nome, comando e variáveis de tuning perm
 
 ## Prometheus e capacidade
 
-`prometheus_telemetry.py` usa somente `GET`. O endpoint é informado explicitamente, mas o catálogo de métricas e os labels são descobertos automaticamente por `/api/v1/label/__name__/values`, `/api/v1/metadata` e `/api/v1/series`; as estatísticas vêm de `/api/v1/query_range`. Não existem nomes fixos de namespace, aplicação ou label.
+`prometheus_telemetry.py` usa somente `GET`. Quando `PROMETHEUS_URL` não estiver definido, o menu e o formulário web procuram Services read-only com identidade Prometheus e sugerem o `ClusterIP`/port detectado; o operador pode aceitar, editar ou remover a sugestão. O endpoint usado continua explícito. O catálogo de métricas e os labels são descobertos automaticamente por `/api/v1/label/__name__/values`, `/api/v1/metadata` e `/api/v1/series`; as estatísticas vêm de `/api/v1/query_range`. Não existem nomes fixos de namespace, aplicação ou label.
 
 O baseline opcional via proxy de Service só é consultado quando `PROMETHEUS_NAMESPACE` e `PROMETHEUS_SERVICE` forem ambos informados. Não há namespace ou Service padrão do lab; a telemetria principal continua usando somente a URL explícita.
 

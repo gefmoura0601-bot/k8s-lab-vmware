@@ -137,6 +137,18 @@ select_python(){
 run_preflight(){
   PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" ASSESSMENT_NAMESPACE="${3:-}" bash "$PREFLIGHT"
 }
+suggest_prometheus_url(){
+  kubectl get services --all-namespaces -o json --request-timeout=10s 2>/dev/null | jq -r '
+    [.items[]
+      | select(.spec.clusterIP != null and .spec.clusterIP != "None")
+      | . as $service
+      | .spec.ports[]?
+      | select((.port == 9090) or ((.name // "") | test("prometheus|web|http"; "i")))
+      | select((($service.metadata.name // "") | test("prometheus"; "i")) or (($service.metadata.labels["app.kubernetes.io/name"] // "") | test("prometheus"; "i")))
+      | {score: (if .port == 9090 then 0 else 1 end), url: ("http://" + $service.spec.clusterIP + ":" + (.port | tostring))}]
+    | sort_by(.score, .url)
+    | first.url // empty'
+}
 collections(){ find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%f\n' 2>/dev/null | sort; }
 
 cluster_identity(){
@@ -167,6 +179,10 @@ collect(){
   read -r -p "Identificador da mudança ($phase): " label
   label="${label:-manual}"; label="${label//[^a-zA-Z0-9._-]/-}"
   prom_url="${PROMETHEUS_URL:-}"; prom_window="${PROMETHEUS_WINDOW:-7d}"
+  if [[ -z "$prom_url" ]]; then
+    prom_url="$(suggest_prometheus_url || true)"
+    [[ -z "$prom_url" ]] || echo "Prometheus detectado como sugestão read-only: $prom_url"
+  fi
   namespace="${ASSESSMENT_NAMESPACE:-}"
   read -r -p "Namespace (Enter = ${namespace:-cluster inteiro}): " answer
   namespace="${answer:-$namespace}"
@@ -264,7 +280,7 @@ dashboard_port_in_use(){
   (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
 }
 web(){
-  local public_host
+  local public_host access_token
   [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
   if dashboard_port_in_use; then
@@ -273,10 +289,12 @@ web(){
   fi
   public_host="${DASHBOARD_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
   public_host="${public_host:-127.0.0.1}"
-  echo "Dashboard: http://$public_host:$PORT"
+  access_token="$($PYTHON_BIN -c 'import secrets; print(secrets.token_urlsafe(32))')"
+  echo "Dashboard: http://$public_host:$PORT/?access_token=$access_token"
+  echo "O access token é temporário e válido somente durante esta execução."
   echo "O servidor ficará preso a esta sessão. Pressione Ctrl+C para encerrar."
   DASHBOARD_FOREGROUND=1
-  "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" --allow-remote
+  "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" --allow-remote --access-token "$access_token"
   DASHBOARD_FOREGROUND=0
   echo "Dashboard encerrado."
 }

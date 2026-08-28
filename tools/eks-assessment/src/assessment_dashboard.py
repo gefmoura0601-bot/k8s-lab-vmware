@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 from collections import Counter, defaultdict
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
@@ -97,6 +98,30 @@ def eks_cluster_name() -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def prometheus_url_suggestion() -> str:
+    configured = os.environ.get("PROMETHEUS_URL", "").strip()
+    if configured:
+        return configured
+    result = run(["kubectl", "get", "services", "--all-namespaces", "-o", "json", "--request-timeout=10s"], timeout=15)
+    if result.returncode != 0:
+        return ""
+    candidates: list[tuple[int, str]] = []
+    for service in jtext(result.stdout, {}).get("items", []):
+        metadata_value = service.get("metadata") or {}
+        spec = service.get("spec") or {}
+        cluster_ip = spec.get("clusterIP")
+        labels = metadata_value.get("labels") or {}
+        identity = f"{metadata_value.get('name', '')} {labels.get('app.kubernetes.io/name', '')}"
+        if not cluster_ip or cluster_ip == "None" or "prometheus" not in identity.lower():
+            continue
+        for port in spec.get("ports") or []:
+            number = port.get("port")
+            port_name = str(port.get("name") or "")
+            if isinstance(number, int) and (number == 9090 or re.search(r"prometheus|web|http", port_name, re.I)):
+                candidates.append((0 if number == 9090 else 1, f"http://{cluster_ip}:{number}"))
+    return sorted(candidates)[0][1] if candidates else ""
 
 
 def metadata(directory: Path) -> dict:
@@ -307,6 +332,7 @@ class Handler(BaseHTTPRequestHandler):
     root: Path
     static: Path
     repository: Path
+    access_token: str = ""
 
     def setup(self):
         super().setup()
@@ -317,6 +343,29 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+
+    def authenticated(self) -> bool:
+        if not self.access_token:
+            return True
+        parsed = urlparse(self.path)
+        supplied = parse_qs(parsed.query).get("access_token", [""])[0]
+        if supplied and secrets.compare_digest(supplied, self.access_token):
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            query.pop("access_token", None)
+            target = parsed.path + (f"?{urlencode(query, doseq=True)}" if query else "")
+            self.send_response(303)
+            self.send_header("Location", target or "/")
+            self.send_header("Set-Cookie", f"assessment_session={self.access_token}; Path=/; HttpOnly; SameSite=Strict")
+            self.send_header("Cache-Control", "no-store")
+            self.security_headers()
+            self.end_headers()
+            return False
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        session = cookie.get("assessment_session")
+        if session and secrets.compare_digest(session.value, self.access_token):
+            return True
+        self.send_html("<!doctype html><html lang=\"pt-BR\"><meta charset=\"utf-8\"><title>Acesso negado</title><h1>Acesso negado</h1><p>Use a URL temporária exibida pelo menu do assessment.</p></html>", 401)
+        return False
 
     def log_message(self, fmt, *args):
         sys.stdout.write(f"{self.address_string()} - {fmt % args}\n")
@@ -1021,6 +1070,7 @@ class Handler(BaseHTTPRequestHandler):
     def collect_form(self, baseline: bool) -> str:
         detected = cluster()[1]
         eks_name = eks_cluster_name()
+        prometheus_url = prometheus_url_suggestion()
         environment = f"Amazon EKS / {eks_name}" if eks_name else f"Kubernetes / {detected}"
         windows = "".join(
             f'<option value="{item}" {"selected" if item == "7d" else ""}>{item}</option>'
@@ -1054,12 +1104,13 @@ class Handler(BaseHTTPRequestHandler):
             '<label><input type="checkbox" name="account_security" value="1"> Incluir GuardDuty/runtime security (requer permissão de conta)</label>'
             '<label>Namespace do Service Prometheus (opcional)<input name="prometheus_namespace" placeholder="informar explicitamente"></label>'
             '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
-            '<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" placeholder="http://prometheus.example:9090"></label>'
+            f'<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" value="{esc(prometheus_url)}" placeholder="http://prometheus.example:9090"></label>'
             f'<label>Janela histórica<select name="prometheus_window">{windows}</select></label>'
             '<button>Iniciar assessment read-only</button></form>'
         )
         return self.layout("Nova coleta", body)
     def do_GET(self):
+        if not self.authenticated(): return
         parsed = urlparse(self.path); path, query = parsed.path, parse_qs(parsed.query); directory = self.selected(query)
         if path == "/api/health": return self.send_json({"ok": True, "readOnly": True, "clusterName": cluster()[1]})
         if path == "/api/collections": return self.send_json([{"id": x.name, **metadata(x)} for x in self.directories()])
@@ -1092,6 +1143,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "Rota não encontrada"}, 404)
 
     def do_POST(self):
+        if not self.authenticated(): return
         path = urlparse(self.path).path
         if path not in {"/collect", "/cancel"}:
             return self.send_json({"error": "Rota não encontrada"}, 404)
@@ -1326,10 +1378,13 @@ def utc_iso() -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="127.0.0.1"); parser.add_argument("--port", type=int, default=8765); parser.add_argument("--allow-remote", action="store_true"); args = parser.parse_args()
+    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="127.0.0.1"); parser.add_argument("--port", type=int, default=8765); parser.add_argument("--allow-remote", action="store_true"); parser.add_argument("--access-token", default=""); args = parser.parse_args()
     if args.host not in {"127.0.0.1", "::1", "localhost"} and not args.allow_remote:
         parser.error("non-loopback binding requires explicit --allow-remote")
+    if args.host not in {"127.0.0.1", "::1", "localhost"} and len(args.access_token) < 32:
+        parser.error("non-loopback binding requires an access token with at least 32 characters")
     Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Path(__file__).resolve().parents[1]; Handler.root.mkdir(parents=True, exist_ok=True)
+    Handler.access_token = args.access_token
     if not (Handler.static / "styles.css").is_file():
         parser.error(f"dashboard stylesheet not found: {Handler.static / 'styles.css'}")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
