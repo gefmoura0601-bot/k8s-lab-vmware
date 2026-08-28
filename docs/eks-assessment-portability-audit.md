@@ -1,8 +1,12 @@
 # Auditoria de portabilidade do EKS/Kubernetes Assessment
 
-Data: 2026-08-27
+- Data original: 2026-08-27
+- Última atualização: 2026-08-28
+
 Escopo: `tools/eks-assessment`
 Objetivo: verificar se a implementação sustenta a execução documentada fora do cluster, somente por kubeconfig e APIs autorizadas, em Kubernetes on-premises, Amazon EKS e Kubernetes gerenciado não AWS.
+
+> **Nota histórica:** as seções “Resultado executivo”, “Matriz de achados” e PORT-001 a PORT-016 registram o estado encontrado no início da auditoria. Elas não descrevem o comportamento atual isoladamente. Consulte **Estado atual após remediação**, ao final deste documento, antes de usar um achado como pendência vigente.
 
 ## Resultado executivo
 
@@ -258,14 +262,15 @@ Os testes atuais cobrem regras, redaction pontual, orçamento, fingerprint e can
 
 O item 1 pode ser considerado concluído quando PORT-001 a PORT-013 tiverem correção implementada e teste automatizado, e quando uma nova busca confirmar ausência de dependências de topologia/localização. PORT-014 a PORT-016 são gates para os itens de permissões, validação transacional e release.
 
-## Estado da remediação
+## Estado atual após remediação
 
-Atualização em 2026-08-27:
+Atualização em 2026-08-28:
 
 - PORT-001 a PORT-013: corrigidos na implementação. O namespace é propagado, Secret/ConfigMap não são solicitados, snapshots são sanitizados antes da persistência, falhas de cobertura não viram `N/A`, dashboard é loopback-only, destinos Prometheus são validados, topologia do lab é opt-in, resume valida proveniência e hashes, IDs são aleatórios e o lookback de eventos é aplicado.
 - PORT-014: corrigido com exemplos Kubernetes namespaced/cluster e políticas IAM AWS estritamente read-only em `tools/eks-assessment/deploy`.
 - PORT-015: hardening implementado com timeout global, timeout por componente, cancelamento de grupo de processos, timeout de socket do dashboard, limites de API/resposta e headers defensivos. O teste transacional de carga continua sendo gate operacional antes da release.
-- PORT-016: cobertura automatizada ampliada para 28 testes, incluindo não coleta de recursos sensíveis, falha de discovery, sanitização, proveniência, loopback e SSRF/allowlist. A matriz real on-premises/EKS/gerenciado não AWS continua sendo gate operacional.
+- PORT-016: cobertura automatizada ampliada para 35 testes Python, além dos smoke tests, incluindo não coleta de recursos sensíveis, falha de discovery, sanitização, proveniência, loopback, SSRF/allowlist, cancelamento e progresso da coleta. A matriz real on-premises/EKS/gerenciado não AWS continua sendo gate operacional.
+- Dashboard web: a opção 5 permanece presa à sessão, exige access token quando exposta fora de loopback, trata portas ocupadas sem encerrar processos desconhecidos e mostra progresso percentual baseado nos componentes efetivamente concluídos. Somente `COMPLETED` chega a 100%; falha, cancelamento e timeout mantêm seus estados próprios.
 - Release: versão `0.2.0`, documentação e gerador de pacote com checksum SHA-256 e SBOM SPDX adicionados. A publicação do artefato versionado depende da conclusão dos gates operacionais acima.
 
 Portanto, a auditoria e a remediação estática do item 1 estão concluídas; a prontidão de release ainda depende das validações reais dos itens 3, 4 e 6 da ordem recomendada pelo operador.

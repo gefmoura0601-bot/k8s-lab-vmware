@@ -67,6 +67,19 @@ ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment
 
 Selecione a opção 5 e abra uma das URLs temporárias exibidas. O menu sempre inclui `127.0.0.1` para execução local; em uma sessão SSH, prioriza o IP do servidor informado por `SSH_CONNECTION`; interfaces IPv4 adicionais aparecem como alternativas, com redes típicas de containers filtradas. `DASHBOARD_PUBLIC_HOST=dashboard.empresa.local` define explicitamente o endereço prioritário, sem remover as alternativas, e `DASHBOARD_PORT=8766` altera a porta. Não é necessário túnel SSH quando existe conectividade direta. Se a porta estiver ocupada por outro dashboard do assessment, o menu permite usar a sessão atual, encerrá-la com `SIGTERM` e iniciar outra na mesma porta, ou escolher automaticamente a próxima porta livre. Um processo desconhecido nunca é encerrado: nesse caso, somente uma nova porta ou o retorno ao menu são oferecidos.
 
+## Progresso da coleta web
+
+Ao iniciar **Nova coleta** ou **Novo baseline**, o dashboard mantém a página aberta e apresenta uma barra de progresso baseada nas etapas efetivamente encerradas pelo supervisor. A atualização ocorre automaticamente e informa:
+
+- percentual concluído;
+- componente em execução, como preflight, assessment, discovery, inventários, Prometheus, comprehensive assessment e artifact validation;
+- quantidade de etapas concluídas e total planejado para aquela coleta;
+- limite máximo de tempo restante.
+
+O total planejado é adaptativo: a etapa Prometheus, por exemplo, só participa do cálculo quando uma URL foi configurada. Uma etapa encerrada com erro conta como processada, mas apenas uma coleta com estado final `COMPLETED` chega a 100%. Falhas, cancelamento e timeout preservam o estado final `FAILED`, `CANCELLED` ou `TIMED_OUT` e nunca são apresentados como conclusão bem-sucedida.
+
+A interface consulta `GET /api/collection-status` a cada 750 ms enquanto envia `POST /collect` de forma assíncrona. Se JavaScript estiver indisponível, o envio HTML tradicional continua funcionando como fallback, sem a atualização visual em tempo real. O botão fica desabilitado durante a execução para evitar submissões duplicadas; ao concluir, o navegador abre automaticamente a coleta gerada.
+
 ## Permissões mínimas
 
 Exemplos auditáveis ficam em `deploy/`:
