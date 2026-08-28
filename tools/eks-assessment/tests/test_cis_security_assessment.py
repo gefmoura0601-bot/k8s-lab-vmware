@@ -27,7 +27,7 @@ class CisSecurityAssessmentTests(unittest.TestCase):
             "kind": "Deployment", "metadata": {"namespace": "payments", "name": "api"},
             "spec": {"template": {"spec": {"serviceAccountName": "api", "automountServiceAccountToken": False,
                 "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
-                "containers": [{"name": "api", "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}}]}}},
+                "containers": [{"name": "api", "image": "example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}, "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}}]}}},
         }]}}
         collection = available("roles", "clusterroles", "clusterrolebindings", "networkpolicies")
         return raw, base, collection
@@ -40,7 +40,7 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         self.assertEqual("AWS", report["platform"])
         self.assertEqual(2, len(managed))
         self.assertTrue(all(item["managedResponsibility"] == "CLOUD_PROVIDER" for item in managed))
-        self.assertEqual(8, report["summary"]["scored"])
+        self.assertEqual(15, report["summary"]["scored"])
 
     def test_self_managed_control_plane_never_passes_without_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -66,10 +66,29 @@ class CisSecurityAssessmentTests(unittest.TestCase):
             raw["roles"]["items"] = [{"kind": "Role", "metadata": {"namespace": "payments", "name": "wide"}, "rules": [{"verbs": ["*"], "resources": ["pods"]}]}]
             pod_spec = base["workloads"]["items"][0]["spec"]["template"]["spec"]
             pod_spec["containers"][0]["securityContext"]["privileged"] = True
+            pod_spec["containers"][0]["securityContext"]["allowPrivilegeEscalation"] = True
+            pod_spec["containers"][0]["securityContext"]["readOnlyRootFilesystem"] = False
             report = assess(raw, base, collection, root)
         statuses = {item["controlId"]: item["status"] for item in report["controls"]}
         self.assertEqual("WARN", statuses["cis.k8s.rbac.wildcards"])
         self.assertEqual("WARN", statuses["cis.k8s.pod.privileged"])
+        self.assertEqual("WARN", statuses["cis.k8s.pod.privilege-escalation"])
+        self.assertEqual("WARN", statuses["cis.k8s.pod.read-only-root-filesystem"])
+
+    def test_image_rbac_and_external_service_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); raw, base, collection = self.fixture(root)
+            collection["resources"].update({key: {"state": "AVAILABLE"} for key in ("services", "validatingwebhooks", "mutatingwebhooks", "kyverno_clusterpolicies")})
+            raw.update({"services": {"items": [{"metadata": {"namespace": "payments", "name": "api"}, "spec": {"type": "LoadBalancer"}}]}, "validatingwebhooks": {"items": []}, "mutatingwebhooks": {"items": []}, "kyverno_clusterpolicies": {"items": []}})
+            raw["roles"]["items"] = [{"kind": "Role", "metadata": {"namespace": "payments", "name": "secrets"}, "rules": [{"verbs": ["get"], "resources": ["secrets"]}]}]
+            base["workloads"]["items"][0]["spec"]["template"]["spec"]["containers"][0]["image"] = "example/api:latest"
+            report = assess(raw, base, collection, root)
+        statuses = {item["controlId"]: item["status"] for item in report["controls"]}
+        self.assertEqual("WARN", statuses["cis.k8s.image.latest-tag"])
+        self.assertEqual("WARN", statuses["cis.k8s.image.digest"])
+        self.assertEqual("WARN", statuses["cis.k8s.rbac.secrets"])
+        self.assertEqual("WARN", statuses["cis.k8s.network.external-services"])
+        self.assertEqual("WARN", statuses["cis.k8s.admission.policy-enforcement"])
 
 
 if __name__ == "__main__":

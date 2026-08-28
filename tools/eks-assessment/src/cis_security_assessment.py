@@ -84,6 +84,47 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
     workload_check("cis.k8s.pod.run-as-non-root", "Execução como usuário não root", lambda s: (s.get("securityContext") or {}).get("runAsNonRoot") is not True and any((c.get("securityContext") or {}).get("runAsNonRoot") is not True for c in containers(s)), "Definir runAsNonRoot=true no Pod ou em todos os containers.")
     workload_check("cis.k8s.pod.seccomp", "Perfil seccomp explícito", lambda s: not (s.get("securityContext") or {}).get("seccompProfile") and any(not (c.get("securityContext") or {}).get("seccompProfile") for c in containers(s)), "Definir seccompProfile.type como RuntimeDefault ou Localhost aprovado.")
     workload_check("cis.k8s.service-account.default", "Uso explícito de ServiceAccount", lambda s: (s.get("serviceAccountName") or "default") == "default" and s.get("automountServiceAccountToken") is not False, "Criar ServiceAccount dedicado e desabilitar automount do token quando não necessário.")
+    workload_check("cis.k8s.pod.capabilities", "Capabilities Linux restritas", lambda s: any(set(((c.get("securityContext") or {}).get("capabilities") or {}).get("add") or []) - {"NET_BIND_SERVICE"} for c in containers(s)), "Remover capabilities adicionadas; manter apenas NET_BIND_SERVICE quando formalmente necessário.")
+    workload_check("cis.k8s.pod.privilege-escalation", "Privilege escalation desabilitada", lambda s: any((c.get("securityContext") or {}).get("allowPrivilegeEscalation") is not False for c in containers(s)), "Definir allowPrivilegeEscalation=false em todos os containers.")
+    workload_check("cis.k8s.pod.read-only-root-filesystem", "Root filesystem somente leitura", lambda s: any((c.get("securityContext") or {}).get("readOnlyRootFilesystem") is not True for c in containers(s)), "Definir readOnlyRootFilesystem=true e usar volumes graváveis somente onde necessário.")
+    workload_check("cis.k8s.image.latest-tag", "Imagens sem tag latest ou tag implícita", lambda s: any((lambda image: "@sha256:" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest")))(str(c.get("image") or "")) for c in containers(s)), "Usar versão imutável e evitar latest ou tag implícita.")
+    workload_check("cis.k8s.image.digest", "Imagens fixadas por digest", lambda s: any("@sha256:" not in str(c.get("image") or "") for c in containers(s)), "Fixar imagens aprovadas por digest sha256 e manter processo de atualização controlado.")
+
+    if coverage_available(collection, "services"):
+        exposed = []
+        for service in items(raw.get("services")):
+            if (service.get("spec") or {}).get("type") in {"NodePort", "LoadBalancer"}:
+                meta = service.get("metadata") or {}; exposed.append(f"{meta.get('namespace','default')}/Service/{meta.get('name','unknown')}")
+        controls.append(control("cis.k8s.network.external-services", "Services externos revisados", status="WARN" if exposed else "PASS", evidence={"externalServices": exposed}, recommendation="Confirmar necessidade, controles de entrada, TLS, autenticação e restrição de origem para cada Service externo."))
+    else:
+        controls.append(unavailable("cis.k8s.network.external-services", "Services externos revisados", "KubernetesAPI", "Services indisponíveis"))
+
+    if all(coverage_available(collection, key) for key in ("validatingwebhooks", "mutatingwebhooks", "kyverno_clusterpolicies")):
+        mechanisms = sum(len(items(raw.get(key))) for key in ("validatingwebhooks", "mutatingwebhooks", "kyverno_clusterpolicies"))
+        controls.append(control("cis.k8s.admission.policy-enforcement", "Políticas de admission configuradas", status="PASS" if mechanisms else "WARN", evidence={"mechanisms": mechanisms}, recommendation="Aplicar políticas de admission para requisitos de segurança de Pods e imagens."))
+    else:
+        controls.append(unavailable("cis.k8s.admission.policy-enforcement", "Políticas de admission configuradas", "KubernetesAPI", "Cobertura de admission webhooks/policies incompleta"))
+
+    namespaces = items(base.get("namespaces"))
+    if namespaces:
+        system_namespaces = {"kube-system", "kube-public", "kube-node-lease"}
+        missing_psa = sorted(str((ns.get("metadata") or {}).get("name")) for ns in namespaces if (ns.get("metadata") or {}).get("name") not in system_namespaces and not any(key.startswith("pod-security.kubernetes.io/") for key in ((ns.get("metadata") or {}).get("labels") or {})))
+        controls.append(control("cis.k8s.admission.pod-security", "Pod Security Admission configurado", status="WARN" if missing_psa else "PASS", evidence={"namespacesWithoutPsaLabels": missing_psa}, recommendation="Aplicar labels enforce, audit e warn com versão fixada nos namespaces de aplicação."))
+    else:
+        controls.append(unavailable("cis.k8s.admission.pod-security", "Pod Security Admission configurado", "KubernetesAPI", "Namespaces indisponíveis"))
+
+    if coverage_available(collection, "roles") and coverage_available(collection, "clusterroles"):
+        secret_roles, impersonation_roles = [], []
+        for role in items(raw.get("roles")) + items(raw.get("clusterroles")):
+            meta = role.get("metadata") or {}; ref = f"{role.get('kind','Role')}/{meta.get('namespace','-')}/{meta.get('name','unknown')}"
+            rules = role.get("rules") or []
+            if any("secrets" in (rule.get("resources") or []) and set(rule.get("verbs") or []) & {"get", "list", "watch", "*"} for rule in rules): secret_roles.append(ref)
+            if any("impersonate" in (rule.get("verbs") or []) or "*" in (rule.get("verbs") or []) and set(rule.get("resources") or []) & {"users", "groups", "serviceaccounts"} for rule in rules): impersonation_roles.append(ref)
+        controls.append(control("cis.k8s.rbac.secrets", "Leitura de Secrets restrita", status="WARN" if secret_roles else "PASS", evidence={"roles": secret_roles[:100]}, recommendation="Conceder leitura de Secrets somente a identidades e namespaces indispensáveis."))
+        controls.append(control("cis.k8s.rbac.impersonation", "Impersonation restrita", status="WARN" if impersonation_roles else "PASS", evidence={"roles": impersonation_roles[:100]}, recommendation="Remover impersonate e wildcards de identidades não administrativas."))
+    else:
+        controls.append(unavailable("cis.k8s.rbac.secrets", "Leitura de Secrets restrita", "KubernetesAPI", "Roles ou ClusterRoles indisponíveis"))
+        controls.append(unavailable("cis.k8s.rbac.impersonation", "Impersonation restrita", "KubernetesAPI", "Roles ou ClusterRoles indisponíveis"))
 
     if coverage_available(collection, "networkpolicies"):
         workload_namespaces = {ns for ns, _name, _kind, _spec in specs}

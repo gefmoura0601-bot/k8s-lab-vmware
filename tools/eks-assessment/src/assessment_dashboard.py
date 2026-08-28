@@ -958,18 +958,39 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.layout("AWS / EKS", body, directory, "aws")
 
-    def cis_security(self, directory: Path | None) -> str:
+    def cis_security(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory:
             return self.overview(None)
         report = details(directory).get("cisSecurity") or {}
         if not report:
             return self.layout("CIS Security", '<h1>CIS Security</h1><div class="message">Esta coleta é anterior à geração do artefato CIS Security. Execute uma nova coleta.</div>', directory, "cis")
         summary = report.get("summary") or {}
-        rows = []
-        for item in report.get("controls") or []:
-            evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, sort_keys=True)
-            rows.append({**item, "evidenceText": evidence[:800] + ("..." if len(evidence) > 800 else "")})
+        controls = report.get("controls") or []
+        filters = {key: query.get(key, [""])[0] for key in ("status", "applicability", "responsibility", "source")}
+        search = query.get("search", [""])[0].lower().strip()
+        rows = [item for item in controls if all(not value or str(item.get({"responsibility": "managedResponsibility", "source": "evidenceSource"}.get(key, key), "")) == value for key, value in filters.items()) and (not search or search in json.dumps(item, ensure_ascii=False).lower())]
+        def select(name: str, label: str, values: list[str]) -> str:
+            options = ''.join(f'<option value="{esc(value)}" {"selected" if filters[name] == value else ""}>{esc(value)}</option>' for value in values)
+            return f'<label>{label}<select name="{name}"><option value="">Todos</option>{options}</select></label>'
+        filter_form = (
+            f'<form class="filters"><input type="hidden" name="collection" value="{esc(directory.name)}">'
+            f'{select("status", "Status", sorted({str(x.get("status")) for x in controls}))}'
+            f'{select("applicability", "Aplicabilidade", sorted({str(x.get("applicability")) for x in controls}))}'
+            f'{select("responsibility", "Responsabilidade", sorted({str(x.get("managedResponsibility")) for x in controls}))}'
+            f'{select("source", "Evidence Source", sorted({str(x.get("evidenceSource")) for x in controls}))}'
+            f'<input name="search" value="{esc(query.get("search", [""])[0])}" placeholder="Control ID, controle, evidência ou recomendação"><button>Filtrar</button>'
+            f'<a class="button" href="/cis-security?collection={quote_plus(directory.name)}">Limpar</a></form>'
+        )
+        control_cards = []
+        for item in rows:
+            evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, indent=2, sort_keys=True)
+            control_cards.append(
+                f'<details class="cis-control {esc(str(item.get("status", "UNKNOWN")))}"><summary><span><b>{esc(item.get("controlId"))}</b> — {esc(item.get("title"))}</span><span class="metric-status {esc(str(item.get("status", "UNKNOWN")).lower())}">{esc(item.get("status"))}</span></summary>'
+                f'<div class="cis-meta"><span>Aplicabilidade: <b>{esc(item.get("applicability"))}</b></span><span>Responsabilidade: <b>{esc(item.get("managedResponsibility"))}</b></span><span>Fonte: <b>{esc(item.get("evidenceSource"))}</b></span><span>Modo: <b>{esc(item.get("assessmentMode"))}</b></span></div>'
+                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre><h3>Recomendação</h3><p>{esc(item.get("recommendation"))}</p></details>'
+            )
         score = summary.get("scorePercent")
+        controls_html = "".join(control_cards) if control_cards else '<div class="message">Nenhum controle corresponde aos filtros.</div>'
         facts = (
             '<div class="facts">'
             f'<div><small>Plataforma</small><b>{esc(report.get("platform", "UNKNOWN"))}</b></div>'
@@ -977,14 +998,17 @@ class Handler(BaseHTTPRequestHandler):
             f'<div><small>Avaliados no score</small><b>{summary.get("scored", 0)}</b></div>'
             f'<div><small>PASS</small><b>{summary.get("passed", 0)}</b></div>'
             f'<div><small>WARN</small><b>{summary.get("warnings", 0)}</b></div>'
+            f'<div><small>Managed Provider</small><b>{(summary.get("applicability") or {}).get("MANAGED_PROVIDER", 0)}</b></div>'
+            f'<div><small>Manual Review</small><b>{(summary.get("applicability") or {}).get("MANUAL_REVIEW", 0)}</b></div>'
+            f'<div><small>Evidence Unavailable</small><b>{(summary.get("applicability") or {}).get("EVIDENCE_UNAVAILABLE", 0)}</b></div>'
             f'<div><small>Score evidenciável</small><b>{esc(str(score) + "%" if score is not None else "N/A")}</b></div>'
             '</div>'
         )
         body = (
             f'<h1>CIS Security</h1><div class="message warn"><b>{esc(report.get("notice"))}</b> '
             'Controles gerenciados pelo provider, revisões manuais e evidência indisponível não reduzem artificialmente o score.</div>'
-            f'{facts}<h2>Controles por evidência e responsabilidade</h2>'
-            f'{table(rows, [("controlId","Control ID"),("title","Controle"),("evidenceSource","Evidence Source"),("applicability","Aplicabilidade"),("assessmentMode","Modo"),("managedResponsibility","Responsabilidade"),("status","Status"),("evidenceText","Evidência"),("recommendation","Recomendação")])}'
+            f'{facts}<div class="cis-actions"><a class="button" href="/export-cis?collection={quote_plus(directory.name)}">Exportar relatório CIS JSON</a></div>'
+            f'<h2>Controles por evidência e responsabilidade <small>{len(rows)} resultado(s)</small></h2>{filter_form}{controls_html}'
         )
         return self.layout("CIS Security", body, directory, "cis")
 
@@ -1160,7 +1184,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/capacity": return self.send_html(self.capacity(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
-        if path == "/cis-security": return self.send_html(self.cis_security(directory))
+        if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
         if path == "/coverage": return self.send_html(self.coverage(directory))
         if path == "/api-inventory": return self.send_html(self.api_inventory(directory, query))
         if path == "/compare": return self.send_html(self.compare(directory, query))
@@ -1168,6 +1192,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/export":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(details(directory), filename=f"{directory.name}.json")
+        if path == "/export-cis":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = details(directory).get("cisSecurity") or {}
+            if not report: return self.send_json({"error": "Relatório CIS não disponível para esta coleta"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-cis-security.json")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")

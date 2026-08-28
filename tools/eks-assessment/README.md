@@ -113,7 +113,9 @@ Cada controle registra `evidenceSource`, `applicability`, `assessmentMode`, `man
 
 A responsabilidade é `CUSTOMER`, `CLOUD_PROVIDER` ou `SHARED`. O score inclui somente controles automatizados, aplicáveis e atribuídos ao cliente ou de responsabilidade compartilhada. Controles gerenciados pelo provider, manuais ou sem evidência não contam como `PASS` e não reduzem artificialmente o score.
 
-A primeira versão automatiza evidências universais de RBAC wildcard, bindings `cluster-admin`, containers privilegiados, namespaces do host, `runAsNonRoot`, seccomp, uso do default ServiceAccount e cobertura de NetworkPolicy. Em EKS, AKS e GKE, kube-apiserver e etcd aparecem como `MANAGED_PROVIDER`; em self-managed, ficam `EVIDENCE_UNAVAILABLE` até que evidência autorizada seja fornecida. Nenhuma regra exige SSH, `/etc/kubernetes`, filesystem do node ou acesso direto ao control plane.
+A cobertura automatizada inicial inclui RBAC wildcard, bindings `cluster-admin`, leitura de Secrets, impersonation, containers privilegiados, capabilities, privilege escalation, namespaces do host, `runAsNonRoot`, seccomp, root filesystem somente leitura, default ServiceAccount, tags e digests de imagens, Services externos, NetworkPolicy, admission policies e Pod Security Admission. Em EKS, AKS e GKE, kube-apiserver e etcd aparecem como `MANAGED_PROVIDER`; em self-managed, ficam `EVIDENCE_UNAVAILABLE` até que evidência autorizada seja fornecida. Nenhuma regra exige SSH, `/etc/kubernetes`, filesystem do node ou acesso direto ao control plane.
+
+A interface oferece filtros por status, aplicabilidade, responsabilidade, Evidence Source e texto livre. Cada controle é expansível para mostrar evidência sanitizada e recomendação. Cards separados destacam `MANAGED_PROVIDER`, `MANUAL_REVIEW` e `EVIDENCE_UNAVAILABLE`. A opção **Exportar relatório CIS JSON** baixa somente o relatório CIS da coleta selecionada.
 
 O relatório estruturado é gravado em `cis-security-assessment.json` e também referenciado por `comprehensive-assessment.json`.
 
