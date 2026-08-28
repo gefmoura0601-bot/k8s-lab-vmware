@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 CIS_REFERENCE = "https://www.cisecurity.org/benchmark/kubernetes"
+DOMAIN_LABELS = {
+    "rbac": "RBAC e identidade", "service-account": "RBAC e identidade",
+    "pod": "Pod Security", "image": "Supply Chain", "network": "Network Security",
+    "admission": "Admission Control", "control-plane": "Control Plane", "node": "Nodes",
+}
+HIGH_RISK = {"cis.k8s.rbac.wildcards", "cis.k8s.rbac.cluster-admin", "cis.k8s.rbac.impersonation", "cis.k8s.pod.privileged", "cis.k8s.pod.host-namespaces"}
+MEDIUM_RISK = {"cis.k8s.rbac.secrets", "cis.k8s.pod.capabilities", "cis.k8s.pod.privilege-escalation", "cis.k8s.image.digest", "cis.k8s.network.external-services", "cis.k8s.admission.policy-enforcement"}
 
 
 def items(value: Any) -> list[dict[str, Any]]:
@@ -46,6 +53,85 @@ def unavailable(control_id: str, title: str, source: str, reason: str) -> dict[s
 
 def coverage_available(collection: dict[str, Any], key: str) -> bool:
     return ((collection.get("resources") or {}).get(key) or {}).get("state") == "AVAILABLE"
+
+
+def enrich_control(value: dict[str, Any]) -> dict[str, Any]:
+    control_id = str(value.get("controlId") or "")
+    segment = control_id.split(".")[2] if len(control_id.split(".")) > 2 else "other"
+    weight = 3 if control_id in HIGH_RISK else 2 if control_id in MEDIUM_RISK else 1
+    effort = "HIGH" if segment in {"control-plane", "node"} else "MEDIUM" if segment in {"rbac", "admission", "network"} else "LOW"
+    validation = {
+        "rbac": "kubectl get roles,rolebindings,clusterroles,clusterrolebindings -A -o json",
+        "service-account": "kubectl get serviceaccounts,pods -A -o json",
+        "pod": "kubectl get deployments,statefulsets,daemonsets,jobs,cronjobs,pods -A -o json",
+        "image": "kubectl get deployments,statefulsets,daemonsets,jobs,cronjobs,pods -A -o json",
+        "network": "kubectl get networkpolicies,services -A -o json",
+        "admission": "kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o json",
+        "control-plane": "Revisar evidência read-only do provider ou configuração sanitizada do control plane",
+        "node": "Revisar evidência sanitizada e autorizada da configuração do kubelet",
+    }.get(segment, "kubectl api-resources --verbs=list")
+    value.update({
+        "domain": DOMAIN_LABELS.get(segment, "Kubernetes Security"), "riskWeight": weight,
+        "priority": ("P0" if weight == 3 else "P1" if weight == 2 else "P2") if value.get("status") == "WARN" else "NONE",
+        "effort": effort, "impact": "HIGH" if weight == 3 else "MEDIUM" if weight == 2 else "LOW",
+        "validationCommand": validation,
+        "remediationExample": "Exemplo declarativo para revisão: ajuste o manifest/policy correspondente; não execute apply sem change review e testes.",
+    })
+    return value
+
+
+def summarize(controls: list[dict[str, Any]]) -> dict[str, Any]:
+    scored = [c for c in controls if c["applicability"] == "APPLICABLE" and c["assessmentMode"] == "AUTOMATED" and c["managedResponsibility"] in {"CUSTOMER", "SHARED"}]
+    customer_relevant = [c for c in controls if c["managedResponsibility"] in {"CUSTOMER", "SHARED"} and c["applicability"] not in {"NOT_APPLICABLE", "MANAGED_PROVIDER"}]
+    passed_weight = sum(int(c["riskWeight"]) for c in scored if c["status"] == "PASS")
+    total_weight = sum(int(c["riskWeight"]) for c in scored)
+    domains = []
+    for domain in sorted({str(c["domain"]) for c in controls}):
+        domain_controls = [c for c in scored if c["domain"] == domain]
+        domain_total = sum(int(c["riskWeight"]) for c in domain_controls)
+        domain_pass = sum(int(c["riskWeight"]) for c in domain_controls if c["status"] == "PASS")
+        domains.append({"domain": domain, "controls": len(domain_controls), "passed": sum(c["status"] == "PASS" for c in domain_controls), "scorePercent": round(domain_pass * 100 / domain_total) if domain_total else None})
+    return {
+        "controls": len(controls), "scored": len(scored), "passed": sum(c["status"] == "PASS" for c in scored),
+        "warnings": sum(c["status"] == "WARN" for c in scored),
+        "scorePercent": round(sum(c["status"] == "PASS" for c in scored) * 100 / len(scored)) if scored else None,
+        "postureScorePercent": round(passed_weight * 100 / total_weight) if total_weight else None,
+        "evidenceCoveragePercent": round(len(scored) * 100 / len(customer_relevant)) if customer_relevant else None,
+        "weightedPoints": {"passed": passed_weight, "total": total_weight}, "domains": domains,
+        "applicability": dict(Counter(c["applicability"] for c in controls)), "responsibility": dict(Counter(c["managedResponsibility"] for c in controls)),
+    }
+
+
+def compare_reports(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    old = {str(c.get("controlId")): c for c in before.get("controls", [])}
+    new = {str(c.get("controlId")): c for c in after.get("controls", [])}
+    changes = []
+    for control_id in sorted(old.keys() | new.keys()):
+        previous, current = old.get(control_id), new.get(control_id)
+        if previous is None:
+            kind = "NEW_CONTROL"
+        elif current is None:
+            kind = "REMOVED_CONTROL"
+        elif previous.get("applicability") == "APPLICABLE" and current.get("applicability") in {"EVIDENCE_UNAVAILABLE", "MANUAL_REVIEW"}:
+            kind = "EVIDENCE_LOSS"
+        elif previous.get("applicability") in {"EVIDENCE_UNAVAILABLE", "MANUAL_REVIEW"} and current.get("applicability") == "APPLICABLE":
+            kind = "COVERAGE_GAIN"
+        elif previous.get("status") == "WARN" and current.get("status") == "PASS":
+            kind = "RESOLVED"
+        elif previous.get("status") == "PASS" and current.get("status") == "WARN":
+            kind = "REGRESSION"
+        elif previous.get("applicability") != current.get("applicability") or previous.get("managedResponsibility") != current.get("managedResponsibility"):
+            kind = "RESPONSIBILITY_CHANGE"
+        elif previous.get("status") != current.get("status"):
+            kind = "STATUS_CHANGE"
+        else:
+            continue
+        item = current or previous or {}
+        changes.append({"controlId": control_id, "title": item.get("title"), "domain": item.get("domain"), "change": kind, "beforeStatus": (previous or {}).get("status"), "afterStatus": (current or {}).get("status"), "beforeApplicability": (previous or {}).get("applicability"), "afterApplicability": (current or {}).get("applicability")})
+    old_summary, new_summary = before.get("summary") or {}, after.get("summary") or {}
+    old_posture = old_summary.get("postureScorePercent", old_summary.get("scorePercent")) or 0
+    new_posture = new_summary.get("postureScorePercent", new_summary.get("scorePercent")) or 0
+    return {"before": old_summary, "after": new_summary, "postureDelta": new_posture - old_posture, "coverageDelta": (new_summary.get("evidenceCoveragePercent") or 0) - (old_summary.get("evidenceCoveragePercent") or 0), "counts": dict(Counter(c["change"] for c in changes)), "changes": changes}
 
 
 def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any], directory: Path,
@@ -153,13 +239,12 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
         recommendation="Fornecer evidência sanitizada e autorizada da configuração do kubelet ou registrar revisão manual.",
     ))
 
-    scored = [c for c in controls if c["applicability"] == "APPLICABLE" and c["assessmentMode"] == "AUTOMATED" and c["managedResponsibility"] in {"CUSTOMER", "SHARED"}]
-    passed = sum(c["status"] == "PASS" for c in scored)
+    controls = [enrich_control(item) for item in controls]
     return {
-        "schemaVersion": "1.0", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True,
+        "schemaVersion": "1.1", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True,
         "notice": "Avaliação de postura baseada no CIS. Não representa certificação nem compliance integral.",
         "benchmarkReference": {"family": "CIS Kubernetes Benchmarks", "genericVersion": "2.0.1", "providerVersion": "2.0.0", "url": CIS_REFERENCE},
-        "platform": provider, "summary": {"controls": len(controls), "scored": len(scored), "passed": passed, "warnings": sum(c["status"] == "WARN" for c in scored), "scorePercent": round(passed * 100 / len(scored)) if scored else None, "applicability": dict(Counter(c["applicability"] for c in controls)), "responsibility": dict(Counter(c["managedResponsibility"] for c in controls))},
+        "platform": provider, "summary": summarize(controls),
         "controls": controls,
     }
 

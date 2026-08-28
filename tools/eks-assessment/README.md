@@ -117,6 +117,10 @@ A cobertura automatizada inicial inclui RBAC wildcard, bindings `cluster-admin`,
 
 A interface oferece filtros por status, aplicabilidade, responsabilidade, Evidence Source e texto livre. Cada controle é expansível para mostrar evidência sanitizada e recomendação. Cards separados destacam `MANAGED_PROVIDER`, `MANUAL_REVIEW` e `EVIDENCE_UNAVAILABLE`. A opção **Exportar relatório CIS JSON** baixa somente o relatório CIS da coleta selecionada.
 
+O dashboard separa **Posture Score** de **Evidence Coverage**. O primeiro pondera controles comprovados por risco e apresenta score por domínio; o segundo mostra a proporção da responsabilidade do cliente que possui evidência automatizada suficiente. Perder acesso a uma API pode reduzir Evidence Coverage, mas nunca é apresentado como melhoria de postura.
+
+O plano de ação ordena controles `WARN` por prioridade, impacto e esforço. Cada item inclui recomendação, comando read-only para nova validação e exemplo declarativo de remediação que não é aplicado automaticamente. A comparação CIS entre duas coletas classifica `REGRESSION`, `RESOLVED`, `EVIDENCE_LOSS`, `COVERAGE_GAIN`, mudanças de responsabilidade/aplicabilidade e controles adicionados ou removidos.
+
 O relatório estruturado é gravado em `cis-security-assessment.json` e também referenciado por `comprehensive-assessment.json`.
 
 ## Limites e cancelamento

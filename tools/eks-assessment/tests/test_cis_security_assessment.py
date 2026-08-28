@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cis_security_assessment import assess
+from cis_security_assessment import assess, compare_reports
 
 
 def available(*keys: str) -> dict:
@@ -59,6 +59,9 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         self.assertEqual("GENERIC", report["platform"])
         self.assertFalse(any("aws" in item["controlId"] for item in report["controls"]))
         self.assertEqual(100, report["summary"]["scorePercent"])
+        self.assertEqual(100, report["summary"]["postureScorePercent"])
+        self.assertLess(report["summary"]["evidenceCoveragePercent"], 100)
+        self.assertTrue(report["summary"]["domains"])
 
     def test_risky_workload_and_wildcard_rbac_warn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -89,6 +92,24 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         self.assertEqual("WARN", statuses["cis.k8s.rbac.secrets"])
         self.assertEqual("WARN", statuses["cis.k8s.network.external-services"])
         self.assertEqual("WARN", statuses["cis.k8s.admission.policy-enforcement"])
+
+    def test_comparison_separates_regression_resolution_and_evidence_loss(self) -> None:
+        base = {"summary": {"postureScorePercent": 50, "evidenceCoveragePercent": 100}, "controls": [
+            {"controlId": "pass-to-warn", "status": "PASS", "applicability": "APPLICABLE", "managedResponsibility": "CUSTOMER"},
+            {"controlId": "warn-to-pass", "status": "WARN", "applicability": "APPLICABLE", "managedResponsibility": "CUSTOMER"},
+            {"controlId": "lost", "status": "PASS", "applicability": "APPLICABLE", "managedResponsibility": "CUSTOMER"},
+        ]}
+        current = {"summary": {"postureScorePercent": 60, "evidenceCoveragePercent": 67}, "controls": [
+            {"controlId": "pass-to-warn", "status": "WARN", "applicability": "APPLICABLE", "managedResponsibility": "CUSTOMER"},
+            {"controlId": "warn-to-pass", "status": "PASS", "applicability": "APPLICABLE", "managedResponsibility": "CUSTOMER"},
+            {"controlId": "lost", "status": "UNKNOWN", "applicability": "EVIDENCE_UNAVAILABLE", "managedResponsibility": "CUSTOMER"},
+        ]}
+        result = compare_reports(base, current)
+        self.assertEqual(1, result["counts"]["REGRESSION"])
+        self.assertEqual(1, result["counts"]["RESOLVED"])
+        self.assertEqual(1, result["counts"]["EVIDENCE_LOSS"])
+        self.assertEqual(10, result["postureDelta"])
+        self.assertEqual(-33, result["coverageDelta"])
 
 
 if __name__ == "__main__":
