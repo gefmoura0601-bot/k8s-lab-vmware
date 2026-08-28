@@ -29,6 +29,18 @@ jobs:
         run: npm run test
       - working-directory: app/banking-web
         run: npm run build
+      - name: Validate reverse-proxy redirect
+        shell: bash
+        run: |
+          docker build -t banking-web:redirect-test app/banking-web
+          container="$(docker run -d -p 127.0.0.1::8080 banking-web:redirect-test)"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          port="$(docker port "$container" 8080/tcp | sed 's/.*://')"
+          for attempt in {1..20}; do
+            location="$(curl -sS -D - -o /dev/null "http://127.0.0.1:${port}/" | awk 'BEGIN{IGNORECASE=1} /^Location:/{gsub("\\r", ""); print $2}')" && break
+            sleep 0.25
+          done
+          test "$location" = "/banking/"
 
   publish:
     if: github.event_name != 'pull_request' && github.actor != 'github-actions[bot]'
