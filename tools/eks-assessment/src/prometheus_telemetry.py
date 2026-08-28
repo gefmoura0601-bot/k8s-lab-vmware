@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import math
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -15,7 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 WINDOWS = {"1d": 300, "3d": 600, "7d": 900, "14d": 1800, "30d": 3600}
 MAX_ROLE_CANDIDATES = 6
@@ -327,7 +329,29 @@ def validate_url(value: str) -> str:
         raise TelemetryError("Prometheus URL must not include credentials")
     if parsed.query or parsed.fragment:
         raise TelemetryError("Prometheus URL must not include query or fragment")
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    if hostname in {"localhost", "metadata.google.internal"}:
+        raise TelemetryError("Prometheus URL resolves to a prohibited local or metadata host")
+    allowed = {item.strip().lower() for item in os.getenv("PROMETHEUS_ALLOWED_HOSTS", "").split(",") if item.strip()}
+    if allowed and hostname not in allowed:
+        raise TelemetryError("Prometheus host is not present in PROMETHEUS_ALLOWED_HOSTS")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)}
+    except socket.gaierror as error:
+        raise TelemetryError(f"Prometheus hostname cannot be resolved: {error}") from error
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            raise TelemetryError("Prometheus URL resolves to a prohibited local, link-local or reserved address")
     return value.rstrip("/")
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        raise HTTPError(newurl, code, "Prometheus redirects are disabled", headers, fp)
+
+
+HTTP_OPENER = build_opener(NoRedirect)
 
 
 def get_json(
@@ -344,7 +368,7 @@ def get_json(
     )
     for attempt in range(3):
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with HTTP_OPENER.open(request, timeout=timeout) as response:
                 if response.status != 200:
                     raise TelemetryError(f"Prometheus returned HTTP {response.status}")
                 payload = response.read(64 * 1024 * 1024 + 1)
@@ -1301,6 +1325,7 @@ def main() -> int:
         description="Read-only Prometheus telemetry with automatic metric/label discovery"
     )
     parser.add_argument("--url", default=os.getenv("PROMETHEUS_URL", ""))
+    parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
         "--window",
         choices=WINDOWS,
@@ -1320,6 +1345,15 @@ def main() -> int:
         default=int(os.getenv("PROMETHEUS_WORKERS", "3")),
     )
     args = parser.parse_args()
+
+    if args.validate_only:
+        try:
+            validated = validate_url(args.url)
+        except TelemetryError as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        print(json.dumps({"valid": True, "url": validated}, ensure_ascii=False))
+        return 0
 
     if not args.url:
         print(

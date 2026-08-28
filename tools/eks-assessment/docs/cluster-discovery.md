@@ -12,8 +12,8 @@ Kyverno and Prometheus when they are present; no fixed laboratory topology is as
 
 The script uses only `kubectl get`, `kubectl version`, `kubectl cluster-info`
 and one read-only metrics API request. It never applies, patches, deletes,
-restarts, scales or reads Secret values. Secret reporting is limited to name,
-namespace, type, creation date and key names.
+restarts or scales. Secret and ConfigMap objects are not requested by the
+default profile.
 
 The execution host only needs an authorised kubeconfig and network access to the
 Kubernetes API. It may be a workstation, bastion, CI/CD runner or operational

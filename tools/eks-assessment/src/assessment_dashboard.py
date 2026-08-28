@@ -20,6 +20,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from assessment_process_supervisor import CollectionSupervisor
+from eks_comprehensive_assessment import sanitize_snapshot_tree
+from localization_pt_br import localize_finding
 
 LOCK = threading.Lock()
 SUPERVISOR = CollectionSupervisor()
@@ -293,6 +295,7 @@ def details(directory: Path) -> dict:
     resources = inventory(directory)
     findings = comprehensive.get("findings") or basic_findings(directory, resources)
     findings = sorted(findings, key=lambda x: (SEVERITY_ORDER.get(x.get("severity", "INFO"), 9), x.get("category", ""), x.get("namespace", ""), x.get("workload", "")))
+    findings = [localize_finding(item) for item in findings]
     phases = Counter(x.get("phase") for x in resources["pods"])
     rabbit = next((x for x in resources["statefulsets"] if "rabbit" in x["name"].lower()), None)
     scanner_summary = comprehensive.get("summary") or {}
@@ -304,6 +307,16 @@ class Handler(BaseHTTPRequestHandler):
     root: Path
     static: Path
     repository: Path
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)
+
+    def security_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
     def log_message(self, fmt, *args):
         sys.stdout.write(f"{self.address_string()} - {fmt % args}\n")
@@ -320,11 +333,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_html(self, value: str, status: int = 200):
         data = value.encode("utf-8")
-        self.send_response(status); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(data)
+        self.send_response(status); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.security_headers(); self.end_headers(); self.wfile.write(data)
 
     def send_json(self, value, status: int = 200, filename: str | None = None):
         data = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store")
+        self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.security_headers()
         if filename: self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers(); self.wfile.write(data)
 
@@ -1148,7 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
                     503,
                 )
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            ident = f"eks-{stamp}-{phase}-{label}"
+            ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"
             output = self.root / ident
             output.mkdir(parents=True)
             max_duration = int(profile_values["duration"])
@@ -1178,21 +1191,26 @@ class Handler(BaseHTTPRequestHandler):
             components: list[str] = ["preflight"]
             runs = [
                 ("assessment", "assessment.log", ["bash", str(self.repository / "src/assess-eks.sh")], 900),
-                ("discovery", "discovery.log", ["bash", str(self.repository / "src/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"], 1200),
+                ("discovery", "discovery.log", ["bash", str(self.repository / "src/eks-cluster-discovery.sh"), "--output-dir", str(output / "discovery"), "--combined-report"] + (["--namespace", namespace] if namespace else []), 1200),
             ]
             for component, logfile, args, timeout in runs:
                 result = SUPERVISOR.run(component, args, cwd=self.repository, env=env, timeout=timeout)
                 (output / logfile).write_text(result.stdout + result.stderr, encoding="utf-8")
                 components.append(component)
                 codes.append(result.returncode)
+            inventory_scope = ["-n", namespace] if namespace else ["-A"]
             for filename, args in {
-                "services.json": ["kubectl", "get", "services", "-A", "-o", "json"],
-                "pvcs.json": ["kubectl", "get", "pvc", "-A", "-o", "json"],
-                "hpas.json": ["kubectl", "get", "hpa", "-A", "-o", "json"],
+                "services.json": ["kubectl", "get", "services", *inventory_scope, "-o", "json"],
+                "pvcs.json": ["kubectl", "get", "pvc", *inventory_scope, "-o", "json"],
+                "hpas.json": ["kubectl", "get", "hpa", *inventory_scope, "-o", "json"],
             }.items():
                 result = SUPERVISOR.run(f"inventory-{filename}", args, timeout=120)
+                try:
+                    inventory_payload = json.loads(result.stdout) if result.returncode == 0 else {"items": []}
+                except json.JSONDecodeError:
+                    inventory_payload = {"items": []}
                 (output / filename).write_text(
-                    result.stdout if result.returncode == 0 else '{"items":[]}',
+                    json.dumps(sanitize_snapshot_tree(inventory_payload), ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
             window = form.get("prometheus_window", [os.environ.get("PROMETHEUS_WINDOW", "7d")])[0]
@@ -1308,11 +1326,14 @@ def utc_iso() -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="0.0.0.0"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
+    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="127.0.0.1"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
+    if args.host not in {"127.0.0.1", "::1", "localhost"}:
+        parser.error("the built-in dashboard is loopback-only; use an authenticated TLS reverse proxy or approved tunnel")
     Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Path(__file__).resolve().parents[1]; Handler.root.mkdir(parents=True, exist_ok=True)
     if not (Handler.static / "styles.css").is_file():
         parser.error(f"dashboard stylesheet not found: {Handler.static / 'styles.css'}")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.timeout = 5
     server.daemon_threads = True
 
     def shutdown_signal(_signum, _frame):

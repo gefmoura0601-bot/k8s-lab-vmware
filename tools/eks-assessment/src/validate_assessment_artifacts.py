@@ -105,7 +105,7 @@ def main() -> int:
                 errors.append("free-form event message persisted")
     secrets = root / "secrets-metadata.json"
     if secrets.is_file():
-        walk(parse(secrets, errors), secrets.name, errors)
+        errors.append("secret metadata artifact must not be produced")
     report = documents.get("comprehensive-assessment.json", {})
     if report.get("readOnly") is not True or (report.get("safety") or {}).get("mutations") != 0:
         errors.append("read-only safety invariant missing")

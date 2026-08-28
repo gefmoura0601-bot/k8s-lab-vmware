@@ -3,8 +3,10 @@
 set -uo pipefail
 
 REQUEST_TIMEOUT="${ASSESSMENT_PREFLIGHT_TIMEOUT:-10s}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMETHEUS_URL="${PROMETHEUS_URL:-}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
+ASSESSMENT_NAMESPACE="${ASSESSMENT_NAMESPACE:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 passed=0
 warnings=0
@@ -93,10 +95,16 @@ check_optional_access() {
 }
 
 if ((api_ready == 1)); then
-  check_required_access get nodes
-  check_required_access list namespaces
-  check_required_access list pods --all-namespaces
-  check_required_access list deployments.apps --all-namespaces
+  check_optional_access get nodes
+  if [[ -n "$ASSESSMENT_NAMESPACE" ]]; then
+    check_required_access list pods -n "$ASSESSMENT_NAMESPACE"
+    check_required_access list deployments.apps -n "$ASSESSMENT_NAMESPACE"
+    check_optional_access get "namespace/$ASSESSMENT_NAMESPACE"
+  else
+    check_required_access list namespaces
+    check_required_access list pods --all-namespaces
+    check_required_access list deployments.apps --all-namespaces
+  fi
   check_optional_access list customresourcedefinitions.apiextensions.k8s.io
   check_optional_access list clusterroles.rbac.authorization.k8s.io
   check_optional_access list storageclasses.storage.k8s.io
@@ -107,11 +115,26 @@ if ((api_ready == 1)); then
   fi
 fi
 
-if [[ -n "$EKS_CLUSTER_NAME" || "$context" =~ arn:[^:]+:eks:[^:]+:[0-9]+:cluster/ || "$cluster_ref" =~ arn:[^:]+:eks:[^:]+:[0-9]+:cluster/ ]]; then
+detected_eks_cluster="$EKS_CLUSTER_NAME"
+detected_eks_region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+for eks_reference in "$cluster_ref" "$context"; do
+  if [[ -z "$detected_eks_cluster" && "$eks_reference" =~ arn:[^:]+:eks:([^:]+):[0-9]+:cluster/(.+)$ ]]; then
+    detected_eks_region="${detected_eks_region:-${BASH_REMATCH[1]}}"
+    detected_eks_cluster="${BASH_REMATCH[2]}"
+  fi
+done
+if [[ -n "$detected_eks_cluster" ]]; then
   ok "Plataforma" "Amazon EKS identificado; enriquecimento AWS é opcional"
   if command -v aws >/dev/null 2>&1; then
     if AWS_PAGER="" timeout --signal=TERM 15s aws sts get-caller-identity --output json >/dev/null 2>&1; then
-      ok "AWS" "credenciais read-only utilizáveis"
+      ok "AWS identidade" "credenciais válidas; permissões de serviço são verificadas separadamente"
+      eks_preflight_args=(eks describe-cluster --name "$detected_eks_cluster" --output json --no-cli-pager)
+      [[ -n "$detected_eks_region" ]] && eks_preflight_args+=(--region "$detected_eks_region")
+      if AWS_PAGER="" timeout --signal=TERM 20s aws "${eks_preflight_args[@]}" >/dev/null 2>&1; then
+        ok "AWS EKS" "eks:DescribeCluster disponível"
+      else
+        warning "AWS EKS" "eks:DescribeCluster indisponível; cobertura AWS/EKS ficará PARTIAL"
+      fi
     else
       warning "AWS" "CLI disponível, mas identidade/endpoint AWS está indisponível"
     fi
@@ -129,6 +152,8 @@ if [[ -n "$PROMETHEUS_URL" ]]; then
     failure "Prometheus" "URL deve usar HTTP ou HTTPS"
   elif [[ "$authority" == *@* || "$PROMETHEUS_URL" == *"?"* || "$PROMETHEUS_URL" == *"#"* ]]; then
     failure "Prometheus" "credenciais, query string e fragmento não são aceitos na URL"
+  elif ! "$PYTHON_BIN" "$SCRIPT_DIR/prometheus_telemetry.py" --url "$PROMETHEUS_URL" --validate-only >/dev/null 2>&1; then
+    failure "Prometheus" "destino não permitido, não resolvível ou fora da allowlist"
   elif curl --fail --silent --show-error --max-time 10 --request GET -- "${PROMETHEUS_URL%/}/api/v1/status/runtimeinfo" >/dev/null 2>&1; then
     ok "Prometheus" "endpoint explícito acessível por HTTP GET"
   else

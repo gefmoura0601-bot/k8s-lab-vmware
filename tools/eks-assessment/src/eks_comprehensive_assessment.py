@@ -91,8 +91,6 @@ RESOURCE_SPECS: dict[str, tuple[str, tuple[str, ...], bool]] = {
     "storageclasses": ("storageclasses.json", ("storageclasses.storage.k8s.io", "storageclasses"), False),
     "persistentvolumes": ("persistentvolumes.json", ("persistentvolumes",), False),
     "pvcs": ("pvcs.json", ("persistentvolumeclaims",), True),
-    "configmaps": ("configmaps-metadata.json", ("configmaps",), True),
-    "secrets": ("secrets-metadata.json", ("secrets",), True),
     "crds": ("crds.json", ("customresourcedefinitions.apiextensions.k8s.io", "customresourcedefinitions"), False),
     "apiservices": ("apiservices.json", ("apiservices.apiregistration.k8s.io", "apiservices"), False),
     "validatingwebhooks": ("validatingwebhooks.json", ("validatingwebhookconfigurations.admissionregistration.k8s.io",), False),
@@ -140,6 +138,7 @@ RESOURCE_SPECS: dict[str, tuple[str, tuple[str, ...], bool]] = {
     "policyreports": ("policyreports.json", ("policyreports.wgpolicyk8s.io",), True),
     "clusterpolicyreports": ("clusterpolicyreports.json", ("clusterpolicyreports.wgpolicyk8s.io",), False),
 }
+SENSITIVE_API_RESOURCES = {"secrets", "configmaps"}
 
 TECH_PATTERNS = {
     "Java": re.compile(r"(?i)(openjdk|temurin|corretto|java\b|\.jar\b|spring|quarkus|wildfly|jboss|tomcat|keycloak)"),
@@ -175,6 +174,60 @@ def run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(command, text=True, capture_output=True, check=False, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(command, 124, "", str(error))
+
+
+def collection_identity(namespace: str) -> dict[str, str]:
+    context = run(["kubectl", "config", "current-context"], 10).stdout.strip()
+    server = run(
+        ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"],
+        10,
+    ).stdout.strip()
+    return {
+        "context": context,
+        "serverHash": hashlib.sha256(server.encode()).hexdigest() if server else "",
+        "namespaceScope": namespace or "*",
+    }
+
+
+def snapshot_hashes(directory: Path) -> dict[str, str]:
+    names = {value[0] for value in RESOURCE_SPECS.values()} | {
+        "nodes.json", "pods.json", "workloads.json", "namespaces.json", "events.json",
+        "universal-inventory.json", "api-resources.json",
+    }
+    return {
+        name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        for name in sorted(names)
+        if (directory / name).is_file()
+    }
+
+
+def write_collection_provenance(directory: Path, namespace: str) -> None:
+    value = {
+        "schemaVersion": SCHEMA_VERSION,
+        **collection_identity(namespace),
+        "snapshots": snapshot_hashes(directory),
+    }
+    (directory / "collection-provenance.json").write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def valid_resume_provenance(directory: Path, namespace: str) -> tuple[bool, str]:
+    provenance = load_json(directory / "collection-provenance.json", {})
+    if not isinstance(provenance, dict) or provenance.get("schemaVersion") != SCHEMA_VERSION:
+        return False, "resume provenance is absent or uses another schema version"
+    expected = collection_identity(namespace)
+    for key, value in expected.items():
+        if not value or provenance.get(key) != value:
+            return False, f"resume provenance mismatch: {key}"
+    recorded = provenance.get("snapshots") or {}
+    if not isinstance(recorded, dict) or not recorded:
+        return False, "resume provenance has no snapshot hashes"
+    for name, digest in recorded.items():
+        path = directory / str(name)
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            return False, f"resume snapshot integrity mismatch: {name}"
+    return True, ""
 
 
 def clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -309,21 +362,7 @@ def sanitize_events(value: dict[str, Any]) -> dict[str, Any]:
 def sanitize_resource_list(resource_key: str, value: dict[str, Any]) -> dict[str, Any]:
     clean = {"apiVersion": value.get("apiVersion", "v1"), "kind": value.get("kind", "List"), "items": []}
     for item in items(value):
-        if resource_key == "secrets":
-            clean["items"].append({
-                "apiVersion": item.get("apiVersion"), "kind": item.get("kind", "Secret"),
-                "metadata": clean_metadata(item.get("metadata", {})), "type": item.get("type"),
-                "immutable": item.get("immutable", False),
-                "dataKeys": sorted((item.get("data") or {}).keys()),
-            })
-        elif resource_key == "configmaps":
-            clean["items"].append({
-                "apiVersion": item.get("apiVersion"), "kind": item.get("kind", "ConfigMap"),
-                "metadata": clean_metadata(item.get("metadata", {})),
-                "dataKeys": sorted((item.get("data") or {}).keys()),
-                "binaryDataKeys": sorted((item.get("binaryData") or {}).keys()),
-            })
-        elif resource_key == "crds":
+        if resource_key == "crds":
             spec = item.get("spec") or {}
             clean["items"].append({
                 "apiVersion": item.get("apiVersion"), "kind": item.get("kind", "CustomResourceDefinition"),
@@ -473,7 +512,26 @@ def collect_universal_inventory(directory: Path, namespaced: set[str], cluster: 
                         "state": result.get("state"), "count": len(objects), "deepCollected": True,
                         "objects": objects, "reason": result.get("reason", "")})
 
-    targets = [(resource, "namespaced") for resource in namespaced if resource not in covered and "/" not in resource]
+    skipped_sensitive = sorted(resource for resource in namespaced if resource.split(".", 1)[0] in SENSITIVE_API_RESOURCES)
+    entries.extend(
+        {
+            "resource": resource,
+            "scope": "namespaced",
+            "state": "PARTIAL",
+            "count": 0,
+            "deepCollected": False,
+            "objects": [],
+            "reason": "collection disabled by data-minimization policy",
+        }
+        for resource in skipped_sensitive
+    )
+    targets = [
+        (resource, "namespaced")
+        for resource in namespaced
+        if resource not in covered
+        and resource not in skipped_sensitive
+        and "/" not in resource
+    ]
     targets += [(resource, "cluster") for resource in cluster if resource not in covered and "/" not in resource]
 
     def collect_one(target: tuple[str, str]) -> dict[str, Any]:
@@ -503,12 +561,13 @@ def collect_universal_inventory(directory: Path, namespaced: set[str], cluster: 
             entries.extend(future.result() for future in as_completed(futures))
     entries.sort(key=lambda value: (value["scope"], value["resource"]))
     unavailable = sum(value["state"] == "UNAVAILABLE" for value in entries)
+    partial = sum(value["state"] == "PARTIAL" for value in entries)
     output = {"schemaVersion": SCHEMA_VERSION, "generatedAt": utcnow(),
-              "state": "PARTIAL" if unavailable else "AVAILABLE", "resourceTypes": len(entries),
+              "state": "PARTIAL" if unavailable or partial else "AVAILABLE", "resourceTypes": len(entries),
               "objectCount": sum(value["count"] for value in entries),
               "deepCollectedResourceTypes": sum(bool(value["deepCollected"]) for value in entries),
               "identityOnlyResourceTypes": sum(not value["deepCollected"] for value in entries),
-              "unavailableResourceTypes": unavailable, "resources": entries}
+              "unavailableResourceTypes": unavailable, "partialResourceTypes": partial, "resources": entries}
     (directory / "universal-inventory.json").write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
     return {key: value for key, value in output.items() if key != "resources"}
 
@@ -533,7 +592,12 @@ def collect_live(directory: Path, timeout: int, chunk_size: int, inventory_worke
             payload = {"apiVersion": "v1", "kind": "List", "items": []}
             path.write_text(json.dumps(payload), encoding="utf-8")
             raw[key] = payload
-            coverage[key] = {"state": "N/A", "count": 0, "reason": "API resource not served"}
+            discovery_available = api_inventory.get("state") == "AVAILABLE"
+            coverage[key] = {
+                "state": "N/A" if discovery_available else "PARTIAL",
+                "count": 0,
+                "reason": "API resource not served" if discovery_available else "API discovery unavailable; applicability is unknown",
+            }
             continue
         command = ["kubectl", "get", resource]
         if is_namespaced:
@@ -564,12 +628,12 @@ def existing_resources(directory: Path) -> tuple[dict[str, dict[str, Any]], dict
         payload = load_json(directory / filename, {"items": []})
         raw[key] = payload
         old = previous_resources.get(key) or {}
-        state = old.get("state") or ("AVAILABLE" if (directory / filename).exists() else "N/A")
+        state = old.get("state") or ("AVAILABLE" if (directory / filename).exists() else "UNKNOWN")
         coverage[key] = {**old, "state": state, "count": len(items(payload))}
-        if state == "N/A": coverage[key].setdefault("reason", "snapshot absent or API resource not served")
-    universal = load_json(directory / "universal-inventory.json", {"state": "N/A", "resourceTypes": 0, "objectCount": 0})
+        if state == "UNKNOWN": coverage[key].setdefault("reason", "snapshot absent; applicability was not proven")
+    universal = load_json(directory / "universal-inventory.json", {"state": "UNKNOWN", "resourceTypes": 0, "objectCount": 0})
     universal = {key: value for key, value in universal.items() if key != "resources"}
-    return raw, {"apiResources": load_json(directory / "api-resources.json", {"state": "N/A"}), "resources": coverage, "universalInventory": universal}
+    return raw, {"apiResources": load_json(directory / "api-resources.json", {"state": "UNKNOWN"}), "resources": coverage, "universalInventory": universal}
 
 def pod_template(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     kind = str(item.get("kind", ""))
@@ -1160,7 +1224,7 @@ class Assessment:
             categories.append({"name": category, "state": state, "counts": dict(Counter(x["severity"] for x in values))})
         return {
             "schemaVersion": SCHEMA_VERSION, "generatedAt": utcnow(), "readOnly": True,
-            "safety": {"kubectlVerbs": ["get", "list"], "secrets": "metadata-only", "environmentValues": "redacted-except-runtime-tuning", "eventMessages": "omitted", "mutations": 0},
+            "safety": {"kubectlVerbs": ["get", "list"], "secrets": "not-collected", "configMapValues": "not-collected", "environmentValues": "redacted-except-runtime-tuning", "eventMessages": "omitted", "mutations": 0},
             "summary": {
                 "checks": len(self.findings), "critical": counts["CRIT"], "warnings": counts["WARN"],
                 "unknown": counts["UNKNOWN"], "partial": counts["PARTIAL"],
@@ -1222,6 +1286,11 @@ def main() -> int:
         print(f"snapshot directory not found: {directory}", file=sys.stderr)
         return 2
     budget = ApiBudget(args.max_requests, args.max_duration, args.max_response_mb * 1024 * 1024, args.api_delay_ms)
+    if args.resume:
+        valid, reason = valid_resume_provenance(directory, args.namespace)
+        if not valid:
+            print(f"unsafe resume refused: {reason}", file=sys.stderr)
+            return 2
     raw, collection = (
         collect_live(directory, args.timeout, args.chunk_size, args.inventory_workers,
                      budget, args.retries, args.namespace, args.resume)
@@ -1230,6 +1299,8 @@ def main() -> int:
     result = Assessment(directory, raw, collection).result()
     output = args.output.resolve() if args.output else directory / "comprehensive-assessment.json"
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.collect_live:
+        write_collection_provenance(directory, args.namespace)
     summary = result["summary"]
     print(json.dumps({"output": str(output), **summary}, ensure_ascii=False))
     return 0
