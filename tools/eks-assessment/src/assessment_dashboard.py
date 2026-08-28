@@ -1326,9 +1326,9 @@ def utc_iso() -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="127.0.0.1"); parser.add_argument("--port", type=int, default=8765); args = parser.parse_args()
-    if args.host not in {"127.0.0.1", "::1", "localhost"}:
-        parser.error("the built-in dashboard is loopback-only; use an authenticated TLS reverse proxy or approved tunnel")
+    parser = argparse.ArgumentParser(); parser.add_argument("--root", required=True, type=Path); parser.add_argument("--static", required=True, type=Path); parser.add_argument("--host", default="127.0.0.1"); parser.add_argument("--port", type=int, default=8765); parser.add_argument("--allow-remote", action="store_true"); args = parser.parse_args()
+    if args.host not in {"127.0.0.1", "::1", "localhost"} and not args.allow_remote:
+        parser.error("non-loopback binding requires explicit --allow-remote")
     Handler.root = args.root.resolve(); Handler.static = args.static.resolve(); Handler.repository = Path(__file__).resolve().parents[1]; Handler.root.mkdir(parents=True, exist_ok=True)
     if not (Handler.static / "styles.css").is_file():
         parser.error(f"dashboard stylesheet not found: {Handler.static / 'styles.css'}")

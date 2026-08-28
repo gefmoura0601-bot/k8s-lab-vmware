@@ -41,7 +41,7 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 ## Executar o menu
 
-O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard local seguro:
+O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard web preso à sessão:
 
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
@@ -56,7 +56,7 @@ python3 tools/eks-assessment/src/assessment_dashboard.py \
   --host 127.0.0.1 --port 8765
 ```
 
-Abra `http://127.0.0.1:8765`. O servidor embutido aceita somente loopback; para acesso remoto, use túnel aprovado ou reverse proxy autenticado com TLS. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
+Na execução direta, o servidor permanece restrito a loopback. A opção 5 do menu faz exposição explícita em todas as interfaces, mostra a URL e mantém o processo preso ao terminal; `Ctrl+C` encerra o dashboard sem PID file ou processo em background. Use essa opção somente na rede privada do lab. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
 
 No control plane do lab, preserve o diretório compartilhado de coletas e execute:
 
@@ -65,15 +65,7 @@ cd /workspace/tools/eks-assessment
 ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment.sh
 ```
 
-No Windows, mantenha este túnel aberto e acesse `http://127.0.0.1:8765`:
-
-```powershell
-ssh.exe -N -i .\iac\vagrant\.vagrant\machines\k8s-master\vmware_desktop\private_key `
-  -o IdentitiesOnly=yes -L 127.0.0.1:8765:127.0.0.1:8765 `
-  vagrant@192.168.109.151
-```
-
-Se a porta estiver ocupada, o menu agora informa o conflito antes de iniciar. Defina, por exemplo, `DASHBOARD_PORT=8766` para usar outra porta e ajuste o túnel para o mesmo valor.
+Selecione a opção 5 e abra a URL exibida, normalmente `http://192.168.109.151:8765`. Não é necessário túnel SSH. Se a porta estiver ocupada, o menu informa o conflito antes de iniciar; encerre a sessão antiga ou defina, por exemplo, `DASHBOARD_PORT=8766`.
 
 ## Permissões mínimas
 

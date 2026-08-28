@@ -18,7 +18,7 @@ ACTIVE_COMPONENT=""
 COLLECTION_CANCELLED=0
 COLLECTION_TIMED_OUT=0
 COLLECTION_STARTED_EPOCH=0
-WEB_MANAGED_BY_MENU=0
+DASHBOARD_FOREGROUND=0
 
 usage(){
   cat <<'EOF'
@@ -60,6 +60,9 @@ terminate_active(){
 }
 
 cancel_on_signal(){
+  if ((DASHBOARD_FOREGROUND == 1)); then
+    return 0
+  fi
   COLLECTION_CANCELLED=1
   echo >&2
   echo "Cancelamento solicitado; preservando a coleta parcial como CANCELLED." >&2
@@ -68,9 +71,6 @@ cancel_on_signal(){
 
 cleanup_menu(){
   terminate_active
-  if ((WEB_MANAGED_BY_MENU == 1)) && command -v curl >/dev/null 2>&1; then
-    curl -fsS -X POST "http://127.0.0.1:$PORT/cancel" >/dev/null 2>&1 || true
-  fi
 }
 
 remaining_seconds(){
@@ -260,89 +260,25 @@ terminal(){
   fi
 }
 
-dashboard_cmdline(){
-  local dashboard_pid="$1"
-  [[ "$dashboard_pid" =~ ^[0-9]+$ ]] || return 1
-  if [[ -r "/proc/$dashboard_pid/cmdline" ]]; then
-    tr '\0' ' ' < "/proc/$dashboard_pid/cmdline"
-  else
-    ps -p "$dashboard_pid" -o args= 2>/dev/null
-  fi
-}
-
-dashboard_process_matches(){
-  local dashboard_pid="$1" command_line
-  kill -0 "$dashboard_pid" 2>/dev/null || return 1
-  command_line="$(dashboard_cmdline "$dashboard_pid" 2>/dev/null || true)"
-  [[ "$command_line" == *"$TOOL_ROOT/src/assessment_dashboard.py"* ]] || return 1
-  [[ "$command_line" == *"--static $TOOL_ROOT/web/public"* ]]
-}
-
-dashboard_process_is_assessment(){
-  local dashboard_pid="$1" command_line
-  kill -0 "$dashboard_pid" 2>/dev/null || return 1
-  command_line="$(dashboard_cmdline "$dashboard_pid" 2>/dev/null || true)"
-  [[ "$command_line" == *"assessment_dashboard.py"* ]]
-}
-
-dashboard_ready(){
-  local response
-  response="$(curl -fsS --max-time 2 -o /dev/null -w '%{http_code} %{content_type}' "http://127.0.0.1:$PORT/styles.css" 2>/dev/null)" || return 1
-  [[ "$response" == "200 text/css"* ]]
-}
-
 dashboard_port_in_use(){
   (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
 }
-
-stop_dashboard_process(){
-  local dashboard_pid="$1" attempt
-  kill -TERM "$dashboard_pid" 2>/dev/null || true
-  for ((attempt=0; attempt<30; attempt++)); do
-    kill -0 "$dashboard_pid" 2>/dev/null || return 0
-    sleep 0.1
-  done
-  kill -KILL "$dashboard_pid" 2>/dev/null || true
-}
 web(){
-  local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" dashboard_pid="" attempt
+  local public_host
   [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
-  need curl
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
-  [[ -r "$pid" ]] && dashboard_pid="$(cat "$pid" 2>/dev/null || true)"
-
-  if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then
-    echo "Dashboard ativo (PID $dashboard_pid)."
-  else
-    if dashboard_process_is_assessment "$dashboard_pid"; then
-      echo "Dashboard obsoleto ou sem CSS (PID $dashboard_pid); reiniciando..."
-      stop_dashboard_process "$dashboard_pid"
-    elif [[ -n "$dashboard_pid" ]] && kill -0 "$dashboard_pid" 2>/dev/null; then
-      echo "Aviso: PID $dashboard_pid nao pertence ao assessment; ele nao sera encerrado." >&2
-    fi
-    rm -f "$pid"
-    if dashboard_port_in_use; then
-      echo "ERRO: a porta 127.0.0.1:$PORT já está em uso por outro processo." >&2
-      echo "Use DASHBOARD_PORT=<porta-livre> ou encerre explicitamente o processo responsável." >&2
-      return 1
-    fi
-    nohup setsid "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 127.0.0.1 --port "$PORT" < /dev/null > "$log" 2>&1 &
-    dashboard_pid=$!; echo "$dashboard_pid" > "$pid"
-    for ((attempt=0; attempt<30; attempt++)); do
-      if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then break; fi
-      sleep 0.1
-    done
-    if ! dashboard_process_matches "$dashboard_pid" || ! dashboard_ready; then
-      echo "ERRO: dashboard nao iniciou; consulte $log" >&2
-      stop_dashboard_process "$dashboard_pid"; rm -f "$pid"
-      return 1
-    fi
-    echo "Dashboard iniciado (PID $dashboard_pid)."
+  if dashboard_port_in_use; then
+    echo "ERRO: a porta $PORT já está em uso. Encerre o processo antigo ou use DASHBOARD_PORT=<porta-livre>." >&2
+    return 1
   fi
-  WEB_MANAGED_BY_MENU=1
-  echo "Dashboard local: http://127.0.0.1:$PORT"
-  echo "Acesso remoto: crie um túnel SSH -L ${PORT}:127.0.0.1:${PORT} até este host."
-  echo "Log: $log"
+  public_host="${DASHBOARD_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+  public_host="${public_host:-127.0.0.1}"
+  echo "Dashboard: http://$public_host:$PORT"
+  echo "O servidor ficará preso a esta sessão. Pressione Ctrl+C para encerrar."
+  DASHBOARD_FOREGROUND=1
+  "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" --allow-remote
+  DASHBOARD_FOREGROUND=0
+  echo "Dashboard encerrado."
 }
 
 need kubectl; need jq; need curl; need timeout; need setsid
@@ -357,7 +293,7 @@ while :; do
 2) Coleta DEPOIS do deploy
 3) Comparar coletas
 4) Dashboard no terminal
-5) Iniciar dashboard local seguro (porta $PORT)
+5) Abrir dashboard web nesta sessão (porta $PORT)
 6) Validar ambiente (preflight)
 0) Sair
 EOF
@@ -367,5 +303,5 @@ EOF
     5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";;
     0) exit 0;; *) echo 'Opção inválida.';;
   esac
-  [[ "$op" == 0 ]] || read -r -p 'Enter para continuar…' _
+  [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _
 done
