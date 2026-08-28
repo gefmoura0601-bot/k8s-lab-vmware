@@ -20,7 +20,7 @@ spec:
       jqPathExpressions:
         - .spec.selector."rollouts-pod-template-hash"
   source:
-    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+    repoURL: https://github.com/gefmoura0601-bot/k8s-lab-vmware.git
     targetRevision: main
     path: kubernetes/apps/postgres-api
   destination:

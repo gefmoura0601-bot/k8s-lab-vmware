@@ -21,7 +21,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: store-service
-          image: ghcr.io/gefmoura0601-bot/store-service-go:bootstrap
+          image: ghcr.io/gefmoura0601-bot/store-service-go:10aab86
           imagePullPolicy: IfNotPresent
           env:
             - name: ACQUIRER_URL
