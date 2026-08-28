@@ -186,6 +186,17 @@ h2 { margin-top: 28px; }
 .technical summary { cursor: pointer; padding: 15px 18px; font-weight: 750; color: #263b59; }
 .technical[open] summary { border-bottom: 1px solid #d3dae5; }
 .technical .table-wrap { border: 0; }
+.cis-actions { margin: 0 0 18px; }
+.cis-control { background: #fff; border: 1px solid #d3dae5; border-left: 5px solid #7b8798; margin: 10px 0; }
+.cis-control.PASS { border-left-color: #378653; }
+.cis-control.WARN { border-left-color: #bb7a19; }
+.cis-control.UNKNOWN { border-left-color: #7a4da3; }
+.cis-control summary { cursor: pointer; display: flex; justify-content: space-between; gap: 16px; padding: 15px 18px; align-items: center; }
+.cis-control[open] summary { border-bottom: 1px solid #d3dae5; }
+.cis-control > :not(summary) { margin-left: 18px; margin-right: 18px; }
+.cis-control > p { margin-bottom: 18px; }
+.cis-meta { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 14px 0; color: #506075; font-size: 13px; }
+.cis-control pre { max-height: 320px; overflow: auto; background: #f3f6fa; border: 1px solid #d8e0ea; padding: 12px; white-space: pre-wrap; }
 @media (max-width: 1100px) {
   .actions { display: none; }
   main { grid-template-columns: 1fr; }
