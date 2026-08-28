@@ -1396,7 +1396,7 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, shutdown_signal)
-    print(f"EKS dashboard Python: http://{args.host}:{args.port}", flush=True)
+    print(f"EKS dashboard Python: http://{args.host}:{server.server_address[1]}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
