@@ -21,6 +21,8 @@ Execute a partir da raiz do repositório em qualquer host Linux autorizado, como
 
 O host não precisa pertencer ao cluster. Em EKS, o assessment não acessa hosts do control plane, etcd ou processos internos; ele usa a API Kubernetes e, opcionalmente, as configurações gerenciadas expostas pelas APIs AWS.
 
+Secrets e valores de ConfigMap não são solicitados pelo perfil padrão. Essas APIs aparecem como cobertura `PARTIAL` por política de minimização de dados.
+
 ## Preflight
 
 Antes de coletar, valide dependências, contexto, API, RBAC e integrações opcionais:
@@ -51,10 +53,21 @@ Para iniciar somente a web:
 python3 tools/eks-assessment/src/assessment_dashboard.py \
   --root assessment \
   --static tools/eks-assessment/web/public \
-  --host 0.0.0.0 --port 8765
+  --host 127.0.0.1 --port 8765
 ```
 
-Abra `http://<host-de-execucao>:8765`. Se a porta não estiver diretamente acessível, use o túnel ou encaminhamento aprovado para o ambiente. O botão **Coletar agora** executa o pipeline completo. Escolha o perfil de impacto, um namespace opcional ou o cluster inteiro. A URL Prometheus é opcional, mas precisa ser explicitamente informada; usuário/senha embutidos na URL são rejeitados.
+Abra `http://127.0.0.1:8765`. O servidor embutido aceita somente loopback; para acesso remoto, use túnel aprovado ou reverse proxy autenticado com TLS. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
+
+## Permissões mínimas
+
+Exemplos auditáveis ficam em `deploy/`:
+
+- `rbac-namespaced.yaml`: Role para coleta restrita a um namespace;
+- `rbac-cluster-readonly.yaml`: ClusterRole para inventário Kubernetes amplo;
+- `iam-eks-readonly.json`: APIs AWS/EKS do enriquecimento padrão;
+- `iam-account-security-optional.json`: GuardDuty opcional, separado do perfil padrão.
+
+Os exemplos não concedem leitura de Secrets ou ConfigMaps. Substitua os namespaces e vincule as roles somente à identidade aprovada. APIs opcionais sem permissão ficam `PARTIAL` ou `UNKNOWN`.
 
 ## Visibilidade por plataforma
 
@@ -82,6 +95,8 @@ Para analisar uma coleta existente sem consultar novamente o cluster:
 python3 tools/eks-assessment/src/eks_comprehensive_assessment.py \
   --snapshot-dir assessment/<coleta>
 ```
+
+`--resume` só reutiliza snapshots quando `collection-provenance.json` confirma schema, contexto, endpoint, escopo e hashes. Qualquer divergência interrompe o resume.
 
 Para atualizar o inventário read-only antes da análise:
 
@@ -137,8 +152,21 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
 - `application-manifests-sanitized.json`: manifests de aplicação sem status/managed fields, valores arbitrários de `env`, dados de Secret ou valores de ConfigMap;
 - `api-resources.json`: APIs listáveis descobertas;
-- `secrets-metadata.json`: somente metadados, tipo e nomes das chaves;
+- Secrets e valores de ConfigMap: não coletados pelo perfil padrão;
 - `prometheus-telemetry.json`: séries agregadas e estatísticas;
 - `discovery/`: evidências do discovery oficial;
 
 Valores de tuning explicitamente permitidos (`JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, opções .NET e equivalentes) podem aparecer na evidência para análise. Tokens, senhas e demais variáveis permanecem redatados.
+
+## Versão e distribuição
+
+A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `web/`, `deploy/`, `docs/`, `README.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
+
+Gere o pacote portátil, o checksum e o SBOM SPDX com:
+
+```bash
+./bin/package-release.sh ./dist
+sha256sum -c ./dist/eks-assessment-*.tar.gz.sha256
+```
+
+Extraia o arquivo em qualquer diretório gravável e execute `bin/eks-assessment.sh`. O processo não pressupõe checkout Git nem caminhos como `/workspace`; dependências e permissões são verificadas pelo preflight.

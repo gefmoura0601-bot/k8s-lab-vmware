@@ -11,7 +11,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: apps
   source:
-    repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+    repoURL: https://github.com/gefmoura0601-bot/k8s-lab-vmware.git
     targetRevision: main
     path: kubernetes/platform/governance/base
   syncPolicy:

@@ -3,8 +3,7 @@
 set -euo pipefail
 
 TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPOSITORY_ROOT="$(cd "$TOOL_ROOT/../.." && pwd)"
-OUTROOT="${ASSESSMENT_ROOT:-$REPOSITORY_ROOT/assessment}"
+OUTROOT="${ASSESSMENT_ROOT:-${XDG_STATE_HOME:-$PWD}/eks-assessment}"
 ASSESS="$TOOL_ROOT/src/assess-eks.sh"
 DISCOVERY="$TOOL_ROOT/src/eks-cluster-discovery.sh"
 TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
@@ -20,6 +19,23 @@ COLLECTION_CANCELLED=0
 COLLECTION_TIMED_OUT=0
 COLLECTION_STARTED_EPOCH=0
 WEB_MANAGED_BY_MENU=0
+
+usage(){
+  cat <<'EOF'
+Uso: eks-assessment.sh [--help] [--version]
+
+Menu interativo read-only para coleta, comparação, preflight e dashboard local.
+Variáveis principais: KUBECONFIG, ASSESSMENT_ROOT, ASSESSMENT_NAMESPACE,
+PROMETHEUS_URL, EKS_CLUSTER_NAME e ASSESSMENT_MAX_DURATION_SECONDS.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --version) tr -d '[:space:]' < "$TOOL_ROOT/VERSION"; printf '\n'; exit 0 ;;
+  "") ;;
+  *) echo "Opção desconhecida: $1" >&2; usage >&2; exit 2 ;;
+esac
 
 [[ "$MAX_DURATION_SECONDS" =~ ^[0-9]+$ ]] || MAX_DURATION_SECONDS=1800
 ((MAX_DURATION_SECONDS < 60)) && MAX_DURATION_SECONDS=60
@@ -119,7 +135,7 @@ select_python(){
   return 1
 }
 run_preflight(){
-  PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" bash "$PREFLIGHT"
+  PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" ASSESSMENT_NAMESPACE="${3:-}" bash "$PREFLIGHT"
 }
 collections(){ find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%f\n' 2>/dev/null | sort; }
 
@@ -145,32 +161,40 @@ write_metadata(){
 }
 
 collect(){
-  local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason
+  local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason namespace
   local assess_rc=125 discovery_rc=125 telemetry_rc=125 scanner_rc=125 validator_rc=125 completed=false baseline=false codes code
   COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH=0
   read -r -p "Identificador da mudança ($phase): " label
   label="${label:-manual}"; label="${label//[^a-zA-Z0-9._-]/-}"
   prom_url="${PROMETHEUS_URL:-}"; prom_window="${PROMETHEUS_WINDOW:-7d}"
+  namespace="${ASSESSMENT_NAMESPACE:-}"
+  read -r -p "Namespace (Enter = ${namespace:-cluster inteiro}): " answer
+  namespace="${answer:-$namespace}"
+  [[ -z "$namespace" || "$namespace" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] || { echo "Namespace inválido." >&2; return 1; }
   read -r -p "URL explícita do Prometheus (Enter = ${prom_url:-DISABLED}): " answer
   prom_url="${answer:-$prom_url}"
   read -r -p "Janela Prometheus 1d/3d/7d/14d/30d [${prom_window}]: " answer
   prom_window="${answer:-$prom_window}"; [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
 
   IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
-  if ! run_preflight "$prom_url" "$eks_name"; then
+  if ! run_preflight "$prom_url" "$eks_name" "$namespace"; then
     echo "Coleta não iniciada: corrija os itens FAIL do preflight." >&2
     return 1
   fi
   COLLECTION_STARTED_EPOCH="$(date +%s)"
-  id="eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}"; out="$OUTROOT/$id"; mkdir -p "$out"
+  mkdir -p "$OUTROOT"
+  out="$(mktemp -d "$OUTROOT/eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}.XXXXXXXX")"
+  id="$(basename "$out")"
   [[ "$phase" == before ]] && baseline=true
   write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS"
   echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s =="
   echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
 
-  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" PYTHON_BIN="$PYTHON_BIN" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
+  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" PYTHON_BIN="$PYTHON_BIN" ASSESSMENT_NAMESPACE="$namespace" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
-    if run_bounded discovery 900 "$out/discovery.log" bash "$DISCOVERY" --output-dir "$out/discovery" --combined-report; then discovery_rc=0; else discovery_rc=$?; fi
+    discovery_args=(--output-dir "$out/discovery" --combined-report)
+    [[ -n "$namespace" ]] && discovery_args+=(--namespace "$namespace")
+    if run_bounded discovery 900 "$out/discovery.log" bash "$DISCOVERY" "${discovery_args[@]}"; then discovery_rc=0; else discovery_rc=$?; fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
     if [[ -n "$prom_url" ]]; then
@@ -181,7 +205,9 @@ collect(){
     fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
-    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" "$PYTHON_BIN" "$SCANNER" --snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}" --resume; then scanner_rc=0; else scanner_rc=$?; fi
+    scanner_args=(--snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}")
+    [[ -n "$namespace" ]] && scanner_args+=(--namespace "$namespace")
+    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" "$PYTHON_BIN" "$SCANNER" "${scanner_args[@]}"; then scanner_rc=0; else scanner_rc=$?; fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
     if run_bounded artifact-validation 300 "$out/artifact-smoke.log" "$PYTHON_BIN" "$VALIDATOR" "$out"; then validator_rc=0; else validator_rc=$?; fi
@@ -275,7 +301,7 @@ stop_dashboard_process(){
   kill -KILL "$dashboard_pid" 2>/dev/null || true
 }
 web(){
-  local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" host dashboard_pid="" attempt
+  local pid="$OUTROOT/dashboard-$PORT.pid" log="$OUTROOT/dashboard-$PORT.log" dashboard_pid="" attempt
   [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
   need curl
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
@@ -291,7 +317,7 @@ web(){
       echo "Aviso: PID $dashboard_pid nao pertence ao assessment; ele nao sera encerrado." >&2
     fi
     rm -f "$pid"
-    nohup setsid "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 0.0.0.0 --port "$PORT" < /dev/null > "$log" 2>&1 &
+    nohup setsid "$PYTHON_BIN" "$TOOL_ROOT/src/assessment_dashboard.py" --root "$OUTROOT" --static "$TOOL_ROOT/web/public" --host 127.0.0.1 --port "$PORT" < /dev/null > "$log" 2>&1 &
     dashboard_pid=$!; echo "$dashboard_pid" > "$pid"
     for ((attempt=0; attempt<30; attempt++)); do
       if dashboard_process_matches "$dashboard_pid" && dashboard_ready; then break; fi
@@ -305,8 +331,7 @@ web(){
     echo "Dashboard iniciado (PID $dashboard_pid)."
   fi
   WEB_MANAGED_BY_MENU=1
-  host="$(hostname -I | awk '{print $1}')"
-  echo "Abra: http://$host:$PORT"
+  echo "Abra: http://127.0.0.1:$PORT"
   echo "Log: $log"
 }
 

@@ -1,6 +1,6 @@
 # Telemetria Prometheus opcional
 
-`tools/eks-assessment/src/prometheus_telemetry.py` é um coletor Python 3.10+ adaptativo, somente leitura e sem dependências externas. A URL do Prometheus é sempre explícita: não há descoberta automática de endpoint, credenciais no código ou mutações no cluster.
+`tools/eks-assessment/src/prometheus_telemetry.py` é um coletor Python 3.10+ adaptativo, somente leitura e sem dependências externas. A URL do Prometheus é sempre explícita: não há descoberta automática de endpoint, credenciais no código ou mutações no cluster. Redirects e destinos loopback, link-local, metadata ou reservados são rejeitados; `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts permitidos.
 
 ## Execução a partir de um host autorizado
 

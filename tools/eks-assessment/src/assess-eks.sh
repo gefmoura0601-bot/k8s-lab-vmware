@@ -6,12 +6,14 @@ set -euo pipefail
 
 TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AWS_SCANNER="$TOOL_ROOT/src/aws_eks_assessment.py"
+SANITIZER="$TOOL_ROOT/src/sanitize_kubernetes_snapshot.py"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 PROMETHEUS_NAMESPACE="${PROMETHEUS_NAMESPACE:-}"
 PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-assessment/eks-$(date -u +%Y%m%dT%H%M%SZ)}"
+ASSESSMENT_NAMESPACE="${ASSESSMENT_NAMESPACE:-}"
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "ERRO: comando obrigatório ausente: $1" >&2; exit 1; }; }
 select_python() {
@@ -32,7 +34,28 @@ warn() { printf '[WARN] %s\n' "$*" >&2; }
 
 require_cmd kubectl
 require_cmd jq
+select_python || { echo "ERRO: Python 3.10+ obrigatório para sanitização durante a captura" >&2; exit 1; }
+[[ -r "$SANITIZER" ]] || { echo "ERRO: sanitizador ausente: $SANITIZER" >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/prometheus"
+
+scope=()
+[[ -n "$ASSESSMENT_NAMESPACE" ]] && scope=(-n "$ASSESSMENT_NAMESPACE") || scope=(-A)
+declare -A COLLECTION_STATE=()
+
+collect_snapshot() {
+  local key="$1" output="$2" mode="$3" temporary
+  shift 3
+  temporary="$(mktemp "$OUTPUT_DIR/.${key}.XXXXXX")"
+  if kubectl "$@" -o json | "$PYTHON_BIN" "$SANITIZER" --mode "$mode" >"$temporary"; then
+    mv -f "$temporary" "$output"
+    COLLECTION_STATE["$key"]="AVAILABLE"
+    return 0
+  fi
+  rm -f "$temporary"
+  printf '{"apiVersion":"v1","kind":"List","items":[]}\n' >"$output"
+  COLLECTION_STATE["$key"]="UNAVAILABLE"
+  return 1
+}
 
 REPORT="$OUTPUT_DIR/report.md"
 FINDINGS="$OUTPUT_DIR/findings.tsv"
@@ -51,10 +74,10 @@ bullet() { printf -- '- %s\n' "$*" >>"$REPORT"; }
 context="$(kubectl config current-context)"
 cluster_ref="$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || true)"
 kubectl version -o json >"$OUTPUT_DIR/kubernetes-version.json"
-kubectl get nodes -o json >"$OUTPUT_DIR/nodes.json"
-kubectl get pods -A -o json >"$OUTPUT_DIR/pods.json"
-kubectl get deployments,statefulsets,daemonsets -A -o json >"$OUTPUT_DIR/workloads.json"
-kubectl get events -A --sort-by=.lastTimestamp -o json >"$OUTPUT_DIR/events.json"
+collect_snapshot nodes "$OUTPUT_DIR/nodes.json" snapshot get nodes || warn "Nodes indisponíveis; cobertura ficará UNKNOWN"
+collect_snapshot pods "$OUTPUT_DIR/pods.json" snapshot get pods "${scope[@]}" || warn "Pods indisponíveis; cobertura ficará UNKNOWN"
+collect_snapshot workloads "$OUTPUT_DIR/workloads.json" snapshot get deployments,statefulsets,daemonsets "${scope[@]}" || warn "Workloads indisponíveis; cobertura ficará UNKNOWN"
+collect_snapshot events "$OUTPUT_DIR/events.json" events get events "${scope[@]}" --sort-by=.lastTimestamp || warn "Events indisponíveis; cobertura ficará UNKNOWN"
 
 cat >"$REPORT" <<EOF
 # EKS assessment
@@ -73,10 +96,15 @@ pending_pods="$(jq '[.items[] | select(.status.phase == "Pending")] | length' "$
 failed_pods="$(jq '[.items[] | select(.status.phase == "Failed")] | length' "$OUTPUT_DIR/pods.json")"
 unavailable_deployments="$(jq '[.items[] | select(.kind == "Deployment" and ((.status.availableReplicas // 0) < (.status.replicas // 0)))] | length' "$OUTPUT_DIR/workloads.json")"
 
-if [[ "$unready_nodes" == 0 ]]; then finding PASS health "Nodes Ready" "all nodes Ready"; else finding FAIL health "Nodes Ready" "$unready_nodes node(s) not Ready"; fi
-if [[ "$pending_pods" == 0 ]]; then finding PASS health "Pending pods" "none"; else finding WARN health "Pending pods" "$pending_pods pending pod(s)"; fi
-if [[ "$failed_pods" == 0 ]]; then finding PASS health "Failed pods" "none"; else finding WARN health "Failed pods" "$failed_pods failed pod(s)"; fi
-if [[ "$unavailable_deployments" == 0 ]]; then finding PASS health "Deployments" "all reported replicas available"; else finding WARN health "Deployments" "$unavailable_deployments deployment(s) below desired availability"; fi
+if [[ "${COLLECTION_STATE[nodes]}" != AVAILABLE ]]; then finding UNKNOWN health "Nodes Ready" "node inventory unavailable"; elif [[ "$unready_nodes" == 0 ]]; then finding PASS health "Nodes Ready" "all nodes Ready"; else finding FAIL health "Nodes Ready" "$unready_nodes node(s) not Ready"; fi
+if [[ "${COLLECTION_STATE[pods]}" != AVAILABLE ]]; then
+  finding UNKNOWN health "Pending pods" "pod inventory unavailable"
+  finding UNKNOWN health "Failed pods" "pod inventory unavailable"
+else
+  if [[ "$pending_pods" == 0 ]]; then finding PASS health "Pending pods" "none"; else finding WARN health "Pending pods" "$pending_pods pending pod(s)"; fi
+  if [[ "$failed_pods" == 0 ]]; then finding PASS health "Failed pods" "none"; else finding WARN health "Failed pods" "$failed_pods failed pod(s)"; fi
+fi
+if [[ "${COLLECTION_STATE[workloads]}" != AVAILABLE ]]; then finding UNKNOWN health "Deployments" "workload inventory unavailable"; elif [[ "$unavailable_deployments" == 0 ]]; then finding PASS health "Deployments" "all reported replicas available"; else finding WARN health "Deployments" "$unavailable_deployments deployment(s) below desired availability"; fi
 
 bullet "Nodes not Ready: $unready_nodes"
 bullet "Pending pods: $pending_pods"
@@ -85,9 +113,9 @@ bullet "Deployments below desired availability: $unavailable_deployments"
 
 section "Kubernetes best practices"
 info "Avaliando práticas Kubernetes"
-kubectl get networkpolicy -A -o json >"$OUTPUT_DIR/networkpolicies.json" 2>/dev/null || printf '{"items":[]}' >"$OUTPUT_DIR/networkpolicies.json"
-kubectl get poddisruptionbudget -A -o json >"$OUTPUT_DIR/poddisruptionbudgets.json" 2>/dev/null || printf '{"items":[]}' >"$OUTPUT_DIR/poddisruptionbudgets.json"
-kubectl get namespace -o json >"$OUTPUT_DIR/namespaces.json"
+collect_snapshot networkpolicies "$OUTPUT_DIR/networkpolicies.json" snapshot get networkpolicy "${scope[@]}" || warn "NetworkPolicies indisponíveis"
+collect_snapshot pdbs "$OUTPUT_DIR/poddisruptionbudgets.json" snapshot get poddisruptionbudget "${scope[@]}" || warn "PDBs indisponíveis"
+collect_snapshot namespaces "$OUTPUT_DIR/namespaces.json" snapshot get namespace || warn "Namespaces indisponíveis"
 
 network_policies="$(jq '.items | length' "$OUTPUT_DIR/networkpolicies.json")"
 pdbs="$(jq '.items | length' "$OUTPUT_DIR/poddisruptionbudgets.json")"
@@ -96,12 +124,18 @@ containers_without_resources="$(jq '[.items[] | .spec.containers[]? | select(.re
 latest_images="$(jq '[.items[] | .spec.containers[]? | select(.image | test("(:latest$|^[^:]+$)"))] | length' "$OUTPUT_DIR/pods.json")"
 privileged_containers="$(jq '[.items[] | .spec.containers[]? | select(.securityContext.privileged == true)] | length' "$OUTPUT_DIR/pods.json")"
 
-if (( network_policies > 0 )); then finding PASS security "NetworkPolicy" "$network_policies policy object(s) found"; else finding WARN security "NetworkPolicy" "no policies found"; fi
-if (( pss_namespaces > 0 )); then finding PASS security "Pod Security Standards" "$pss_namespaces namespace(s) enforce PSS"; else finding WARN security "Pod Security Standards" "no namespace enforce label found"; fi
-if (( pdbs > 0 )); then finding PASS reliability "PodDisruptionBudget" "$pdbs PDB(s) found"; else finding WARN reliability "PodDisruptionBudget" "no PDB found"; fi
-if (( containers_without_resources == 0 )); then finding PASS reliability "Resources" "all running containers define requests and limits"; else finding WARN reliability "Resources" "$containers_without_resources container(s) missing requests or limits"; fi
-if (( latest_images == 0 )); then finding PASS supply-chain "Image tags" "no latest/untagged running image"; else finding WARN supply-chain "Image tags" "$latest_images latest/untagged running image(s)"; fi
-if (( privileged_containers == 0 )); then finding PASS security "Privileged containers" "none found"; else finding FAIL security "Privileged containers" "$privileged_containers privileged container(s)"; fi
+if [[ "${COLLECTION_STATE[networkpolicies]}" != AVAILABLE ]]; then finding UNKNOWN security "NetworkPolicy" "inventory unavailable"; elif (( network_policies > 0 )); then finding PASS security "NetworkPolicy" "$network_policies policy object(s) found"; else finding WARN security "NetworkPolicy" "no policies found"; fi
+if [[ "${COLLECTION_STATE[namespaces]}" != AVAILABLE ]]; then finding UNKNOWN security "Pod Security Standards" "namespace inventory unavailable"; elif (( pss_namespaces > 0 )); then finding PASS security "Pod Security Standards" "$pss_namespaces namespace(s) enforce PSS"; else finding WARN security "Pod Security Standards" "no namespace enforce label found"; fi
+if [[ "${COLLECTION_STATE[pdbs]}" != AVAILABLE ]]; then finding UNKNOWN reliability "PodDisruptionBudget" "inventory unavailable"; elif (( pdbs > 0 )); then finding PASS reliability "PodDisruptionBudget" "$pdbs PDB(s) found"; else finding WARN reliability "PodDisruptionBudget" "no PDB found"; fi
+if [[ "${COLLECTION_STATE[pods]}" != AVAILABLE ]]; then
+  finding UNKNOWN reliability "Resources" "pod inventory unavailable"
+  finding UNKNOWN supply-chain "Image tags" "pod inventory unavailable"
+  finding UNKNOWN security "Privileged containers" "pod inventory unavailable"
+else
+  if (( containers_without_resources == 0 )); then finding PASS reliability "Resources" "all running containers define requests and limits"; else finding WARN reliability "Resources" "$containers_without_resources container(s) missing requests or limits"; fi
+  if (( latest_images == 0 )); then finding PASS supply-chain "Image tags" "no latest/untagged running image"; else finding WARN supply-chain "Image tags" "$latest_images latest/untagged running image(s)"; fi
+  if (( privileged_containers == 0 )); then finding PASS security "Privileged containers" "none found"; else finding FAIL security "Privileged containers" "$privileged_containers privileged container(s)"; fi
+fi
 
 bullet "NetworkPolicies: $network_policies"
 bullet "PSS-enforcing namespaces: $pss_namespaces"

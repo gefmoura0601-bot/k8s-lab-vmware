@@ -3,7 +3,7 @@
 # Read-only Kubernetes/EKS cluster discovery report.
 # Inspired by the safety model of aws-samples/sample-eks-cluster-discovery-tool,
 # but implemented for this repository and its GitOps topology.
-# It never applies, patches, deletes, restarts or reads Secret data.
+# It never applies, patches, deletes, restarts or requests Secret/ConfigMap values.
 set -euo pipefail
 
 NAMESPACE=""
@@ -53,6 +53,14 @@ command -v kubectl >/dev/null || { echo 'kubectl is required' >&2; exit 127; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 127; }
 [[ "$DELAY_MS" =~ ^[0-9]+$ ]] || { echo '--delay-ms must be an integer' >&2; exit 2; }
 if "$LARGE_CLUSTER"; then MAX_LINES=100; DELAY_MS="${DELAY_MS:-500}"; fi
+[[ "$SINCE" =~ ^([1-9][0-9]*)([smhd])$ ]] || { echo '--since must use NUMBER followed by s, m, h or d (for example 24h or 7d)' >&2; exit 2; }
+case "${BASH_REMATCH[2]}" in
+  s) since_unit=seconds ;;
+  m) since_unit=minutes ;;
+  h) since_unit=hours ;;
+  d) since_unit=days ;;
+esac
+EVENT_CUTOFF="$(date -u -d "-${BASH_REMATCH[1]} $since_unit" +%Y-%m-%dT%H:%M:%SZ)"
 
 if [[ -n "$OUTPUT_DIR" ]]; then
   mkdir -p "$OUTPUT_DIR"
@@ -64,7 +72,7 @@ fi
 
 scope=()
 [[ -n "$NAMESPACE" ]] && scope=(-n "$NAMESPACE") || scope=(-A)
-sections=0; succeeded=0; failed=0; not_applicable=0
+sections=0; succeeded=0; failed=0; not_applicable=0; skipped=0
 combined_file="${OUTPUT_DIR:+$OUTPUT_DIR/discovery-report.txt}"
 sleep_between_reads() { (( DELAY_MS > 0 )) && sleep "$((DELAY_MS / 1000)).$((DELAY_MS % 1000))"; }
 
@@ -104,6 +112,13 @@ run_section() {
   sleep_between_reads
 }
 
+skip_sensitive_section() {
+  local id="$1" title="$2"
+  sections=$((sections + 1))
+  skipped=$((skipped + 1))
+  printf '\n[%02d/49] %s\n[PARTIAL] Collection disabled by data-minimization policy.\n' "$id" "$title" | emit
+}
+
 report_eks_applicability() {
   local aws_nodes
   aws_nodes="$(kubectl --request-timeout="$TIMEOUT" get nodes -o json 2>/dev/null | jq '[.items[] | select((.spec.providerID // "") | startswith("aws"))] | length' 2>/dev/null || printf 0)"
@@ -136,7 +151,7 @@ section_json_summary() {
 }
 
 printf 'EKS / Kubernetes discovery — read-only\nGenerated: %s\nScope: %s\n' "$(date -Is)" "${NAMESPACE:-all namespaces}" | emit
-printf 'Guardrails: timeout=%s delay=%sms max-lines=%s secrets=metadata-only\n' "$TIMEOUT" "$DELAY_MS" "$MAX_LINES" | emit
+printf 'Guardrails: timeout=%s delay=%sms max-lines=%s secrets=not-collected configmap-values=not-collected\n' "$TIMEOUT" "$DELAY_MS" "$MAX_LINES" | emit
 
 # Cluster and control-plane posture.
 run_section 1 'Version and API health' version
@@ -170,8 +185,8 @@ run_section 23 'EndpointSlices' get endpointslices "${scope[@]}"
 run_section 24 'Ingresses' get ingress "${scope[@]}"
 run_section 25 'Gateway API objects' get gateway,httproute,grpcroute,tlsroute "${scope[@]}"
 run_section 26 'NetworkPolicies' get networkpolicy "${scope[@]}"
-run_section 27 'Ingress controller topology' get deployment,daemonset,service -n nginx-lab
-run_section 28 'Istio control plane' get deployment,service -n istio-system
+run_section 27 'Ingress controller topology' get deployment,daemonset,service "${scope[@]}" -l app.kubernetes.io/component=controller
+run_section 28 'Istio control plane' get deployment,service "${scope[@]}" -l app=istiod
 run_section 29 'Istio traffic and mTLS' get virtualservice,destinationrule,peerauthentication,authorizationpolicy -A
 run_section 30 'CNI health (Calico)' get tigerastatus
 
@@ -180,8 +195,8 @@ run_section 31 'Storage classes' get storageclass
 run_section 32 'Persistent volumes' get pv
 run_section 33 'Persistent volume claims' get pvc "${scope[@]}"
 run_section 34 'Volume snapshots' get volumesnapshot "${scope[@]}"
-section_json_summary 35 'ConfigMaps metadata' '[.items[] | {namespace:.metadata.namespace,name:.metadata.name,created:.metadata.creationTimestamp,keys:((.data // {})|keys)}]' get configmap "${scope[@]}"
-section_json_summary 36 'Secrets metadata only' '[.items[] | {namespace:.metadata.namespace,name:.metadata.name,type:.type,created:.metadata.creationTimestamp,keys:((.data // {})|keys)}]' get secret "${scope[@]}"
+skip_sensitive_section 35 'ConfigMaps metadata'
+skip_sensitive_section 36 'Secrets metadata'
 
 # Identity, governance, observability and GitOps.
 run_section 37 'Service accounts' get serviceaccount "${scope[@]}"
@@ -190,18 +205,19 @@ run_section 39 'ClusterRoles and ClusterRoleBindings' get clusterrole,clusterrol
 run_section 40 'Custom resource definitions' get crd
 run_section 41 'Admission webhooks' get validatingwebhookconfiguration,mutatingwebhookconfiguration
 run_section 42 'Kyverno policies' get clusterpolicy,policy "${scope[@]}"
-run_section 43 'Argo CD Applications' get applications -n argocd
-run_section 44 'Argo CD application health' get applications -n argocd -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision
-run_section 45 'Prometheus stack' get deployment,statefulset,service -n monitoring
+run_section 43 'Argo CD Applications' get applications "${scope[@]}"
+run_section 44 'Argo CD application health' get applications "${scope[@]}" -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision
+run_section 45 'Prometheus stack' get deployment,statefulset,service "${scope[@]}" -l app.kubernetes.io/name=prometheus
 run_section 46 'Prometheus discovery objects' get servicemonitor,podmonitor,prometheusrule "${scope[@]}"
 run_section 47 'Metrics APIs' get --raw /apis/metrics.k8s.io/v1beta1/nodes
-run_section 48 "Warnings and events (requested lookback: $SINCE)" get events "${scope[@]}" --field-selector type=Warning --sort-by=.lastTimestamp
+event_filter="[.items[] | select((.eventTime // .lastTimestamp // .metadata.creationTimestamp // \"\") >= \"$EVENT_CUTOFF\") | {namespace:.metadata.namespace,name:.metadata.name,type:.type,reason:.reason,eventTime:(.eventTime // .lastTimestamp // .metadata.creationTimestamp),regarding:(.regarding // .involvedObject | {kind,name,namespace})}]"
+section_json_summary 48 "Warnings and events (lookback: $SINCE)" "$event_filter" get events "${scope[@]}" --field-selector type=Warning
 run_section 49 'API services' get apiservice
 
-summary="Discovery summary: sections=$sections succeeded=$succeeded n/a=$not_applicable unavailable=$failed"
+summary="Discovery summary: sections=$sections succeeded=$succeeded n/a=$not_applicable partial=$skipped unavailable=$failed"
 printf '\n%s\n' "$summary" | emit
 if [[ -n "$OUTPUT_DIR" ]]; then
-  jq -n --arg generated "$(date -Is)" --arg scope "${NAMESPACE:-all}" --arg timeout "$TIMEOUT" --argjson sections "$sections" --argjson succeeded "$succeeded" --argjson not_applicable "$not_applicable" --argjson unavailable "$failed" '{generated_at:$generated,scope:$scope,read_only:true,secrets:"metadata-only",timeout:$timeout,sections:$sections,succeeded:$succeeded,not_applicable:$not_applicable,unavailable:$unavailable}' > "$OUTPUT_DIR/summary.json"
+  jq -n --arg generated "$(date -Is)" --arg scope "${NAMESPACE:-all}" --arg timeout "$TIMEOUT" --argjson sections "$sections" --argjson succeeded "$succeeded" --argjson not_applicable "$not_applicable" --argjson partial "$skipped" --argjson unavailable "$failed" '{generated_at:$generated,scope:$scope,read_only:true,secrets:"not-collected",configMapValues:"not-collected",timeout:$timeout,sections:$sections,succeeded:$succeeded,not_applicable:$not_applicable,partial:$partial,unavailable:$unavailable}' > "$OUTPUT_DIR/summary.json"
   printf 'Output: %s\n' "$OUTPUT_DIR" | emit
 fi
 (( failed == 0 )) || exit 1

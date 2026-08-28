@@ -15,7 +15,7 @@ spec:
         releaseName: loki
         valueFiles:
           - $values/kubernetes/logging/loki-values.yaml
-    - repoURL: git@github.com:gefmoura0601-bot/k8s-lab-vmware.git
+    - repoURL: https://github.com/gefmoura0601-bot/k8s-lab-vmware.git
       targetRevision: main
       ref: values
   destination:

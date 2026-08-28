@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -50,6 +51,23 @@ class PrometheusTelemetryTests(unittest.TestCase):
         self.assertIn('k8s_pod_name=~"orders-engine-.*"', match.selector)
         self.assertIn('memory_type="managed"', match.selector)
         self.assertEqual(match.matched_by, "pod-prefix")
+
+    def test_loopback_and_link_local_prometheus_destinations_are_rejected(self) -> None:
+        with patch.object(telemetry.socket, "getaddrinfo", return_value=[(2, 1, 6, "", ("127.0.0.1", 9090))]):
+            with self.assertRaises(telemetry.TelemetryError):
+                telemetry.validate_url("http://prometheus.example:9090")
+        with patch.object(telemetry.socket, "getaddrinfo", return_value=[(2, 1, 6, "", ("169.254.169.254", 80))]):
+            with self.assertRaises(telemetry.TelemetryError):
+                telemetry.validate_url("http://metadata.example")
+
+    def test_prometheus_allowlist_is_enforced(self) -> None:
+        address = [(2, 1, 6, "", ("10.0.0.10", 9090))]
+        with patch.dict(telemetry.os.environ, {"PROMETHEUS_ALLOWED_HOSTS": "approved.example"}), patch.object(
+            telemetry.socket, "getaddrinfo", return_value=address
+        ):
+            self.assertEqual("http://approved.example:9090", telemetry.validate_url("http://approved.example:9090"))
+            with self.assertRaises(telemetry.TelemetryError):
+                telemetry.validate_url("http://unapproved.example:9090")
 
     def test_runtime_is_derived_from_arbitrary_manifest_content(self) -> None:
         dotnet = {

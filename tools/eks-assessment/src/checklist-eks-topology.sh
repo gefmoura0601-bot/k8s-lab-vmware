@@ -142,8 +142,14 @@ topology_workload_security() {
 
 run_topology_checks() {
   printf '\n== TOPOLOGIA DA PLATAFORMA ==\n'
-  local namespace
-  for namespace in argocd apps databases messaging workers monitoring istio-system nginx-lab; do topology_namespace "$namespace"; done
-  topology_calico; topology_argocd; topology_istio; topology_observability
-  topology_data_and_messaging; topology_autoscaling_and_policies; topology_workload_security
+  if [[ "${ASSESSMENT_TOPOLOGY_PROFILE:-generic}" == "lab-vmware" ]]; then
+    local namespace
+    for namespace in argocd apps databases messaging workers monitoring istio-system nginx-lab; do topology_namespace "$namespace"; done
+    topology_calico; topology_argocd; topology_istio; topology_observability
+    topology_data_and_messaging; topology_autoscaling_and_policies; topology_workload_security
+    return
+  fi
+  not_evaluated "Topologia específica" "perfil genérico; defina ASSESSMENT_TOPOLOGY_PROFILE=lab-vmware somente para o lab conhecido"
+  topology_autoscaling_and_policies
+  topology_workload_security
 }

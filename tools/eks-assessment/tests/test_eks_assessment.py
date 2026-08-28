@@ -79,6 +79,69 @@ class AssessmentRegressionTests(unittest.TestCase):
         command = mocked.call_args.args[0]
         self.assertIn("-n", command)
         self.assertIn("team-a", command)
+
+    def test_sensitive_resources_are_not_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            comprehensive, "run_kubectl"
+        ) as mocked:
+            result = comprehensive.collect_universal_inventory(
+                Path(temporary),
+                {"secrets", "configmaps"},
+                set(),
+                {},
+                {},
+                30,
+                200,
+                1,
+                comprehensive.ApiBudget(10, 60, 1024 * 1024, 0),
+                0,
+            )
+        mocked.assert_not_called()
+        self.assertEqual("PARTIAL", result["state"])
+        self.assertNotIn("secrets", comprehensive.RESOURCE_SPECS)
+
+    def test_api_discovery_failure_never_proves_not_applicable(self) -> None:
+        failed = subprocess.CompletedProcess(["kubectl"], 1, "", "Forbidden")
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            comprehensive, "run_kubectl", return_value=failed
+        ), patch.object(comprehensive, "write_collection_provenance"):
+            _raw, collection = comprehensive.collect_live(
+                Path(temporary), 5, 50, 1,
+                comprehensive.ApiBudget(1000, 60, 1024 * 1024, 0),
+                0,
+            )
+        states = {entry["state"] for entry in collection["resources"].values()}
+        self.assertEqual({"PARTIAL"}, states)
+
+    def test_snapshot_sanitization_removes_arbitrary_values(self) -> None:
+        source = {
+            "items": [{
+                "metadata": {"name": "api", "uid": "hidden"},
+                "spec": {"containers": [{"env": [
+                    {"name": "PUBLIC_SETTING", "value": "must-not-persist"},
+                    {"name": "JAVA_TOOL_OPTIONS", "value": "-XX:+UseG1GC"},
+                ]}]},
+            }]
+        }
+        rendered = str(comprehensive.sanitize_snapshot_tree(source))
+        self.assertNotIn("must-not-persist", rendered)
+        self.assertNotIn("hidden", rendered)
+        self.assertIn("-XX:+UseG1GC", rendered)
+
+    def test_resume_requires_matching_identity_and_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pods.json").write_text('{"items":[]}', encoding="utf-8")
+            identity = {"context": "ctx", "serverHash": "server", "namespaceScope": "team-a"}
+            with patch.object(comprehensive, "collection_identity", return_value=identity):
+                comprehensive.write_collection_provenance(root, "team-a")
+                valid, _reason = comprehensive.valid_resume_provenance(root, "team-a")
+                self.assertTrue(valid)
+                (root / "pods.json").write_text('{"items":[{}]}', encoding="utf-8")
+                valid, reason = comprehensive.valid_resume_provenance(root, "team-a")
+                self.assertFalse(valid)
+                self.assertIn("integrity mismatch", reason)
+
     def test_non_eks_environment_is_explicitly_not_applicable(self) -> None:
         collector = aws_assessment.AwsCollector("", "", 5, 0, 0, 10, False)
         result = collector.result()
@@ -128,6 +191,13 @@ class AssessmentRegressionTests(unittest.TestCase):
             ],
         ):
             self.assertEqual(dashboard.eks_cluster_name(), "prod-blue")
+
+    def test_dashboard_and_menu_are_loopback_only(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        dashboard_source = (root / "src" / "assessment_dashboard.py").read_text(encoding="utf-8")
+        menu_source = (root / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
+        self.assertIn('default="127.0.0.1"', dashboard_source)
+        self.assertNotIn("--host 0.0.0.0", menu_source)
 
 
 if __name__ == "__main__":

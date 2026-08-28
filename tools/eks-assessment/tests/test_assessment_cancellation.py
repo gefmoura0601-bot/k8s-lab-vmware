@@ -83,6 +83,12 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertNotIn("kubectl patch", preflight)
         self.assertNotIn("kubectl delete", preflight)
 
+    def test_help_and_version_are_processed_before_dependencies(self) -> None:
+        menu = (Path(__file__).resolve().parents[1] / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
+        self.assertLess(menu.index('-h|--help) usage; exit 0'), menu.index("need kubectl"))
+        self.assertIn('--version)', menu)
+        self.assertIn('http://127.0.0.1:$PORT', menu)
+
 
 if __name__ == "__main__":
     unittest.main()
