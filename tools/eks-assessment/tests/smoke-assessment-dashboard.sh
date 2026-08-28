@@ -104,6 +104,8 @@ grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
 
 collect_page="$(curl -fsS "$BASE_URL/collect")"
 grep -Fq 'máximo 30 min' <<<"$collect_page"
+grep -Fq 'class="checkbox-row"' <<<"$collect_page"
+grep -Fq 'type="checkbox" name="account_security"' <<<"$collect_page"
 unauthorized_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/collect")"
 [[ "$unauthorized_code" == "403" ]] || { echo "unauthenticated collection was not rejected" >&2; exit 1; }
 
