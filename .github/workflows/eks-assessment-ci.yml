@@ -28,4 +28,9 @@ jobs:
         run: |
           python3 -m compileall -q tools/eks-assessment/src tools/eks-assessment/tests
           cd tools/eks-assessment
-          PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
+          for test_file in tests/test_*.py; do
+            if ! PYTHONPATH=src python3 "$test_file"; then
+              echo "::error file=tools/eks-assessment/$test_file::Python test file failed: $test_file"
+              exit 1
+            fi
+          done

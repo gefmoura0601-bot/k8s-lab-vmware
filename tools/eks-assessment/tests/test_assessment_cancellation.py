@@ -93,6 +93,7 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn('--version)', menu)
         self.assertIn('--host 0.0.0.0', menu)
         self.assertIn('--allow-remote', menu)
+        self.assertIn('--access-token', menu)
 
 
 if __name__ == "__main__":

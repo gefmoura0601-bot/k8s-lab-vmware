@@ -200,6 +200,18 @@ class AssessmentRegressionTests(unittest.TestCase):
         self.assertIn('parser.add_argument("--allow-remote", action="store_true")', dashboard_source)
         self.assertIn("--host 0.0.0.0", menu_source)
         self.assertIn("--allow-remote", menu_source)
+        self.assertIn('parser.add_argument("--access-token", default="")', dashboard_source)
+        self.assertIn("--access-token", menu_source)
+        self.assertIn("token_urlsafe(32)", menu_source)
+
+    def test_dashboard_suggests_prometheus_cluster_service(self) -> None:
+        services = subprocess.CompletedProcess(
+            ["kubectl"], 0,
+            '{"items":[{"metadata":{"name":"kube-prometheus-stack-prometheus","labels":{"app.kubernetes.io/name":"prometheus"}},"spec":{"clusterIP":"10.97.127.131","ports":[{"name":"http-web","port":9090}]}}]}',
+            "",
+        )
+        with patch.object(dashboard, "run", return_value=services):
+            self.assertEqual(dashboard.prometheus_url_suggestion(), "http://10.97.127.131:9090")
 
 
 if __name__ == "__main__":
