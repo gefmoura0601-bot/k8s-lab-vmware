@@ -279,16 +279,98 @@ terminal(){
 dashboard_port_in_use(){
   (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
 }
+dashboard_listener_pid(){
+  command -v ss >/dev/null 2>&1 || return 1
+  ss -ltnp 2>/dev/null | awk -v port=":$PORT" '$4 ~ (port "$") {print}' | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -1
+}
+assessment_dashboard_pid(){
+  local pid command_line
+  pid="$(dashboard_listener_pid)"
+  [[ "$pid" =~ ^[0-9]+$ && -r "/proc/$pid/cmdline" ]] || return 1
+  command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+  [[ "$command_line" == *assessment_dashboard.py* && "$command_line" == *"--port $PORT"* ]] || return 1
+  printf '%s\n' "$pid"
+}
+next_dashboard_port(){
+  local candidate original="$PORT"
+  for ((candidate=original + 1; candidate <= original + 100; candidate++)); do
+    PORT="$candidate"
+    if ! dashboard_port_in_use; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  PORT="$original"
+  return 1
+}
+stop_assessment_dashboard(){
+  local pid="$1" attempt
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  assessment_dashboard_pid | grep -qx "$pid" || return 1
+  kill -TERM "$pid" 2>/dev/null || return 1
+  for attempt in {1..30}; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  return 1
+}
 web(){
-  local public_host access_token
+  local public_host access_token pid choice new_port
   [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
-  if dashboard_port_in_use; then
-    echo "ERRO: a porta $PORT já está em uso. Encerre o processo antigo ou use DASHBOARD_PORT=<porta-livre>." >&2
-    return 1
-  fi
   public_host="${DASHBOARD_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
   public_host="${public_host:-127.0.0.1}"
+  while dashboard_port_in_use; do
+    pid="$(assessment_dashboard_pid || true)"
+    echo "A porta $PORT já está em uso."
+    if [[ -n "$pid" ]]; then
+      cat <<EOF
+1) Usar o dashboard atual em http://$public_host:$PORT
+2) Encerrar o dashboard atual (PID $pid) e iniciar outro na mesma porta
+3) Iniciar outro dashboard na próxima porta livre
+0) Voltar
+EOF
+      read -r -p 'Opção: ' choice
+      case "$choice" in
+        1)
+          echo "Dashboard atual: http://$public_host:$PORT"
+          echo "Use a sessão já autenticada no navegador ou a URL temporária exibida quando ele foi iniciado."
+          return 0
+          ;;
+        2)
+          if stop_assessment_dashboard "$pid"; then
+            echo "Dashboard atual encerrado. Iniciando outro na porta $PORT."
+          else
+            echo "ERRO: não foi possível encerrar com segurança o dashboard PID $pid." >&2
+            return 1
+          fi
+          ;;
+        3)
+          new_port="$(next_dashboard_port)" || { echo "ERRO: nenhuma porta livre encontrada entre $((PORT + 1)) e $((PORT + 100))." >&2; return 1; }
+          PORT="$new_port"
+          echo "Novo dashboard será iniciado na porta $PORT."
+          ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; continue ;;
+      esac
+    else
+      cat <<EOF
+O processo da porta $PORT não foi identificado como dashboard do assessment e não será encerrado.
+1) Iniciar o dashboard na próxima porta livre
+0) Voltar
+EOF
+      read -r -p 'Opção: ' choice
+      case "$choice" in
+        1)
+          new_port="$(next_dashboard_port)" || { echo "ERRO: nenhuma porta livre encontrada entre $((PORT + 1)) e $((PORT + 100))." >&2; return 1; }
+          PORT="$new_port"
+          echo "Novo dashboard será iniciado na porta $PORT."
+          ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; continue ;;
+      esac
+    fi
+  done
   access_token="$($PYTHON_BIN -c 'import secrets; print(secrets.token_urlsafe(32))')"
   echo "Dashboard: http://$public_host:$PORT/?access_token=$access_token"
   echo "O access token é temporário e válido somente durante esta execução."
