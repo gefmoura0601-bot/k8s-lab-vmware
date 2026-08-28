@@ -120,6 +120,18 @@ def main() -> int:
     aws_report = documents.get("aws-eks-assessment.json", {})
     if aws_report.get("readOnly") is not True or (aws_report.get("safety") or {}).get("mutations") != 0:
         errors.append("AWS/EKS read-only safety invariant missing")
+    cis_path = root / "cis-security-assessment.json"
+    if cis_path.is_file():
+        cis_report = parse(cis_path, errors)
+        allowed_applicability = {"APPLICABLE", "NOT_APPLICABLE", "MANAGED_PROVIDER", "EVIDENCE_UNAVAILABLE", "MANUAL_REVIEW"}
+        allowed_responsibility = {"CUSTOMER", "CLOUD_PROVIDER", "SHARED"}
+        if cis_report.get("readOnly") is not True or "Não representa certificação" not in str(cis_report.get("notice", "")):
+            errors.append("CIS posture disclaimer or read-only invariant missing")
+        for control in cis_report.get("controls", []):
+            if control.get("applicability") not in allowed_applicability or control.get("managedResponsibility") not in allowed_responsibility:
+                errors.append("invalid CIS applicability or responsibility")
+            if control.get("applicability") in {"EVIDENCE_UNAVAILABLE", "MANUAL_REVIEW"} and control.get("status") == "PASS":
+                errors.append("CIS control passed without evidence")
     summary = report.get("summary") or {}
     if int(summary.get("workloads") or 0) == 0 or int(summary.get("containers") or 0) == 0:
         errors.append("workload/container inventory is empty")

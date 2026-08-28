@@ -325,7 +325,7 @@ def details(directory: Path) -> dict:
     rabbit = next((x for x in resources["statefulsets"] if "rabbit" in x["name"].lower()), None)
     scanner_summary = comprehensive.get("summary") or {}
     summary = {"nodes": len(resources["nodes"]), "readyNodes": sum(1 for x in resources["nodes"] if x["ready"]), "pods": len(resources["pods"]), "running": phases["Running"], "pending": phases["Pending"], "failed": phases["Failed"], "deployments": len(resources["deployments"]), "statefulsets": len(resources["statefulsets"]), "daemonsets": len(resources["daemonsets"]), "jobs": len(resources["jobs"]), "cronjobs": len(resources["cronjobs"]), "rollouts": len(resources["rollouts"]), "namespaces": len(resources["namespaces"]), "services": len(resources["services"]), "pvcs": len(resources["pvcs"]), "hpas": len(resources["hpas"]), "keda": len(resources["keda"]), "vpas": len(resources["vpas"]), "rabbitReady": rabbit["ready"] if rabbit else 0, "rabbitDesired": rabbit.get("desired", 0) if rabbit else 0, **scanner_summary}
-    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
+    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
         value = metadata(directory) if directory else {"clusterName": cluster()[1]}
         ident = directory.name if directory else ""
         cq = urlencode({"collection": ident}) if ident else ""
-        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Capacidade"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
+        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Capacidade"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
         nav = []
         for key, path, label in links:
             separator = "&" if "?" in path else "?"
@@ -957,6 +957,37 @@ class Handler(BaseHTTPRequestHandler):
             f'<h2>Inventário sanitizado</h2>{table(inventory_rows, [("domain","Domínio"),("count","Itens"),("detail","Resumo")])}'
         )
         return self.layout("AWS / EKS", body, directory, "aws")
+
+    def cis_security(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        report = details(directory).get("cisSecurity") or {}
+        if not report:
+            return self.layout("CIS Security", '<h1>CIS Security</h1><div class="message">Esta coleta é anterior à geração do artefato CIS Security. Execute uma nova coleta.</div>', directory, "cis")
+        summary = report.get("summary") or {}
+        rows = []
+        for item in report.get("controls") or []:
+            evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, sort_keys=True)
+            rows.append({**item, "evidenceText": evidence[:800] + ("..." if len(evidence) > 800 else "")})
+        score = summary.get("scorePercent")
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Plataforma</small><b>{esc(report.get("platform", "UNKNOWN"))}</b></div>'
+            f'<div><small>Controles</small><b>{summary.get("controls", 0)}</b></div>'
+            f'<div><small>Avaliados no score</small><b>{summary.get("scored", 0)}</b></div>'
+            f'<div><small>PASS</small><b>{summary.get("passed", 0)}</b></div>'
+            f'<div><small>WARN</small><b>{summary.get("warnings", 0)}</b></div>'
+            f'<div><small>Score evidenciável</small><b>{esc(str(score) + "%" if score is not None else "N/A")}</b></div>'
+            '</div>'
+        )
+        body = (
+            f'<h1>CIS Security</h1><div class="message warn"><b>{esc(report.get("notice"))}</b> '
+            'Controles gerenciados pelo provider, revisões manuais e evidência indisponível não reduzem artificialmente o score.</div>'
+            f'{facts}<h2>Controles por evidência e responsabilidade</h2>'
+            f'{table(rows, [("controlId","Control ID"),("title","Controle"),("evidenceSource","Evidence Source"),("applicability","Aplicabilidade"),("assessmentMode","Modo"),("managedResponsibility","Responsabilidade"),("status","Status"),("evidenceText","Evidência"),("recommendation","Recomendação")])}'
+        )
+        return self.layout("CIS Security", body, directory, "cis")
+
     def coverage(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         value = details(directory)
@@ -1129,6 +1160,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/capacity": return self.send_html(self.capacity(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
+        if path == "/cis-security": return self.send_html(self.cis_security(directory))
         if path == "/coverage": return self.send_html(self.coverage(directory))
         if path == "/api-inventory": return self.send_html(self.api_inventory(directory, query))
         if path == "/compare": return self.send_html(self.compare(directory, query))
