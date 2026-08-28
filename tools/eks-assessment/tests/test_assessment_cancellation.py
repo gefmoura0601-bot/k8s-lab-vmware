@@ -15,6 +15,18 @@ from assessment_process_supervisor import CollectionSupervisor
 
 
 class CollectionSupervisorTests(unittest.TestCase):
+    def test_progress_tracks_completed_components(self) -> None:
+        supervisor = CollectionSupervisor()
+        supervisor.start("progress-test", 60, ["one", "two"])
+        initial = supervisor.status()
+        self.assertEqual(0, initial["progressPercent"])
+        self.assertEqual(2, len(initial["plannedComponents"]))
+        result = supervisor.run("one", [sys.executable, "-c", "print('ok')"], timeout=5)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(50, supervisor.status()["progressPercent"])
+        supervisor.finish("COMPLETED")
+        self.assertEqual(100, supervisor.status()["progressPercent"])
+
     def test_component_timeout_is_bounded(self) -> None:
         supervisor = CollectionSupervisor()
         supervisor.start("timeout-test", 60)

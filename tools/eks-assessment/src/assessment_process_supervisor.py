@@ -61,7 +61,7 @@ class CollectionSupervisor:
             "cancelRequested": False,
         }
 
-    def start(self, collection_id: str, max_duration_seconds: int) -> None:
+    def start(self, collection_id: str, max_duration_seconds: int, planned_components: list[str] | None = None) -> None:
         duration = max(60, min(int(max_duration_seconds), 7200))
         with self._lock:
             if self._state.get("active"):
@@ -80,6 +80,9 @@ class CollectionSupervisor:
                 "cancelRequested": False,
                 "stopKind": "",
                 "reason": "",
+                "plannedComponents": list(planned_components or []),
+                "completedComponents": [],
+                "progressPercent": 0,
             }
 
     def _mark_stop(self, kind: str, reason: str) -> None:
@@ -159,6 +162,12 @@ class CollectionSupervisor:
                 if self._process is process:
                     self._process = None
                     self._state["pid"] = None
+                completed = self._state.setdefault("completedComponents", [])
+                if component not in completed:
+                    completed.append(component)
+                planned = self._state.get("plannedComponents") or []
+                if planned:
+                    self._state["progressPercent"] = min(99, round(len(completed) * 100 / len(planned)))
 
         if self._stop.is_set():
             stopped_result = self._stopped_result(args)
@@ -178,6 +187,8 @@ class CollectionSupervisor:
             if self._state.get("active"):
                 inferred = self._state.get("stopKind") or status or "COMPLETED"
                 self._state.update({"status": inferred, "active": False, "component": "", "pid": None, "finishedAt": utc_iso()})
+                if inferred == "COMPLETED":
+                    self._state["progressPercent"] = 100
             return dict(self._state)
 
     def shutdown(self) -> None:
