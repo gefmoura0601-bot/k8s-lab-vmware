@@ -1101,7 +1101,7 @@ class Handler(BaseHTTPRequestHandler):
             f'<label>Perfil de coleta<select name="profile">{profiles}</select></label>'
             '<label>Namespace (vazio = cluster inteiro)<input name="namespace" placeholder="namespace opcional"></label>'
             '<label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label>'
-            '<label><input type="checkbox" name="account_security" value="1"> Incluir GuardDuty/runtime security (requer permissão de conta)</label>'
+            '<label class="checkbox-row"><input type="checkbox" name="account_security" value="1"><span>Incluir GuardDuty/runtime security (requer permissão de conta)</span></label>'
             '<label>Namespace do Service Prometheus (opcional)<input name="prometheus_namespace" placeholder="informar explicitamente"></label>'
             '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
             f'<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" value="{esc(prometheus_url)}" placeholder="http://prometheus.example:9090"></label>'
