@@ -192,12 +192,14 @@ class AssessmentRegressionTests(unittest.TestCase):
         ):
             self.assertEqual(dashboard.eks_cluster_name(), "prod-blue")
 
-    def test_dashboard_and_menu_are_loopback_only(self) -> None:
+    def test_dashboard_requires_explicit_remote_opt_in(self) -> None:
         root = Path(__file__).resolve().parents[1]
         dashboard_source = (root / "src" / "assessment_dashboard.py").read_text(encoding="utf-8")
         menu_source = (root / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
         self.assertIn('default="127.0.0.1"', dashboard_source)
-        self.assertNotIn("--host 0.0.0.0", menu_source)
+        self.assertIn('parser.add_argument("--allow-remote", action="store_true")', dashboard_source)
+        self.assertIn("--host 0.0.0.0", menu_source)
+        self.assertIn("--allow-remote", menu_source)
 
 
 if __name__ == "__main__":

@@ -60,10 +60,12 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn('kill -TERM -- "-$ACTIVE_PID"', menu)
         self.assertIn("ASSESSMENT_MAX_DURATION_SECONDS", menu)
         self.assertIn("--kill-after=10s", menu)
-        self.assertIn("dashboard_process_matches", menu)
-        self.assertIn("dashboard_ready", menu)
         self.assertIn("dashboard_port_in_use", menu)
-        self.assertIn("Iniciar dashboard local seguro", menu)
+        self.assertIn("Abrir dashboard web nesta sessão", menu)
+        self.assertNotIn("dashboard-$PORT.pid", menu)
+        self.assertNotIn("nohup setsid", menu)
+        self.assertIn("DASHBOARD_FOREGROUND", menu)
+        self.assertIn('[[ "$op" == 0 || "$op" == 5 ]]', menu)
         self.assertIn('"$TOOL_ROOT/web/public"', menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
@@ -89,7 +91,8 @@ class CollectionSupervisorTests(unittest.TestCase):
         menu = (Path(__file__).resolve().parents[1] / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")
         self.assertLess(menu.index('-h|--help) usage; exit 0'), menu.index("need kubectl"))
         self.assertIn('--version)', menu)
-        self.assertIn('http://127.0.0.1:$PORT', menu)
+        self.assertIn('--host 0.0.0.0', menu)
+        self.assertIn('--allow-remote', menu)
 
 
 if __name__ == "__main__":
