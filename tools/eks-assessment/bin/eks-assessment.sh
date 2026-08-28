@@ -314,11 +314,71 @@ stop_assessment_dashboard(){
   done
   return 1
 }
+dashboard_host_rows(){
+  local override="${DASHBOARD_PUBLIC_HOST:-}" ssh_server="" interface cidr host
+  declare -A seen=()
+  if [[ -n "$override" ]]; then
+    if [[ "$override" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+      seen["$override"]=1
+      printf 'Configurado\t%s\n' "$override"
+    else
+      echo "AVISO: DASHBOARD_PUBLIC_HOST inválido; use somente hostname ou endereço IP." >&2
+    fi
+  fi
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    read -r _ _ ssh_server _ <<< "$SSH_CONNECTION"
+    if [[ -n "$ssh_server" && -z "${seen[$ssh_server]:-}" ]]; then
+      seen["$ssh_server"]=1
+      printf 'SSH/remoto\t%s\n' "$ssh_server"
+    fi
+  fi
+  if [[ -z "${seen[127.0.0.1]:-}" ]]; then
+    seen[127.0.0.1]=1
+    printf 'Local neste host\t127.0.0.1\n'
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    while read -r interface cidr; do
+      [[ -n "$interface" && -n "$cidr" ]] || continue
+      [[ "$interface" =~ ^(lo|docker.*|podman.*|veth.*|br-.*|virbr.*|cni.*|flannel.*|cali.*|vxlan.*|tunl.*|cilium.*|kube-ipvs.*)$ ]] && continue
+      host="${cidr%%/*}"
+      [[ "$host" == 127.* || "$host" == 169.254.* || -n "${seen[$host]:-}" ]] && continue
+      seen["$host"]=1
+      printf 'Interface %s\t%s\n' "$interface" "$host"
+    done < <(ip -o -4 addr show scope global 2>/dev/null | awk '{print $2, $4}')
+  else
+    for host in $(hostname -I 2>/dev/null); do
+      [[ "$host" == *:* || "$host" == 127.* || "$host" == 169.254.* || -n "${seen[$host]:-}" ]] && continue
+      seen["$host"]=1
+      printf 'Interface detectada\t%s\n' "$host"
+    done
+  fi
+}
+dashboard_url_host(){
+  local host="$1"
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then printf '[%s]' "$host"; else printf '%s' "$host"; fi
+}
+dashboard_primary_host(){
+  local _label host
+  while IFS=$'\t' read -r _label host; do
+    [[ -z "$host" ]] || { printf '%s\n' "$host"; return 0; }
+  done < <(dashboard_host_rows)
+  return 1
+}
+print_dashboard_urls(){
+  local access_token="${1:-}" label host formatted suffix=""
+  [[ -z "$access_token" ]] || suffix="/?access_token=$access_token"
+  echo "URLs do dashboard:"
+  while IFS=$'\t' read -r label host; do
+    [[ -n "$host" ]] || continue
+    formatted="$(dashboard_url_host "$host")"
+    printf '  %-20s http://%s:%s%s\n' "$label:" "$formatted" "$PORT" "$suffix"
+  done < <(dashboard_host_rows)
+}
 web(){
   local public_host access_token pid choice new_port
   [[ -n "$PYTHON_BIN" ]] || select_python || { echo "ERRO: Python 3.10+ ausente" >&2; return 1; }
   [[ -r "$TOOL_ROOT/web/public/styles.css" ]] || { echo "ERRO: CSS do dashboard ausente em $TOOL_ROOT/web/public/styles.css" >&2; return 1; }
-  public_host="${DASHBOARD_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+  public_host="$(dashboard_primary_host)"
   public_host="${public_host:-127.0.0.1}"
   while dashboard_port_in_use; do
     pid="$(assessment_dashboard_pid || true)"
@@ -333,7 +393,7 @@ EOF
       read -r -p 'Opção: ' choice
       case "$choice" in
         1)
-          echo "Dashboard atual: http://$public_host:$PORT"
+          print_dashboard_urls
           echo "Use a sessão já autenticada no navegador ou a URL temporária exibida quando ele foi iniciado."
           return 0
           ;;
@@ -372,7 +432,7 @@ EOF
     fi
   done
   access_token="$($PYTHON_BIN -c 'import secrets; print(secrets.token_urlsafe(32))')"
-  echo "Dashboard: http://$public_host:$PORT/?access_token=$access_token"
+  print_dashboard_urls "$access_token"
   echo "O access token é temporário e válido somente durante esta execução."
   echo "O servidor ficará preso a esta sessão. Pressione Ctrl+C para encerrar."
   DASHBOARD_FOREGROUND=1
