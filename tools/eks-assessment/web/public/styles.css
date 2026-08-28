@@ -106,6 +106,14 @@ aside { background: #fff; border-right: 1px solid #d1d7e0; padding: 20px 0; }
   padding: 0;
   accent-color: #274d95;
 }
+.collection-progress { display: grid; gap: 9px; padding: 14px; border: 1px solid #b8c6d9; background: #f7faff; }
+.collection-progress[hidden] { display: none; }
+.progress-heading { display: flex; justify-content: space-between; gap: 16px; color: #263b59; }
+.progress-heading span { font-weight: 800; font-variant-numeric: tabular-nums; }
+.progress-track { height: 16px; overflow: hidden; background: #dce4ee; border: 1px solid #aab8ca; }
+.progress-track span { display: block; width: 0; height: 100%; background: #2d5aa3; transition: width .25s ease; }
+.collection-progress p { margin: 0; color: #506075; font-size: 13px; }
+.collect button:disabled { cursor: wait; opacity: .72; }
 
 .state { background: #fff; border: 1px solid #d3dae5; border-left: 6px solid #55a874; padding: 20px; }
 .state h1 { font-size: 30px; margin: 6px 0; }

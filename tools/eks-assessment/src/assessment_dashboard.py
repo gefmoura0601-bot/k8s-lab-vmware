@@ -1093,7 +1093,7 @@ class Handler(BaseHTTPRequestHandler):
             f'<h1>{"Novo baseline" if baseline else "Nova coleta"}</h1>{control_html}'
             '<p>Assessment adaptativo e somente leitura. O perfil controla concorrência e orçamento, '
             'não muda os critérios. URL Prometheus é opcional, explícita e não pode conter credenciais.</p>'
-            f'<form class="collect" method="post" action="/collect">'
+            f'<form class="collect" id="collection-form" method="post" action="/collect">'
             f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
             f'<input type="hidden" name="baseline" value="{1 if baseline else 0}">'
             f'<label>Ambiente detectado<input value="{esc(environment)}" disabled></label>'
@@ -1106,7 +1106,12 @@ class Handler(BaseHTTPRequestHandler):
             '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
             f'<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" value="{esc(prometheus_url)}" placeholder="http://prometheus.example:9090"></label>'
             f'<label>Janela histórica<select name="prometheus_window">{windows}</select></label>'
-            '<button>Iniciar assessment read-only</button></form>'
+            '<section id="collection-progress" class="collection-progress" hidden aria-live="polite">'
+            '<div class="progress-heading"><b id="progress-title">Preparando coleta</b><span id="progress-value">0%</span></div>'
+            '<div class="progress-track" role="progressbar" aria-label="Progresso da coleta" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>'
+            '<p id="progress-detail">Validando o ambiente...</p></section>'
+            '<button id="collection-submit">Iniciar assessment read-only</button></form>'
+            '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","artifact-validation":"Validando artefatos"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
         )
         return self.layout("Nova coleta", body)
     def do_GET(self):
@@ -1171,6 +1176,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'),
                 409,
             )
+        async_request = self.headers.get("X-Assessment-Async", "") == "1"
         collection_started = False
         final_status = "FAILED"
         try:
@@ -1200,7 +1206,17 @@ class Handler(BaseHTTPRequestHandler):
                 "ASSESSMENT_NAMESPACE": namespace,
                 "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
             }
-            preflight = run(
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"
+            planned_components = ["preflight", "assessment", "discovery", "inventory-services.json", "inventory-pvcs.json", "inventory-hpas.json"]
+            if prometheus_url:
+                planned_components.append("prometheus")
+            planned_components.extend(["comprehensive", "artifact-validation"])
+            max_duration = int(profile_values["duration"])
+            SUPERVISOR.start(ident, max_duration, planned_components)
+            collection_started = True
+            preflight = SUPERVISOR.run(
+                "preflight",
                 ["bash", str(self.repository / "src/assessment-preflight.sh")],
                 cwd=self.repository,
                 env=runtime_env,
@@ -1208,17 +1224,15 @@ class Handler(BaseHTTPRequestHandler):
             )
             preflight_log = (preflight.stdout + preflight.stderr).strip()
             if preflight.returncode != 0:
+                SUPERVISOR.finish("FAILED")
+                if async_request:
+                    return self.send_json({"error": "Preflight falhou", "detail": preflight_log}, 503)
                 return self.send_html(
                     self.layout("Preflight", f'<div class="message bad">Preflight falhou.</div><pre>{esc(preflight_log)}</pre>'),
                     503,
                 )
-            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"
             output = self.root / ident
             output.mkdir(parents=True)
-            max_duration = int(profile_values["duration"])
-            SUPERVISOR.start(ident, max_duration)
-            collection_started = True
             initial_metadata = {
                 "id": ident,
                 "createdAt": utc_iso(),
@@ -1361,13 +1375,18 @@ class Handler(BaseHTTPRequestHandler):
                 json.dumps(value, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            if async_request:
+                return self.send_json({"ok": True, "collection": ident, "redirect": f"/?collection={ident}"})
             self.send_response(303)
             self.send_header("Location", f"/?collection={ident}")
             self.end_headers()
         except Exception as error:
             control = SUPERVISOR.status()
             final_status = control.get("stopKind") or "FAILED"
-            self.send_html(self.layout("Erro", f'<div class="message bad">{esc(error)}</div>'), 500)
+            if async_request:
+                self.send_json({"error": str(error)}, 500)
+            else:
+                self.send_html(self.layout("Erro", f'<div class="message bad">{esc(error)}</div>'), 500)
         finally:
             if collection_started and SUPERVISOR.status().get("active"):
                 SUPERVISOR.finish(final_status)
