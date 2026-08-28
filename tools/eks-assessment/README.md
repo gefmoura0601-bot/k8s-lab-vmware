@@ -99,6 +99,24 @@ Os exemplos não concedem leitura de Secrets ou ConfigMaps. Substitua os namespa
 
 O nome do cluster parte do contexto Kubernetes atual. Para o enriquecimento EKS, ele pode ser obtido do ARN do contexto ou informado por `EKS_CLUSTER_NAME`; a região pode vir do contexto/AWS CLI ou de `AWS_REGION`/`AWS_DEFAULT_REGION`.
 
+## CIS Security
+
+A aba **CIS Security** apresenta uma avaliação de postura baseada na família [CIS Kubernetes Benchmarks](https://www.cisecurity.org/benchmark/kubernetes). A referência atual é Kubernetes 2.0.1 e os perfis gerenciados EKS, AKS e GKE 2.0.0. Essa funcionalidade não é CIS-CAT, não é certificada pelo CIS e não representa certificação nem compliance integral.
+
+Cada controle registra `evidenceSource`, `applicability`, `assessmentMode`, `managedResponsibility`, `status`, evidência sanitizada e recomendação. As origens suportadas são `KubernetesAPI`, `CloudProviderAPI`, `NodeEvidence`, `ControlPlaneEvidence` e `ManualEvidence`. Os estados de aplicabilidade são:
+
+- `APPLICABLE`;
+- `NOT_APPLICABLE`;
+- `MANAGED_PROVIDER`;
+- `EVIDENCE_UNAVAILABLE`;
+- `MANUAL_REVIEW`.
+
+A responsabilidade é `CUSTOMER`, `CLOUD_PROVIDER` ou `SHARED`. O score inclui somente controles automatizados, aplicáveis e atribuídos ao cliente ou de responsabilidade compartilhada. Controles gerenciados pelo provider, manuais ou sem evidência não contam como `PASS` e não reduzem artificialmente o score.
+
+A primeira versão automatiza evidências universais de RBAC wildcard, bindings `cluster-admin`, containers privilegiados, namespaces do host, `runAsNonRoot`, seccomp, uso do default ServiceAccount e cobertura de NetworkPolicy. Em EKS, AKS e GKE, kube-apiserver e etcd aparecem como `MANAGED_PROVIDER`; em self-managed, ficam `EVIDENCE_UNAVAILABLE` até que evidência autorizada seja fornecida. Nenhuma regra exige SSH, `/etc/kubernetes`, filesystem do node ou acesso direto ao control plane.
+
+O relatório estruturado é gravado em `cis-security-assessment.json` e também referenciado por `comprehensive-assessment.json`.
+
 ## Limites e cancelamento
 
 - perfis Web: baixo impacto 15 min, conservador 30 min e exaustivo 60 min;

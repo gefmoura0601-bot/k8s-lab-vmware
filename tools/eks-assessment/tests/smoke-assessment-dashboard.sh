@@ -49,6 +49,7 @@ paths=(
   "/capacity?collection=$COLLECTION"
   "/prometheus?collection=$COLLECTION"
   "/aws?collection=$COLLECTION"
+  "/cis-security?collection=$COLLECTION"
   "/coverage?collection=$COLLECTION"
   "/compare?collection=$COLLECTION"
   "/export?collection=$COLLECTION"
@@ -101,6 +102,12 @@ grep -Fq 'Sinais simplificados e tecnologias' <<<"$prometheus_page"
 aws_page="$(curl -fsS "$BASE_URL/aws?collection=$COLLECTION")"
 grep -Fq 'AWS / Amazon EKS' <<<"$aws_page"
 grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
+
+cis_page="$(curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION")"
+grep -Fq 'CIS Security' <<<"$cis_page"
+if [[ -f "$DIR/cis-security-assessment.json" ]]; then
+  grep -Fq 'Não representa certificação nem compliance integral' <<<"$cis_page"
+fi
 
 collect_page="$(curl -fsS "$BASE_URL/collect")"
 grep -Fq 'máximo 30 min' <<<"$collect_page"
