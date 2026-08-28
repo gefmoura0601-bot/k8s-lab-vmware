@@ -41,7 +41,7 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 ## Executar o menu
 
-O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard web:
+O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard local seguro:
 
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
@@ -57,6 +57,23 @@ python3 tools/eks-assessment/src/assessment_dashboard.py \
 ```
 
 Abra `http://127.0.0.1:8765`. O servidor embutido aceita somente loopback; para acesso remoto, use túnel aprovado ou reverse proxy autenticado com TLS. O namespace escolhido é propagado a todas as consultas namespaced. A URL Prometheus é opcional; credenciais, redirects, loopback, link-local e metadata endpoints são rejeitados. `PROMETHEUS_ALLOWED_HOSTS` restringe opcionalmente os hosts aceitos.
+
+No control plane do lab, preserve o diretório compartilhado de coletas e execute:
+
+```bash
+cd /workspace/tools/eks-assessment
+ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment.sh
+```
+
+No Windows, mantenha este túnel aberto e acesse `http://127.0.0.1:8765`:
+
+```powershell
+ssh.exe -N -i .\iac\vagrant\.vagrant\machines\k8s-master\vmware_desktop\private_key `
+  -o IdentitiesOnly=yes -L 127.0.0.1:8765:127.0.0.1:8765 `
+  vagrant@192.168.109.151
+```
+
+Se a porta estiver ocupada, o menu agora informa o conflito antes de iniciar. Defina, por exemplo, `DASHBOARD_PORT=8766` para usar outra porta e ajuste o túnel para o mesmo valor.
 
 ## Permissões mínimas
 
