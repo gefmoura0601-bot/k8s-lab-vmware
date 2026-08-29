@@ -1,0 +1,1 @@
+{"context":"arn:aws:eks:us-east-1:000000000000:cluster/sanitized","expectedPlatform":"AWS","aws":{"state":"AVAILABLE","findings":[]}}

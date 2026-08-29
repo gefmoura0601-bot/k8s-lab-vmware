@@ -85,7 +85,7 @@ def enrich_control(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize(controls: list[dict[str, Any]]) -> dict[str, Any]:
-    scored = [c for c in controls if c["applicability"] == "APPLICABLE" and c["assessmentMode"] == "AUTOMATED" and c["managedResponsibility"] in {"CUSTOMER", "SHARED"}]
+    scored = [c for c in controls if c["applicability"] == "APPLICABLE" and c["assessmentMode"] == "AUTOMATED" and c["managedResponsibility"] in {"CUSTOMER", "SHARED"} and c.get("status") != "EXEMPTED"]
     customer_relevant = [c for c in controls if c["managedResponsibility"] in {"CUSTOMER", "SHARED"} and c["applicability"] not in {"NOT_APPLICABLE", "MANAGED_PROVIDER"}]
     passed_weight = sum(int(c["riskWeight"]) for c in scored if c["status"] == "PASS")
     total_weight = sum(int(c["riskWeight"]) for c in scored)
@@ -188,7 +188,22 @@ def apply_external_and_lifecycle(controls: list[dict[str, Any]], directory: Path
     for item in controls:
         state = states.get(item.get("controlId"), {}) if isinstance(states, dict) else {}
         item["remediation"] = {key: state.get(key) for key in ("owner", "dueDate", "state", "ticket", "justification", "riskAcceptedUntil") if state.get(key)}
-    return controls, {"acceptedExternalEvidence": len(evidence), "evidenceErrors": errors, "lifecycleEntries": len(states)}
+    exception_path = directory / "cis-exceptions.json"; accepted_exceptions = 0
+    if exception_path.is_file():
+        try: exceptions = json.loads(exception_path.read_text(encoding="utf-8")).get("exceptions", [])
+        except (OSError, json.JSONDecodeError, AttributeError): exceptions = []; errors.append("cis-exceptions.json inválido")
+        now = dt.datetime.now(dt.timezone.utc)
+        for item in controls:
+            candidates = [entry for entry in exceptions if entry.get("controlId") == item.get("controlId")]
+            for entry in candidates:
+                try: valid = dt.datetime.fromisoformat(str(entry.get("validUntil", "")).replace("Z", "+00:00")) > now
+                except ValueError: valid = False
+                if not valid or not entry.get("reason") or not entry.get("approvedBy"): continue
+                resources = set(entry.get("resources") or [])
+                observed = {str(value) for values in (item.get("evidence") or {}).values() if isinstance(values, list) for value in values if isinstance(value, str)}
+                if "*" in resources or observed and observed.issubset(resources):
+                    item["originalStatus"] = item.get("status"); item["status"] = "EXEMPTED"; item["exception"] = entry; accepted_exceptions += 1; break
+    return controls, {"acceptedExternalEvidence": len(evidence), "evidenceErrors": errors, "lifecycleEntries": len(states), "acceptedExceptions": accepted_exceptions}
 
 
 def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any], directory: Path,

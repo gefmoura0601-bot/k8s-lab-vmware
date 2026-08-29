@@ -17,3 +17,11 @@ Hash inválido, evidência vencida ou origem desconhecida são rejeitados e regi
 ```
 
 Campos suportados: `owner`, `dueDate`, `state`, `ticket`, `justification` e `riskAcceptedUntil`. Não inclua credenciais, Secrets ou dados pessoais.
+
+`cis-exceptions.json` registra exceções temporárias sem produzir falso `PASS`:
+
+```json
+{"exceptions":[{"controlId":"cis.k8s.pod.host-path","resources":["kube-system/DaemonSet/agent"],"reason":"agente de infraestrutura aprovado","approvedBy":"security","validUntil":"2026-12-31T00:00:00Z"}]}
+```
+
+Quando todos os recursos encontrados estiverem cobertos por uma exceção válida, o controle fica `EXEMPTED` e sai do Posture Score. Exceção vencida, sem justificativa/aprovador ou com escopo incompleto é ignorada. Use `"*"` somente para uma aceitação formal de todo o controle.
