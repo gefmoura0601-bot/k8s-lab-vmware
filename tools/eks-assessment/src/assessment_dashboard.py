@@ -988,7 +988,7 @@ class Handler(BaseHTTPRequestHandler):
             control_cards.append(
                 f'<details class="cis-control {esc(str(item.get("status", "UNKNOWN")))}"><summary><span><b>{esc(item.get("controlId"))}</b> — {esc(item.get("title"))}</span><span class="metric-status {esc(str(item.get("status", "UNKNOWN")).lower())}">{esc(item.get("status"))}</span></summary>'
                 f'<div class="cis-meta"><span>Domínio: <b>{esc(item.get("domain"))}</b></span><span>Prioridade: <b>{esc(item.get("priority"))}</b></span><span>Esforço: <b>{esc(item.get("effort"))}</b></span><span>Impacto: <b>{esc(item.get("impact"))}</b></span><span>Aplicabilidade: <b>{esc(item.get("applicability"))}</b></span><span>Responsabilidade: <b>{esc(item.get("managedResponsibility"))}</b></span><span>Fonte: <b>{esc(item.get("evidenceSource"))}</b></span><span>Modo: <b>{esc(item.get("assessmentMode"))}</b></span></div>'
-                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre><h3>Recomendação</h3><p>{esc(item.get("recommendation"))}</p><h3>Validação read-only</h3><pre>{esc(item.get("validationCommand"))}</pre><h3>Exemplo de remediação</h3><p>{esc(item.get("remediationExample"))}</p></details>'
+                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre><h3>Lifecycle</h3><pre>{esc(json.dumps(item.get("remediation") or {}, ensure_ascii=False, indent=2))}</pre><h3>Recomendação</h3><p>{esc(item.get("recommendation"))}</p><h3>Validação read-only</h3><pre>{esc(item.get("validationCommand"))}</pre><h3>Exemplo de remediação</h3><p>{esc(item.get("remediationExample"))}</p></details>'
             )
         score = summary.get("postureScorePercent", summary.get("scorePercent"))
         controls_html = "".join(control_cards) if control_cards else '<div class="message">Nenhum controle corresponde aos filtros.</div>'
@@ -1024,13 +1024,22 @@ class Handler(BaseHTTPRequestHandler):
         body = (
             f'<h1>CIS Security</h1><div class="message warn"><b>{esc(report.get("notice"))}</b> '
             'Controles gerenciados pelo provider, revisões manuais e evidência indisponível não reduzem artificialmente o score.</div>'
-            f'{facts}<div class="cis-actions"><a class="button" href="/export-cis?collection={quote_plus(directory.name)}">Exportar relatório CIS JSON</a></div>'
+            f'{facts}<div class="cis-actions"><a class="button" href="/export-cis?collection={quote_plus(directory.name)}">Exportar relatório CIS JSON</a><a class="button" href="/cis-report?collection={quote_plus(directory.name)}">Relatório executivo / PDF</a></div>'
             f'<h2>Score por domínio</h2>{table(domain_rows, [("domain","Domínio"),("controls","Controles avaliados"),("passed","PASS"),("scorePercent","Posture Score %")])}'
             f'<h2>Plano de ação priorizado</h2>{table(recommendation_rows, [("priority","Prioridade"),("domain","Domínio"),("controlId","Control ID"),("title","Controle"),("impact","Impacto"),("effort","Esforço"),("recommendation","Recomendação"),("validationCommand","Validação read-only")])}'
             f'<h2>Comparação CIS</h2>{comparison_form}{comparison}'
             f'<h2>Controles por evidência e responsabilidade <small>{len(rows)} resultado(s)</small></h2>{filter_form}{controls_html}'
         )
         return self.layout("CIS Security", body, directory, "cis")
+
+    def cis_report(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        report = details(directory).get("cisSecurity") or {}; summary = report.get("summary") or {}
+        if not report: return self.layout("Relatório CIS", '<div class="message">Relatório CIS indisponível.</div>', directory, "cis")
+        actions = sorted((c for c in report.get("controls") or [] if c.get("status") == "WARN"), key=lambda c: (-int(c.get("riskWeight") or 0), str(c.get("controlId"))))
+        rows = [{"priority": c.get("priority"), "domain": c.get("domain"), "control": c.get("title"), "owner": (c.get("remediation") or {}).get("owner", "Não atribuído"), "due": (c.get("remediation") or {}).get("dueDate", "-"), "state": (c.get("remediation") or {}).get("state", "OPEN"), "recommendation": c.get("recommendation")} for c in actions]
+        body = f'<div class="print-only-note">Use Imprimir → Salvar como PDF.</div><h1>Relatório executivo — CIS Security</h1><p><b>Coleta:</b> {esc(directory.name)} · <b>Plataforma:</b> {esc(report.get("platform"))}</p><div class="message warn">{esc(report.get("notice"))}</div><div class="facts"><div><small>Posture Score</small><b>{summary.get("postureScorePercent","N/A")}%</b></div><div><small>Evidence Coverage</small><b>{summary.get("evidenceCoveragePercent","N/A")}%</b></div><div><small>Riscos</small><b>{summary.get("warnings",0)}</b></div><div><small>Evidências externas</small><b>{summary.get("acceptedExternalEvidence",0)}</b></div></div><h2>Score por domínio</h2>{table(summary.get("domains") or [], [("domain","Domínio"),("controls","Controles"),("passed","PASS"),("scorePercent","Score %")])}<h2>Plano de ação</h2>{table(rows, [("priority","Prioridade"),("domain","Domínio"),("control","Controle"),("owner","Owner"),("due","Prazo"),("state","Estado"),("recommendation","Recomendação")])}<h2>Matriz de responsabilidade</h2>{table([{"responsibility": k, "controls": v} for k,v in (summary.get("responsibility") or {}).items()], [("responsibility","Responsabilidade"),("controls","Controles")])}'
+        return self.layout("Relatório executivo CIS", body, directory, "cis")
 
     def coverage(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
@@ -1205,6 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
+        if path == "/cis-report": return self.send_html(self.cis_report(directory))
         if path == "/coverage": return self.send_html(self.coverage(directory))
         if path == "/api-inventory": return self.send_html(self.api_inventory(directory, query))
         if path == "/compare": return self.send_html(self.compare(directory, query))

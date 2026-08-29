@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -13,6 +14,7 @@ DOMAIN_LABELS = {
     "rbac": "RBAC e identidade", "service-account": "RBAC e identidade",
     "pod": "Pod Security", "image": "Supply Chain", "network": "Network Security",
     "admission": "Admission Control", "control-plane": "Control Plane", "node": "Nodes",
+    "aws": "Cloud Provider",
 }
 HIGH_RISK = {"cis.k8s.rbac.wildcards", "cis.k8s.rbac.cluster-admin", "cis.k8s.rbac.impersonation", "cis.k8s.pod.privileged", "cis.k8s.pod.host-namespaces"}
 MEDIUM_RISK = {"cis.k8s.rbac.secrets", "cis.k8s.pod.capabilities", "cis.k8s.pod.privilege-escalation", "cis.k8s.image.digest", "cis.k8s.network.external-services", "cis.k8s.admission.policy-enforcement"}
@@ -27,6 +29,8 @@ def workload_specs(workloads: Iterable[dict[str, Any]], pods: Iterable[dict[str,
     for obj in [*workloads, *pods]:
         meta, spec = obj.get("metadata") or {}, obj.get("spec") or {}
         kind = str(obj.get("kind") or "Workload")
+        if kind == "Pod" and any((owner.get("controller") is True) for owner in meta.get("ownerReferences") or []):
+            continue
         if kind in {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"}:
             spec = ((spec.get("template") or {}).get("spec") or {})
         elif kind == "CronJob":
@@ -134,6 +138,59 @@ def compare_reports(before: dict[str, Any], after: dict[str, Any]) -> dict[str, 
     return {"before": old_summary, "after": new_summary, "postureDelta": new_posture - old_posture, "coverageDelta": (new_summary.get("evidenceCoveragePercent") or 0) - (old_summary.get("evidenceCoveragePercent") or 0), "counts": dict(Counter(c["change"] for c in changes)), "changes": changes}
 
 
+def external_evidence(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    path = directory / "cis-external-evidence.json"
+    if not path.is_file():
+        return [], []
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], ["cis-external-evidence.json inválido"]
+    accepted, errors = [], []
+    now = dt.datetime.now(dt.timezone.utc)
+    for entry in document.get("evidence", []) if isinstance(document, dict) else []:
+        payload = entry.get("payload") or {}
+        digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        try:
+            expires = dt.datetime.fromisoformat(str(entry.get("validUntil", "")).replace("Z", "+00:00"))
+        except ValueError:
+            expires = now - dt.timedelta(seconds=1)
+        if digest != entry.get("sha256") or expires <= now or entry.get("evidenceSource") not in {"NodeEvidence", "ControlPlaneEvidence", "ManualEvidence", "CloudProviderAPI"}:
+            errors.append(str(entry.get("controlId") or "unknown"))
+            continue
+        accepted.append(entry)
+    return accepted, errors
+
+
+def apply_external_and_lifecycle(controls: list[dict[str, Any]], directory: Path, aws_eks: dict[str, Any] | None, provider: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    by_id = {str(item.get("controlId")): item for item in controls}
+    evidence, errors = external_evidence(directory)
+    for entry in evidence:
+        target = by_id.get(str(entry.get("controlId")))
+        if not target:
+            target = control(str(entry.get("controlId")), str(entry.get("title") or entry.get("controlId")), responsibility=str(entry.get("managedResponsibility") or "SHARED"), source=entry["evidenceSource"], recommendation=str(entry.get("recommendation") or "Revisar evidência do cloud provider."))
+            target["profile"] = str(entry.get("profile") or "provider-kubernetes")
+            controls.append(target); by_id[str(entry.get("controlId"))] = target
+        target.update({"evidenceSource": entry["evidenceSource"], "applicability": "APPLICABLE", "assessmentMode": "MANUAL" if entry["evidenceSource"] == "ManualEvidence" else "AUTOMATED", "status": entry.get("status", "UNKNOWN"), "evidence": entry.get("payload") or {}, "reviewedBy": entry.get("reviewedBy"), "validUntil": entry.get("validUntil")})
+    if provider == "AWS" and isinstance(aws_eks, dict):
+        for finding in aws_eks.get("findings") or []:
+            rule_id = str(finding.get("ruleId") or "")
+            if not rule_id.startswith("eks."):
+                continue
+            status = "PASS" if finding.get("severity") == "PASS" else "WARN" if finding.get("severity") in {"WARN", "CRIT"} else "UNKNOWN"
+            controls.append(control(f"cis.aws.{rule_id}", str(finding.get("check") or rule_id), status=status, responsibility="SHARED", source="CloudProviderAPI", evidence={"detail": finding.get("detail")}, recommendation=str(finding.get("recommendation") or "Revisar configuração EKS.")))
+    lifecycle_path = directory / "cis-remediation-state.json"
+    lifecycle = {}
+    if lifecycle_path.is_file():
+        try: lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError): errors.append("cis-remediation-state.json inválido")
+    states = lifecycle.get("controls", {}) if isinstance(lifecycle, dict) else {}
+    for item in controls:
+        state = states.get(item.get("controlId"), {}) if isinstance(states, dict) else {}
+        item["remediation"] = {key: state.get(key) for key in ("owner", "dueDate", "state", "ticket", "justification", "riskAcceptedUntil") if state.get(key)}
+    return controls, {"acceptedExternalEvidence": len(evidence), "evidenceErrors": errors, "lifecycleEntries": len(states)}
+
+
 def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any], directory: Path,
            aws_eks: dict[str, Any] | None = None) -> dict[str, Any]:
     controls: list[dict[str, Any]] = []
@@ -175,6 +232,10 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
     workload_check("cis.k8s.pod.read-only-root-filesystem", "Root filesystem somente leitura", lambda s: any((c.get("securityContext") or {}).get("readOnlyRootFilesystem") is not True for c in containers(s)), "Definir readOnlyRootFilesystem=true e usar volumes graváveis somente onde necessário.")
     workload_check("cis.k8s.image.latest-tag", "Imagens sem tag latest ou tag implícita", lambda s: any((lambda image: "@sha256:" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest")))(str(c.get("image") or "")) for c in containers(s)), "Usar versão imutável e evitar latest ou tag implícita.")
     workload_check("cis.k8s.image.digest", "Imagens fixadas por digest", lambda s: any("@sha256:" not in str(c.get("image") or "") for c in containers(s)), "Fixar imagens aprovadas por digest sha256 e manter processo de atualização controlado.")
+    workload_check("cis.k8s.pod.host-path", "Volumes hostPath restritos", lambda s: any("hostPath" in (volume or {}) for volume in s.get("volumes") or []), "Substituir hostPath por storage gerenciado ou documentar exceção de infraestrutura.")
+    workload_check("cis.k8s.pod.proc-mount", "procMount padrão", lambda s: any((c.get("securityContext") or {}).get("procMount") not in {None, "Default"} for c in containers(s)), "Usar procMount=Default.")
+    unsafe_sysctls = {"kernel.shm_rmid_forced", "net.ipv4.ip_local_port_range", "net.ipv4.ip_unprivileged_port_start", "net.ipv4.tcp_syncookies", "net.ipv4.ping_group_range"}
+    workload_check("cis.k8s.pod.sysctls", "Sysctls restritos", lambda s: any(str(x.get("name")) not in unsafe_sysctls for x in (s.get("securityContext") or {}).get("sysctls") or []), "Remover sysctls inseguros ou aplicar allowlist formal.")
 
     if coverage_available(collection, "services"):
         exposed = []
@@ -190,6 +251,14 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
         controls.append(control("cis.k8s.admission.policy-enforcement", "Políticas de admission configuradas", status="PASS" if mechanisms else "WARN", evidence={"mechanisms": mechanisms}, recommendation="Aplicar políticas de admission para requisitos de segurança de Pods e imagens."))
     else:
         controls.append(unavailable("cis.k8s.admission.policy-enforcement", "Políticas de admission configuradas", "KubernetesAPI", "Cobertura de admission webhooks/policies incompleta"))
+    if coverage_available(collection, "validatingwebhooks") and coverage_available(collection, "mutatingwebhooks"):
+        unsafe = []
+        for config in items(raw.get("validatingwebhooks")) + items(raw.get("mutatingwebhooks")):
+            meta = config.get("metadata") or {}
+            if any(webhook.get("failurePolicy", "Fail") == "Ignore" for webhook in config.get("webhooks") or []): unsafe.append(str(meta.get("name") or "unknown"))
+        controls.append(control("cis.k8s.admission.failure-policy", "Admission webhooks fail closed", status="WARN" if unsafe else "PASS", evidence={"failurePolicyIgnore": unsafe}, recommendation="Usar failurePolicy=Fail para políticas de segurança críticas e testar disponibilidade."))
+    else:
+        controls.append(unavailable("cis.k8s.admission.failure-policy", "Admission webhooks fail closed", "KubernetesAPI", "Admission webhooks indisponíveis"))
 
     namespaces = items(base.get("namespaces"))
     if namespaces:
@@ -239,12 +308,13 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
         recommendation="Fornecer evidência sanitizada e autorizada da configuração do kubelet ou registrar revisão manual.",
     ))
 
+    controls, evidence_summary = apply_external_and_lifecycle(controls, directory, aws_eks, provider)
     controls = [enrich_control(item) for item in controls]
     return {
         "schemaVersion": "1.1", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True,
         "notice": "Avaliação de postura baseada no CIS. Não representa certificação nem compliance integral.",
         "benchmarkReference": {"family": "CIS Kubernetes Benchmarks", "genericVersion": "2.0.1", "providerVersion": "2.0.0", "url": CIS_REFERENCE},
-        "platform": provider, "summary": summarize(controls),
+        "platform": provider, "summary": {**summarize(controls), **evidence_summary},
         "controls": controls,
     }
 
