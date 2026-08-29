@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from assessment_process_supervisor import CollectionSupervisor
+from cis_security_assessment import compare_reports
 from eks_comprehensive_assessment import sanitize_snapshot_tree
 from localization_pt_br import localize_finding
 
@@ -986,10 +987,10 @@ class Handler(BaseHTTPRequestHandler):
             evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, indent=2, sort_keys=True)
             control_cards.append(
                 f'<details class="cis-control {esc(str(item.get("status", "UNKNOWN")))}"><summary><span><b>{esc(item.get("controlId"))}</b> — {esc(item.get("title"))}</span><span class="metric-status {esc(str(item.get("status", "UNKNOWN")).lower())}">{esc(item.get("status"))}</span></summary>'
-                f'<div class="cis-meta"><span>Aplicabilidade: <b>{esc(item.get("applicability"))}</b></span><span>Responsabilidade: <b>{esc(item.get("managedResponsibility"))}</b></span><span>Fonte: <b>{esc(item.get("evidenceSource"))}</b></span><span>Modo: <b>{esc(item.get("assessmentMode"))}</b></span></div>'
-                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre><h3>Recomendação</h3><p>{esc(item.get("recommendation"))}</p></details>'
+                f'<div class="cis-meta"><span>Domínio: <b>{esc(item.get("domain"))}</b></span><span>Prioridade: <b>{esc(item.get("priority"))}</b></span><span>Esforço: <b>{esc(item.get("effort"))}</b></span><span>Impacto: <b>{esc(item.get("impact"))}</b></span><span>Aplicabilidade: <b>{esc(item.get("applicability"))}</b></span><span>Responsabilidade: <b>{esc(item.get("managedResponsibility"))}</b></span><span>Fonte: <b>{esc(item.get("evidenceSource"))}</b></span><span>Modo: <b>{esc(item.get("assessmentMode"))}</b></span></div>'
+                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre><h3>Recomendação</h3><p>{esc(item.get("recommendation"))}</p><h3>Validação read-only</h3><pre>{esc(item.get("validationCommand"))}</pre><h3>Exemplo de remediação</h3><p>{esc(item.get("remediationExample"))}</p></details>'
             )
-        score = summary.get("scorePercent")
+        score = summary.get("postureScorePercent", summary.get("scorePercent"))
         controls_html = "".join(control_cards) if control_cards else '<div class="message">Nenhum controle corresponde aos filtros.</div>'
         facts = (
             '<div class="facts">'
@@ -1001,13 +1002,32 @@ class Handler(BaseHTTPRequestHandler):
             f'<div><small>Managed Provider</small><b>{(summary.get("applicability") or {}).get("MANAGED_PROVIDER", 0)}</b></div>'
             f'<div><small>Manual Review</small><b>{(summary.get("applicability") or {}).get("MANUAL_REVIEW", 0)}</b></div>'
             f'<div><small>Evidence Unavailable</small><b>{(summary.get("applicability") or {}).get("EVIDENCE_UNAVAILABLE", 0)}</b></div>'
-            f'<div><small>Score evidenciável</small><b>{esc(str(score) + "%" if score is not None else "N/A")}</b></div>'
+            f'<div><small>Posture Score</small><b>{esc(str(score) + "%" if score is not None else "N/A")}</b></div>'
+            f'<div><small>Evidence Coverage</small><b>{esc(str(summary.get("evidenceCoveragePercent")) + "%" if summary.get("evidenceCoveragePercent") is not None else "N/A")}</b></div>'
             '</div>'
         )
+        domain_rows = summary.get("domains") or []
+        recommendations = sorted((item for item in controls if item.get("status") == "WARN"), key=lambda item: (-int(item.get("riskWeight") or 0), {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(str(item.get("effort")), 9), str(item.get("controlId"))))
+        recommendation_rows = [{"priority": item.get("priority"), "domain": item.get("domain"), "controlId": item.get("controlId"), "title": item.get("title"), "impact": item.get("impact"), "effort": item.get("effort"), "recommendation": item.get("recommendation"), "validationCommand": item.get("validationCommand")} for item in recommendations]
+        comparison = ""
+        cis_directories = [item for item in self.directories() if (item / "cis-security-assessment.json").is_file()]
+        before_id = query.get("before", [""])[0]
+        before_options = ''.join(f'<option value="{esc(item.name)}" {"selected" if item.name == before_id else ""}>{esc(item.name)}</option>' for item in cis_directories if item != directory)
+        comparison_form = f'<form class="compare"><input type="hidden" name="collection" value="{esc(directory.name)}"><label>Coleta anterior<select name="before"><option value="">Selecionar</option>{before_options}</select></label><button>Comparar CIS</button></form>'
+        before_dir = self.root / before_id
+        if before_id and before_dir.is_dir() and (before_dir / "cis-security-assessment.json").is_file():
+            delta = compare_reports(jfile(before_dir / "cis-security-assessment.json", {}), report)
+            comparison = (
+                f'<div class="facts"><div><small>Delta Posture</small><b>{delta.get("postureDelta", 0):+}%</b></div><div><small>Delta Coverage</small><b>{delta.get("coverageDelta", 0):+}%</b></div><div><small>Regressões</small><b>{(delta.get("counts") or {}).get("REGRESSION", 0)}</b></div><div><small>Resolvidos</small><b>{(delta.get("counts") or {}).get("RESOLVED", 0)}</b></div><div><small>Evidence Loss</small><b>{(delta.get("counts") or {}).get("EVIDENCE_LOSS", 0)}</b></div></div>'
+                + table(delta.get("changes") or [], [("change","Mudança"),("controlId","Control ID"),("domain","Domínio"),("beforeStatus","Status anterior"),("afterStatus","Status atual"),("beforeApplicability","Aplicabilidade anterior"),("afterApplicability","Aplicabilidade atual")])
+            )
         body = (
             f'<h1>CIS Security</h1><div class="message warn"><b>{esc(report.get("notice"))}</b> '
             'Controles gerenciados pelo provider, revisões manuais e evidência indisponível não reduzem artificialmente o score.</div>'
             f'{facts}<div class="cis-actions"><a class="button" href="/export-cis?collection={quote_plus(directory.name)}">Exportar relatório CIS JSON</a></div>'
+            f'<h2>Score por domínio</h2>{table(domain_rows, [("domain","Domínio"),("controls","Controles avaliados"),("passed","PASS"),("scorePercent","Posture Score %")])}'
+            f'<h2>Plano de ação priorizado</h2>{table(recommendation_rows, [("priority","Prioridade"),("domain","Domínio"),("controlId","Control ID"),("title","Controle"),("impact","Impacto"),("effort","Esforço"),("recommendation","Recomendação"),("validationCommand","Validação read-only")])}'
+            f'<h2>Comparação CIS</h2>{comparison_form}{comparison}'
             f'<h2>Controles por evidência e responsabilidade <small>{len(rows)} resultado(s)</small></h2>{filter_form}{controls_html}'
         )
         return self.layout("CIS Security", body, directory, "cis")

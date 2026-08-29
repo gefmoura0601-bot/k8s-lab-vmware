@@ -109,6 +109,10 @@ if [[ -f "$DIR/cis-security-assessment.json" ]]; then
   grep -Fq 'Não representa certificação nem compliance integral' <<<"$cis_page"
   grep -Fq 'Exportar relatório CIS JSON' <<<"$cis_page"
   grep -Fq 'Evidence Unavailable' <<<"$cis_page"
+  grep -Fq 'Posture Score' <<<"$cis_page"
+  grep -Fq 'Evidence Coverage' <<<"$cis_page"
+  grep -Fq 'Plano de ação priorizado' <<<"$cis_page"
+  grep -Fq 'Comparação CIS' <<<"$cis_page"
   curl -fsS "$BASE_URL/export-cis?collection=$COLLECTION" | jq -e '.readOnly == true and (.controls | length) > 0' >/dev/null
   curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION&status=WARN" | grep -Fq 'name="status"'
 fi
