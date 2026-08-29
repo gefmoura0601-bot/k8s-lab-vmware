@@ -16,9 +16,13 @@ STAGING="$(mktemp -d)"
 trap 'rm -rf -- "$STAGING"' EXIT
 mkdir -p "$STAGING/$NAME"
 
-for item in bin src web deploy docs README.md VERSION; do
+for item in src web deploy docs README.md VERSION CHANGELOG.md; do
   [[ -e "$ROOT/$item" ]] && cp -R "$ROOT/$item" "$STAGING/$NAME/"
 done
+mkdir -p "$STAGING/$NAME/bin"
+cp "$ROOT/bin/eks-assessment.sh" "$ROOT/bin/package-release.sh" "$STAGING/$NAME/bin/"
+find "$STAGING/$NAME" -type d -name __pycache__ -prune -exec rm -rf -- {} +
+find "$STAGING/$NAME" -type f -name '*.pyc' -delete
 find "$STAGING/$NAME/bin" "$STAGING/$NAME/src" -type f -name '*.sh' -exec chmod 0755 {} +
 
 SBOM="$STAGING/$NAME/SBOM.spdx"

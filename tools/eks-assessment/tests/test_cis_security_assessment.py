@@ -127,6 +127,27 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         wildcard = next(c for c in report["controls"] if c["controlId"] == "cis.k8s.rbac.wildcards")
         self.assertEqual("platform", wildcard["remediation"]["owner"])
 
+    def test_sanitized_provider_fixtures(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures" / "cis"
+        for path in fixture_root.glob("*.json"):
+            fixture = json.loads(path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); raw, base, collection = self.fixture(root, fixture["context"])
+                report = assess(raw, base, collection, root, fixture["aws"])
+                self.assertEqual(fixture["expectedPlatform"], report["platform"])
+                self.assertNotIn("000000000000", json.dumps(report))
+
+    def test_exception_is_explicit_not_pass_and_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); raw, base, collection = self.fixture(root)
+            raw["roles"]["items"] = [{"kind": "Role", "metadata": {"namespace": "payments", "name": "wide"}, "rules": [{"verbs": ["*"], "resources": ["pods"]}]}]
+            (root / "cis-exceptions.json").write_text(json.dumps({"exceptions": [{"controlId": "cis.k8s.rbac.wildcards", "resources": ["*"], "reason": "migração aprovada", "approvedBy": "security", "validUntil": "2099-01-01T00:00:00Z"}]}), encoding="utf-8")
+            report = assess(raw, base, collection, root)
+        item = next(c for c in report["controls"] if c["controlId"] == "cis.k8s.rbac.wildcards")
+        self.assertEqual("EXEMPTED", item["status"])
+        self.assertEqual("WARN", item["originalStatus"])
+        self.assertEqual(1, report["summary"]["acceptedExceptions"])
+
 
 if __name__ == "__main__":
     unittest.main()

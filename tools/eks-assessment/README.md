@@ -121,7 +121,7 @@ O dashboard separa **Posture Score** de **Evidence Coverage**. O primeiro ponder
 
 O plano de ação ordena controles `WARN` por prioridade, impacto e esforço. Cada item inclui recomendação, comando read-only para nova validação e exemplo declarativo de remediação que não é aplicado automaticamente. A comparação CIS entre duas coletas classifica `REGRESSION`, `RESOLVED`, `EVIDENCE_LOSS`, `COVERAGE_GAIN`, mudanças de responsabilidade/aplicabilidade e controles adicionados ou removidos.
 
-Evidências externas e lifecycle usam arquivos JSON opcionais documentados em [`docs/cis-evidence.md`](docs/cis-evidence.md). O relatório executivo é uma página sanitizada e preparada para **Imprimir → Salvar como PDF**, com scores, matriz de responsabilidade e plano de ação. A engine reutiliza evidências AWS/EKS já coletadas e aceita o mesmo contrato para AKS/GKE, sem executar SSH ou chamadas mutáveis.
+Evidências externas, lifecycle e exceções temporárias usam arquivos JSON opcionais documentados em [`docs/cis-evidence.md`](docs/cis-evidence.md). O relatório executivo é uma página sanitizada e preparada para **Imprimir → Salvar como PDF**, com scores, matriz de responsabilidade e plano de ação. A engine reutiliza evidências AWS/EKS já coletadas e aceita o mesmo contrato para AKS/GKE, sem executar SSH ou chamadas mutáveis.
 
 O relatório estruturado é gravado em `cis-security-assessment.json` e também referenciado por `comprehensive-assessment.json`.
 
@@ -208,7 +208,7 @@ Valores de tuning explicitamente permitidos (`JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, o
 
 ## Versão e distribuição
 
-A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `web/`, `deploy/`, `docs/`, `README.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
+A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
 
 Gere o pacote portátil, o checksum e o SBOM SPDX com:
 
