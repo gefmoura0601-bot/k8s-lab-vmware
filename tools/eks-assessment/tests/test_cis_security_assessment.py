@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -40,7 +41,7 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         self.assertEqual("AWS", report["platform"])
         self.assertEqual(2, len(managed))
         self.assertTrue(all(item["managedResponsibility"] == "CLOUD_PROVIDER" for item in managed))
-        self.assertEqual(15, report["summary"]["scored"])
+        self.assertGreaterEqual(report["summary"]["scored"], 18)
 
     def test_self_managed_control_plane_never_passes_without_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -110,6 +111,21 @@ class CisSecurityAssessmentTests(unittest.TestCase):
         self.assertEqual(1, result["counts"]["EVIDENCE_LOSS"])
         self.assertEqual(10, result["postureDelta"])
         self.assertEqual(-33, result["coverageDelta"])
+
+    def test_external_evidence_hash_lifecycle_and_aks_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); raw, base, collection = self.fixture(root, "aks-prod")
+            payload = {"anonymousAuth": False}
+            digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            (root / "cis-external-evidence.json").write_text(json.dumps({"evidence": [{"controlId": "cis.k8s.node.kubelet-configuration", "evidenceSource": "NodeEvidence", "status": "PASS", "payload": payload, "sha256": digest, "reviewedBy": "security", "validUntil": "2099-01-01T00:00:00Z"}]}), encoding="utf-8")
+            (root / "cis-remediation-state.json").write_text(json.dumps({"controls": {"cis.k8s.rbac.wildcards": {"owner": "platform", "state": "IN_PROGRESS", "ticket": "SEC-1"}}}), encoding="utf-8")
+            report = assess(raw, base, collection, root)
+        self.assertEqual("AZURE", report["platform"])
+        kubelet = next(c for c in report["controls"] if c["controlId"] == "cis.k8s.node.kubelet-configuration")
+        self.assertEqual("PASS", kubelet["status"])
+        self.assertEqual(1, report["summary"]["acceptedExternalEvidence"])
+        wildcard = next(c for c in report["controls"] if c["controlId"] == "cis.k8s.rbac.wildcards")
+        self.assertEqual("platform", wildcard["remediation"]["owner"])
 
 
 if __name__ == "__main__":

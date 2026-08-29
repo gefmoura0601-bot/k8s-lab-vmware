@@ -113,6 +113,8 @@ if [[ -f "$DIR/cis-security-assessment.json" ]]; then
   grep -Fq 'Evidence Coverage' <<<"$cis_page"
   grep -Fq 'Plano de ação priorizado' <<<"$cis_page"
   grep -Fq 'Comparação CIS' <<<"$cis_page"
+  grep -Fq 'Relatório executivo / PDF' <<<"$cis_page"
+  curl -fsS "$BASE_URL/cis-report?collection=$COLLECTION" | grep -Fq 'Relatório executivo — CIS Security'
   curl -fsS "$BASE_URL/export-cis?collection=$COLLECTION" | jq -e '.readOnly == true and (.controls | length) > 0' >/dev/null
   curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION&status=WARN" | grep -Fq 'name="status"'
 fi
