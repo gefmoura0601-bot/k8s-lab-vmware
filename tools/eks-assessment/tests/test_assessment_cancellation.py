@@ -92,6 +92,9 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("DASHBOARD_FOREGROUND", menu)
         self.assertIn('[[ "$op" == 0 || "$op" == 5 ]]', menu)
         self.assertIn('"$TOOL_ROOT/web/public"', menu)
+        self.assertIn("KUBERNETES ASSESSMENT CONSOLE", menu)
+        self.assertIn("render_menu", menu)
+        self.assertIn("NO_COLOR", menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -41,6 +41,8 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 ## Executar o menu
 
+O menu terminal usa um tema Kubernetes em azul, mostra versão, contexto, porta do dashboard e quantidade de coletas. Cores ANSI são habilitadas somente em terminal interativo. Para desabilitá-las, use `NO_COLOR=1`; para impedir a limpeza de tela, use `ASSESSMENT_MENU_CLEAR=0`.
+
 O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard web preso à sessão:
 
 ```bash
@@ -68,6 +70,8 @@ ASSESSMENT_ROOT=/workspace/assessment PYTHON_BIN=python3.11 ./bin/eks-assessment
 Selecione a opção 5 e abra uma das URLs temporárias exibidas. O menu sempre inclui `127.0.0.1` para execução local; em uma sessão SSH, prioriza o IP do servidor informado por `SSH_CONNECTION`; interfaces IPv4 adicionais aparecem como alternativas, com redes típicas de containers filtradas. `DASHBOARD_PUBLIC_HOST=dashboard.empresa.local` define explicitamente o endereço prioritário, sem remover as alternativas, e `DASHBOARD_PORT=8766` altera a porta. Não é necessário túnel SSH quando existe conectividade direta. Se a porta estiver ocupada por outro dashboard do assessment, o menu permite usar a sessão atual, encerrá-la com `SIGTERM` e iniciar outra na mesma porta, ou escolher automaticamente a próxima porta livre. Um processo desconhecido nunca é encerrado: nesse caso, somente uma nova porta ou o retorno ao menu são oferecidos.
 
 ## Progresso da coleta web
+
+O dashboard usa o ícone oficial do Kubernetes e a cor primária `#326CE5`, mantendo o nome **Kubernetes Assessment Console** para não sugerir certificação ou endosso. Origem e regras de uso estão documentadas em [`docs/branding.md`](docs/branding.md).
 
 ### Operational Insights
 

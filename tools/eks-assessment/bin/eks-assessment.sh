@@ -20,6 +20,14 @@ COLLECTION_TIMED_OUT=0
 COLLECTION_STARTED_EPOCH=0
 DASHBOARD_FOREGROUND=0
 
+if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  C_BLUE=$'\033[38;5;33m'; C_LIGHT=$'\033[38;5;75m'
+  C_CYAN=$'\033[38;5;81m'; C_GREEN=$'\033[38;5;78m'; C_WHITE=$'\033[97m'; C_RED=$'\033[38;5;203m'
+else
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_BLUE=''; C_LIGHT=''; C_CYAN=''; C_GREEN=''; C_WHITE=''; C_RED=''
+fi
+
 usage(){
   cat <<'EOF'
 Uso: eks-assessment.sh [--help] [--version]
@@ -150,6 +158,35 @@ suggest_prometheus_url(){
     | first.url // empty'
 }
 collections(){ find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%f\n' 2>/dev/null | sort; }
+
+render_menu(){
+  local context version total
+  context="$(kubectl config current-context 2>/dev/null || echo indisponível)"
+  version="$(tr -d '[:space:]' < "$TOOL_ROOT/VERSION")"
+  total="$(collections | wc -l | tr -d ' ')"
+  if [[ -t 1 && "${ASSESSMENT_MENU_CLEAR:-1}" == 1 ]]; then printf '\033[2J\033[H'; fi
+  menu_row(){
+    local color="$1" text="$2" padding=$((66 - ${#2}))
+    ((padding < 0)) && padding=0
+    printf '%s│%s  %s%*s  %s│%s\n' "$C_BLUE" "$color" "$text" "$padding" '' "$C_BLUE" "$C_RESET"
+  }
+  printf '\n%s╭──────────────────────────────────────────────────────────────────────╮%s\n' "$C_BLUE" "$C_RESET"
+  menu_row "$C_WHITE$C_BOLD" "☸  KUBERNETES ASSESSMENT CONSOLE"
+  menu_row "$C_GREEN$C_BOLD" "READ-ONLY  ·  versão $version  ·  limite ${MAX_DURATION_SECONDS}s"
+  printf '%s├──────────────────────────────────────────────────────────────────────┤%s\n' "$C_BLUE" "$C_RESET"
+  menu_row "$C_RESET" "Contexto: ${context:0:56}"
+  menu_row "$C_RESET" "Coletas: $total  ·  Dashboard web: porta $PORT"
+  printf '%s├──────────────────────────────────────────────────────────────────────┤%s\n' "$C_BLUE" "$C_RESET"
+  menu_row "$C_LIGHT$C_BOLD" "DATA COLLECTION"
+  menu_row "$C_CYAN" "[1] Coleta ANTES do deploy        [2] Coleta DEPOIS do deploy"
+  menu_row "$C_CYAN" "[6] Validar ambiente (preflight)"
+  menu_row "$C_RESET" ""
+  menu_row "$C_LIGHT$C_BOLD" "INSIGHTS & REPORTING"
+  menu_row "$C_CYAN" "[3] Comparar coletas              [4] Dashboard no terminal"
+  menu_row "$C_CYAN" "[5] Abrir dashboard web nesta sessão (porta $PORT)"
+  menu_row "$C_RED" "[0] Sair"
+  printf '%s╰──────────────────────────────────────────────────────────────────────╯%s\n' "$C_BLUE" "$C_RESET"
+}
 
 cluster_identity(){
   local context ref name eks_name="${EKS_CLUSTER_NAME:-}"
@@ -446,22 +483,12 @@ select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necess
 [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
 mkdir -p "$OUTROOT"
 while :; do
-  cat <<EOF
-
-=== KUBERNETES / EKS ASSESSMENT (READ-ONLY | LIMITE ${MAX_DURATION_SECONDS}s) ===
-1) Coleta ANTES do deploy
-2) Coleta DEPOIS do deploy
-3) Comparar coletas
-4) Dashboard no terminal
-5) Abrir dashboard web nesta sessão (porta $PORT)
-6) Validar ambiente (preflight)
-0) Sair
-EOF
-  read -r -p 'Opção: ' op
+  render_menu
+  read -r -p "${C_BOLD}${C_LIGHT}Selecione uma opção › ${C_RESET}" op
   case "$op" in
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
     5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";;
-    0) exit 0;; *) echo 'Opção inválida.';;
+    0) printf '%sSessão encerrada.%s\n' "$C_DIM" "$C_RESET"; exit 0;; *) printf '%sOpção inválida.%s\n' "$C_RED" "$C_RESET";;
   esac
   [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _
 done
