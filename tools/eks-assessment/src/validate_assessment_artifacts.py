@@ -38,6 +38,7 @@ REQUIRED = (
     "metadata.json", "nodes.json", "pods.json", "workloads.json",
     "comprehensive-assessment.json", "application-manifests-sanitized.json",
     "api-resources.json", "universal-inventory.json", "aws-eks-assessment.json",
+    "operational-insights.json",
 )
 
 
@@ -138,6 +139,13 @@ def main() -> int:
         cis_summary = cis_report.get("summary") or {}
         if modern_cis and (cis_summary.get("postureScorePercent") is None or cis_summary.get("evidenceCoveragePercent") is None or not isinstance(cis_summary.get("domains"), list)):
             errors.append("CIS posture, evidence coverage or domain scores missing")
+    operational = documents.get("operational-insights.json", {})
+    required_domains = {"diagnostics", "versions", "manifestQuality", "containerTuning", "bestPractices", "logs"}
+    if operational.get("readOnly") is not True or not required_domains.issubset(operational):
+        errors.append("operational insights domains or read-only invariant missing")
+    log_evidence = operational.get("logs") or {}
+    if log_evidence.get("state") == "COLLECTED" and not log_evidence.get("redaction"):
+        errors.append("collected logs lack redaction metadata")
     summary = report.get("summary") or {}
     if int(summary.get("workloads") or 0) == 0 or int(summary.get("containers") or 0) == 0:
         errors.append("workload/container inventory is empty")

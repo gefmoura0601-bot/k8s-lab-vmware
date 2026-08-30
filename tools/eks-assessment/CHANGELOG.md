@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-rc.1 — 2026-08-30
+
+- adiciona `Events & Diagnostics`, `Versions & Lifecycle` e `Manifest Quality`;
+- evolui capacidade para `Container Tuning` orientado por telemetria;
+- adiciona engine portátil de `Best Practices` para Kubernetes, EKS, AKS e GKE;
+- adiciona logs opcionais com opt-in, targets explícitos, limite e redaction;
+- publica o artefato exportável `operational-insights.json`.
+
 ## 0.3.0-rc.1 — 2026-08-29
 
 - dashboard portátil com autenticação temporária, progresso, cancelamento e tratamento de porta;

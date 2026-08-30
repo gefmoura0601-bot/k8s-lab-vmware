@@ -27,6 +27,7 @@ from typing import Any, Iterable
 
 from eks_semantic_assessment import apply_semantic_assessment
 from cis_security_assessment import generate as generate_cis_security
+from operational_insights import generate as generate_operational_insights
 
 
 SCHEMA_VERSION = "4.0"
@@ -1214,6 +1215,9 @@ class Assessment:
         self.manifests()
         self.persist_sanitized_snapshots()
         cis_security = generate_cis_security(self.directory, self.raw, self.base, self.collection, self.aws_eks)
+        operational = generate_operational_insights(
+            self.directory, self.workloads, self.findings, self.capacity, technologies, self.aws_eks
+        )
         order = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
         self.findings.sort(key=lambda x: (order.get(x["severity"], 9), x["category"], x["namespace"], x["workload"], x["check"]))
         counts = Counter(x["severity"] for x in self.findings)
@@ -1242,6 +1246,7 @@ class Assessment:
             "capacityRecommendations": self.capacity,
             "semantic": self.semantic_summary,
             "cisSecurity": cis_security,
+            "operationalInsights": operational,
             "awsEks": {
                 "state": self.aws_eks.get("state", "UNKNOWN") if isinstance(self.aws_eks, dict) else "UNKNOWN",
                 "reason": self.aws_eks.get("reason", "") if isinstance(self.aws_eks, dict) else "",
@@ -1250,7 +1255,7 @@ class Assessment:
                 "inventory": self.aws_eks.get("inventory", {}) if isinstance(self.aws_eks, dict) else {},
             },
             "prometheus": {"state": telemetry.get("state", "DISABLED"), "window": telemetry.get("window"), "reason": telemetry.get("reason", "")},
-            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cisSecurity": "cis-security-assessment.json"},
+            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cisSecurity": "cis-security-assessment.json", "operationalInsights": "operational-insights.json"},
         }
 
 

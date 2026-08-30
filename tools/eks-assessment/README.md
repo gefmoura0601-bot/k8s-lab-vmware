@@ -69,6 +69,29 @@ Selecione a opção 5 e abra uma das URLs temporárias exibidas. O menu sempre i
 
 ## Progresso da coleta web
 
+### Operational Insights
+
+A release `0.4.0-rc.1` adiciona áreas baseadas no mesmo artefato sanitizado:
+
+- **Events & Diagnostics:** Events deduplicados, estado de Pods e troubleshooting, sem persistir mensagens livres;
+- **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias; versão desconhecida permanece `UNKNOWN`;
+- **Manifest Quality:** segurança, reliability, scheduling, storage, network e supply chain avaliados sobre objetos da Kubernetes API;
+- **Container Tuning:** evolução das propostas de requests/limits, sempre sem alteração automática;
+- **Best Practices:** regras genéricas e pacotes EKS, AKS e GKE com aplicabilidade e responsabilidade explícitas.
+
+O artefato fica em `operational-insights.json` e pode ser exportado por `GET /export-operational`.
+
+Logs permanecem desabilitados por padrão. Para coleta explícita:
+
+```bash
+ASSESSMENT_INCLUDE_LOGS=1 \
+ASSESSMENT_LOG_TARGETS='apps/deployment/minha-api:app' \
+ASSESSMENT_LOG_MAX_BYTES=262144 \
+bash bin/eks-assessment.sh
+```
+
+O target usa `namespace/kind/name[:container]`, limitado a Pod, Deployment, StatefulSet e DaemonSet. A coleta usa uma hora/200 linhas, aplica redaction e nunca usa ausência de logs para produzir `PASS`. Veja [`docs/roadmap-operational-insights.md`](docs/roadmap-operational-insights.md).
+
 Ao iniciar **Nova coleta** ou **Novo baseline**, o dashboard mantém a página aberta e apresenta uma barra de progresso baseada nas etapas efetivamente encerradas pelo supervisor. A atualização ocorre automaticamente e informa:
 
 - percentual concluído;
