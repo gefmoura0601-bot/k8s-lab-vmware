@@ -326,7 +326,7 @@ def details(directory: Path) -> dict:
     rabbit = next((x for x in resources["statefulsets"] if "rabbit" in x["name"].lower()), None)
     scanner_summary = comprehensive.get("summary") or {}
     summary = {"nodes": len(resources["nodes"]), "readyNodes": sum(1 for x in resources["nodes"] if x["ready"]), "pods": len(resources["pods"]), "running": phases["Running"], "pending": phases["Pending"], "failed": phases["Failed"], "deployments": len(resources["deployments"]), "statefulsets": len(resources["statefulsets"]), "daemonsets": len(resources["daemonsets"]), "jobs": len(resources["jobs"]), "cronjobs": len(resources["cronjobs"]), "rollouts": len(resources["rollouts"]), "namespaces": len(resources["namespaces"]), "services": len(resources["services"]), "pvcs": len(resources["pvcs"]), "hpas": len(resources["hpas"]), "keda": len(resources["keda"]), "vpas": len(resources["vpas"]), "rabbitReady": rabbit["ready"] if rabbit else 0, "rabbitDesired": rabbit.get("desired", 0) if rabbit else 0, **scanner_summary}
-    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
+    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "operationalInsights": jfile(directory / "operational-insights.json", comprehensive.get("operationalInsights", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -395,7 +395,7 @@ class Handler(BaseHTTPRequestHandler):
         value = metadata(directory) if directory else {"clusterName": cluster()[1]}
         ident = directory.name if directory else ""
         cq = urlencode({"collection": ident}) if ident else ""
-        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Capacidade"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
+        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("diagnostics", "/diagnostics", "Events & Diagnostics"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("best", "/best-practices", "Best Practices"), ("logs", "/logs", "Logs"), ("cis", "/cis-security", "CIS Security"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Container Tuning"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
         nav = []
         for key, path, label in links:
             separator = "&" if "?" in path else "?"
@@ -498,6 +498,53 @@ class Handler(BaseHTTPRequestHandler):
             rows.extend({"technology": item.get("name"), "workload": ref} for ref in refs)
         return self.layout("Tecnologias", f'<h1>Tecnologias descobertas</h1><p>Detecção baseada em imagem, nome, comando e variáveis de tuning permitidas; deve ser confirmada por SBOM/runtime.</p><div class="assessment-cards">{"".join(cards)}</div><h2>Mapeamento</h2>{table(rows,[("technology","Tecnologia"),("workload","Workload / container")])}', directory, "technologies")
 
+    def diagnostics(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("diagnostics") or {}
+        summary = value.get("summary") or {}
+        facts = f'<div class="facts"><div><small>Grupos de Events</small><b>{summary.get("groups",0)}</b></div><div><small>Warnings</small><b>{summary.get("warnings",0)}</b></div><div><small>Pods afetados</small><b>{summary.get("affectedPods",0)}</b></div></div>'
+        events = table(value.get("events") or [], [("type","Tipo"),("reason","Reason"),("namespace","Namespace"),("kind","Kind"),("resource","Recurso"),("count","Ocorrências"),("lastSeen","Último evento"),("recommendation","Recomendação")])
+        pods = [{**x, "reasons": ", ".join(x.get("reasons") or [])} for x in value.get("podStates") or []]
+        return self.layout("Events & Diagnostics", f'<h1>Events & Diagnostics</h1><p>Events deduplicados e correlacionados com estado de Pods. Mensagens livres não são persistidas.</p>{facts}<h2>Events</h2>{events}<h2>Pods com sinais operacionais</h2>{table(pods,[("namespace","Namespace"),("pod","Pod"),("phase","Phase"),("restarts","Restarts"),("reasons","Reasons"),("node","Node")])}', directory, "diagnostics")
+
+    def versions(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("versions") or {}
+        summary = value.get("summary") or {}
+        message = f'<div class="message warn">{esc(value.get("notice",""))} Componentes: {summary.get("components",0)}; versões desconhecidas: {summary.get("unknownVersions",0)}; version skew nos nodes: {"sim" if summary.get("nodeVersionSkew") else "não"}.</div>'
+        return self.layout("Versions & Lifecycle", f'<h1>Versions & Lifecycle</h1>{message}{table(value.get("items") or [],[("component","Componente"),("name","Nome"),("version","Versão"),("runtime","Runtime"),("os","Sistema operacional"),("kernel","Kernel"),("state","Estado"),("source","Evidence Source")])}', directory, "versions")
+
+    def manifest_quality(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("manifestQuality") or {}
+        summary = value.get("summary") or {}
+        message = f'<div class="message">{esc(value.get("notice",""))} Recursos: {summary.get("resources",0)}; issues: {summary.get("issues",0)}.</div>'
+        columns = [("severity","Severidade"),("category","Categoria"),("namespace","Namespace"),("resource","Recurso"),("container","Container"),("check","Check"),("evidence","Evidência"),("recommendation","Recomendação")]
+        return self.layout("Manifest Quality", f'<h1>Manifest Quality</h1>{message}<div class="cis-actions"><a class="button" href="/manifests?collection={esc(directory.name)}">Exportar manifests sanitizados</a></div>{table(value.get("findings") or [],columns)}', directory, "manifests")
+
+    def best_practices(self, directory: Path | None, query: dict[str, list[str]]) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("bestPractices") or {}
+        rows = value.get("rules") or []
+        provider, domain = query.get("provider", [""])[0], query.get("domain", [""])[0]
+        if provider: rows = [x for x in rows if x.get("provider") == provider]
+        if domain: rows = [x for x in rows if x.get("domain") == domain]
+        providers = sorted({str(x.get("provider")) for x in value.get("rules") or []}); domains = sorted({str(x.get("domain")) for x in value.get("rules") or []})
+        filters = f'<form class="filters"><input type="hidden" name="collection" value="{esc(directory.name)}"><label>Provider<select name="provider"><option value="">Todos</option>{"".join(f"<option>{esc(x)}</option>" for x in providers)}</select></label><label>Domínio<select name="domain"><option value="">Todos</option>{"".join(f"<option>{esc(x)}</option>" for x in domains)}</select></label><button>Filtrar</button></form>'
+        columns = [("status","Status"),("provider","Provider"),("domain","Domínio"),("ruleId","Rule ID"),("applicability","Aplicabilidade"),("responsibility","Responsabilidade"),("resource","Recurso"),("evidence","Evidência"),("recommendation","Recomendação")]
+        return self.layout("Best Practices", f'<h1>Best Practices <small>{esc(value.get("platform","UNKNOWN"))}</small></h1><div class="message warn">{esc(value.get("notice",""))}</div>{filters}{table(rows,columns)}', directory, "best")
+
+    def logs(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("logs") or {}
+        entries = []
+        for item in value.get("entries") or []:
+            entries.append(f'<details><summary>{esc(item.get("state"))} — {esc(item.get("target"))}</summary><pre>{esc(item.get("content") or item.get("reason") or item.get("error") or "Sem conteúdo")}</pre></details>')
+        warning = '<div class="message warn">Logs são opcionais, podem conter dados sensíveis e somente são coletados com opt-in, targets explícitos, limite de tamanho e redaction. Nunca são usados para marcar PASS.</div>'
+        content = "".join(entries) or '<div class="message">' + esc(value.get("reason", "Nenhum log coletado.")) + "</div>"
+        body = f'<h1>Logs sanitizados</h1>{warning}<p>Estado: <b>{esc(value.get("state","DISABLED"))}</b> · bytes: {esc(value.get("bytes",0))}/{esc(value.get("maxBytes",0))}</p>{content}'
+        return self.layout("Logs", body, directory, "logs")
+
     def capacity(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         rows = []
@@ -505,7 +552,7 @@ class Handler(BaseHTTPRequestHandler):
             rows.append({"namespace": item.get("namespace"), "workload": item.get("workload"), "window": item.get("window"), "replicas": item.get("replicasObserved"), "confidence": item.get("confidence"), "currentCpuRequest": (item.get("current") or {}).get("cpuRequestPerReplica"), "currentCpuLimit": (item.get("current") or {}).get("cpuLimitPerReplica"), "cpuRequest": (item.get("cpu") or {}).get("requestPerReplica"), "cpuLimit": (item.get("cpu") or {}).get("limitPerReplica"), "currentMemoryRequest": (item.get("current") or {}).get("memoryRequestPerReplica"), "currentMemoryLimit": (item.get("current") or {}).get("memoryLimitPerReplica"), "memoryRequest": (item.get("memory") or {}).get("requestPerReplica"), "memoryLimit": (item.get("memory") or {}).get("limitPerReplica"), "assessment": "; ".join(item.get("assessment") or []), "scaling": item.get("scalingRecommendation"), "caveat": item.get("caveat")})
         message = '<div class="message">Nenhuma proposta foi produzida. Configure uma URL Prometheus explícita e confirme séries de CPU e memória. Ausência de métricas não significa conformidade.</div>' if not rows else '<div class="message good">Propostas estatísticas: valide startup, sazonalidade, atribuição por container e throttling antes de alterar manifests.</div>'
         columns = [("namespace", "Namespace"), ("workload", "Workload"), ("window", "Janela"), ("replicas", "Réplicas"), ("confidence", "Confiança"), ("currentCpuRequest", "CPU req atual"), ("cpuRequest", "CPU req proposta"), ("currentCpuLimit", "CPU lim atual"), ("cpuLimit", "CPU lim proposta"), ("currentMemoryRequest", "Mem req atual"), ("memoryRequest", "Mem req proposta"), ("currentMemoryLimit", "Mem lim atual"), ("memoryLimit", "Mem lim proposta"), ("assessment", "Diagnóstico"), ("scaling", "HPA/KEDA"), ("caveat", "Ressalva")]
-        return self.layout("Capacidade", f'<h1>Requests/limits orientados por telemetria</h1>{message}{table(rows,columns)}', directory, "capacity")
+        return self.layout("Container Tuning", f'<h1>Container Tuning orientado por telemetria</h1>{message}{table(rows,columns)}', directory, "capacity")
 
     def prometheus(self, directory: Path | None) -> str:
         if not directory:
@@ -1186,6 +1233,8 @@ class Handler(BaseHTTPRequestHandler):
             '<label>Namespace (vazio = cluster inteiro)<input name="namespace" placeholder="namespace opcional"></label>'
             '<label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label>'
             '<label class="checkbox-row"><input type="checkbox" name="account_security" value="1"><span>Incluir GuardDuty/runtime security (requer permissão de conta)</span></label>'
+            '<label class="checkbox-row"><input type="checkbox" name="include_logs" value="1"><span>Incluir logs sanitizados (opt-in; exige targets explícitos)</span></label>'
+            '<label>Targets de logs (namespace/kind/name[:container], separados por vírgula)<input name="log_targets" placeholder="apps/deployment/minha-api:app"></label>'
             '<label>Namespace do Service Prometheus (opcional)<input name="prometheus_namespace" placeholder="informar explicitamente"></label>'
             '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
             f'<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" value="{esc(prometheus_url)}" placeholder="http://prometheus.example:9090"></label>'
@@ -1211,6 +1260,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/workload": return self.send_html(self.workload(directory, query))
         if path == "/technologies": return self.send_html(self.technologies(directory))
         if path == "/capacity": return self.send_html(self.capacity(directory))
+        if path == "/diagnostics": return self.send_html(self.diagnostics(directory))
+        if path == "/versions": return self.send_html(self.versions(directory))
+        if path == "/manifest-quality": return self.send_html(self.manifest_quality(directory))
+        if path == "/best-practices": return self.send_html(self.best_practices(directory, query))
+        if path == "/logs": return self.send_html(self.logs(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
@@ -1227,6 +1281,11 @@ class Handler(BaseHTTPRequestHandler):
             report = details(directory).get("cisSecurity") or {}
             if not report: return self.send_json({"error": "Relatório CIS não disponível para esta coleta"}, 404)
             return self.send_json(report, filename=f"{directory.name}-cis-security.json")
+        if path == "/export-operational":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = details(directory).get("operationalInsights") or {}
+            if not report: return self.send_json({"error": "Operational Insights não disponível"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-operational-insights.json")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
@@ -1296,6 +1355,8 @@ class Handler(BaseHTTPRequestHandler):
                 "PYTHON_BIN": sys.executable,
                 "ASSESSMENT_NAMESPACE": namespace,
                 "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
+                "ASSESSMENT_INCLUDE_LOGS": "1" if form.get("include_logs", ["0"])[0] == "1" else "0",
+                "ASSESSMENT_LOG_TARGETS": form.get("log_targets", [""])[0].strip(),
             }
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"

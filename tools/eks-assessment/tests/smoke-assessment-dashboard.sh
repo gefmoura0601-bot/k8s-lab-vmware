@@ -105,6 +105,11 @@ grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
 
 cis_page="$(curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION")"
 grep -Fq 'CIS Security' <<<"$cis_page"
+curl -fsS "$BASE_URL/diagnostics?collection=$COLLECTION" | grep -Fq 'Events & Diagnostics'
+curl -fsS "$BASE_URL/versions?collection=$COLLECTION" | grep -Fq 'Versions & Lifecycle'
+curl -fsS "$BASE_URL/manifest-quality?collection=$COLLECTION" | grep -Fq 'Manifest Quality'
+curl -fsS "$BASE_URL/best-practices?collection=$COLLECTION" | grep -Fq 'Best Practices'
+curl -fsS "$BASE_URL/logs?collection=$COLLECTION" | grep -Fq 'Logs sanitizados'
 if [[ -f "$DIR/cis-security-assessment.json" ]]; then
   grep -Fq 'Não representa certificação nem compliance integral' <<<"$cis_page"
   grep -Fq 'Exportar relatório CIS JSON' <<<"$cis_page"
