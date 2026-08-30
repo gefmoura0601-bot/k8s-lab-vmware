@@ -22,10 +22,10 @@ DASHBOARD_FOREGROUND=0
 
 if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
-  C_NAVY=$'\033[38;5;17m'; C_BLUE=$'\033[38;5;33m'; C_LIGHT=$'\033[38;5;75m'
+  C_BLUE=$'\033[38;5;33m'; C_LIGHT=$'\033[38;5;75m'
   C_CYAN=$'\033[38;5;81m'; C_GREEN=$'\033[38;5;78m'; C_WHITE=$'\033[97m'; C_RED=$'\033[38;5;203m'
 else
-  C_RESET=''; C_BOLD=''; C_DIM=''; C_NAVY=''; C_BLUE=''; C_LIGHT=''; C_CYAN=''; C_GREEN=''; C_WHITE=''; C_RED=''
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_BLUE=''; C_LIGHT=''; C_CYAN=''; C_GREEN=''; C_WHITE=''; C_RED=''
 fi
 
 usage(){
