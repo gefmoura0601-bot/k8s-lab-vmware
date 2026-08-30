@@ -35,6 +35,7 @@ jq -e '.active == false and (.status | type == "string")' >/dev/null <<<"$collec
 
 paths=(
   "/styles.css"
+  "/kubernetes-logo.svg"
   "/api/collection-status"
   "/?collection=$COLLECTION"
   "/assessment?collection=$COLLECTION"
@@ -62,6 +63,9 @@ done
 
 stylesheet="$(curl -fsS "$BASE_URL/styles.css")"
 grep -Fq ':root {' <<<"$stylesheet" || { echo "dashboard stylesheet is empty or invalid" >&2; exit 1; }
+grep -Fq -- '--k8s-blue: #326ce5' <<<"$stylesheet" || { echo "official Kubernetes primary color is missing" >&2; exit 1; }
+logo="$(curl -fsS "$BASE_URL/kubernetes-logo.svg")"
+grep -Fq '#326ce5' <<<"$logo" || { echo "official Kubernetes logo is missing or altered" >&2; exit 1; }
 
 assert_all_names(){
   local kind="$1" file="$2" filter="$3" page name

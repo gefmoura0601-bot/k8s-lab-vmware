@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-rc.2 — 2026-08-30
+
+- redesenha o menu terminal com identidade Kubernetes, contexto, versão, total de coletas e estado read-only;
+- aplica ao dashboard uma paleta enterprise baseada no azul oficial `#326CE5`;
+- incorpora o SVG oficial do Kubernetes mantido no CNCF artwork;
+- melhora hierarquia visual, contraste, navegação, cards, tabelas, formulários e responsividade;
+- preserva saída sem ANSI quando redirecionada ou quando `NO_COLOR` está definido.
+
 ## 0.4.0-rc.1 — 2026-08-30
 
 - adiciona `Events & Diagnostics`, `Versions & Lifecycle` e `Manifest Quality`;

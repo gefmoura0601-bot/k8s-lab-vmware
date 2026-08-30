@@ -408,7 +408,7 @@ class Handler(BaseHTTPRequestHandler):
         if control.get("active"):
             actions += f'<form class="inline-action" method="post" action="/cancel"><input type="hidden" name="action_token" value="{ACTION_TOKEN}"><button class="button danger" type="submit">Cancelar coleta</button></form>'
         if directory: actions += f'<a class="button" href="/export?{cq}">Exportar</a>'
-        return f'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title><link rel="stylesheet" href="/styles.css"></head><body><header><div class="environment">AMBIENTE DE ASSESSMENT <span>{esc(value.get("clusterName"))}</span></div><div class="top"><strong>EKS <em>ENVIRONMENT</em></strong><span class="health">READ-ONLY</span><span class="headline">{esc(ident or "sem coleta")}</span><div class="actions">{actions}</div></div></header><main><aside>{"".join(nav)}</aside><section class="content">{picker}{body}</section></main></body></html>'
+        return f'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173b73"><title>{esc(title)} · Kubernetes Assessment</title><link rel="icon" href="/kubernetes-logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css"></head><body><header><div class="environment"><span class="status-dot" aria-hidden="true"></span>KUBERNETES ASSESSMENT <span>{esc(value.get("clusterName"))}</span></div><div class="top"><div class="brand"><img src="/kubernetes-logo.svg" alt="Kubernetes"><div><strong>Kubernetes</strong><em>ASSESSMENT CONSOLE</em></div></div><span class="health">READ-ONLY</span><span class="headline">{esc(ident or "sem coleta")}</span><div class="actions">{actions}</div></div></header><main><aside><div class="nav-title">NAVEGAÇÃO</div>{"".join(nav)}</aside><section class="content">{picker}{body}</section></main></body></html>'
 
     def overview(self, directory: Path | None) -> str:
         if not directory: return self.layout("EKS Assessment", '<div class="message">Nenhuma coleta disponível. Use Coletar agora.</div>')
@@ -1295,6 +1295,12 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 return self.send_error(503, "Dashboard stylesheet unavailable")
             self.send_response(200); self.send_header("Content-Type", "text/css; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); return self.wfile.write(data)
+        if path == "/kubernetes-logo.svg":
+            try:
+                data = (self.static / "kubernetes-logo.svg").read_bytes()
+            except OSError:
+                return self.send_error(503, "Kubernetes logo unavailable")
+            self.send_response(200); self.send_header("Content-Type", "image/svg+xml"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "public, max-age=86400"); self.security_headers(); self.end_headers(); return self.wfile.write(data)
         return self.send_json({"error": "Rota não encontrada"}, 404)
 
     def do_POST(self):
@@ -1558,6 +1564,8 @@ def main():
     Handler.access_token = args.access_token
     if not (Handler.static / "styles.css").is_file():
         parser.error(f"dashboard stylesheet not found: {Handler.static / 'styles.css'}")
+    if not (Handler.static / "kubernetes-logo.svg").is_file():
+        parser.error(f"Kubernetes logo not found: {Handler.static / 'kubernetes-logo.svg'}")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.timeout = 5
     server.daemon_threads = True
