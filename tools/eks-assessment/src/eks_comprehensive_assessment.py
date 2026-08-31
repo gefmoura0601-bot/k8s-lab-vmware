@@ -226,7 +226,7 @@ def collection_identity(namespace: str) -> dict[str, str]:
 
 def snapshot_hashes(directory: Path) -> dict[str, str]:
     names = {value[0] for value in RESOURCE_SPECS.values()} | {
-        "nodes.json", "pods.json", "workloads.json", "namespaces.json", "events.json",
+        "nodes.json", "pods.json", "node-metrics.json", "pod-metrics.json", "workloads.json", "namespaces.json", "events.json",
         "universal-inventory.json", "api-resources.json",
     }
     return {

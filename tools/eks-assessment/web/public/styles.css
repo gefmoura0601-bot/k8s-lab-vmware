@@ -160,6 +160,25 @@ aside { background: rgba(255,255,255,.96); border-right: 1px solid var(--line); 
 
 .state { background: linear-gradient(120deg, #fff, #f3f8ff); border: 1px solid var(--line); border-left: 6px solid var(--k8s-blue); border-radius: 10px; padding: 22px; box-shadow: var(--shadow); }
 .state h1 { font-size: 30px; margin: 6px 0; }
+.state.critical { border-left-color: #c9342c; background: linear-gradient(120deg, #fff, #fff0ef); }
+.state.critical h1 { color: #8b1d18; }
+.state.warning { border-left-color: #cf861c; background: linear-gradient(120deg, #fff, #fff8e8); }
+.state.warning h1 { color: #7b5200; }
+.state.incomplete { border-left-color: #7a4da3; background: linear-gradient(120deg, #fff, #f7f0ff); }
+.state.healthy { border-left-color: #378653; background: linear-gradient(120deg, #fff, #effaf3); }
+.state-explanation { max-width: 1100px; font-size: 16px; }
+.state-drivers { margin: 10px 0; color: #384b65; }
+.state-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0 10px; }
+.state-counts span { border: 1px solid #aab7c9; border-radius: 999px; background: #fff; padding: 5px 9px; font-size: 12px; font-weight: 800; }
+.state-counts .crit { color: #8b1d18; border-color: #e09a95; background: #ffe8e5; }
+.state-counts .warn { color: #7b5200; border-color: #e1bd78; background: #fff5d8; }
+.state-counts .unknown { color: #69428e; border-color: #c8aee1; background: #f5edfc; }
+.state-counts .partial { color: #77570a; border-color: #dfc471; background: #fff8de; }
+.state-counts .pass { color: #185c30; border-color: #9dd3ae; background: #e3f6e9; }
+.state-scope { color: var(--text-muted); font-size: 13px; }
+.state-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.state-action { display: inline-block; border-radius: 7px; padding: 9px 12px; color: #fff; background: #173b73; font-weight: 800; text-decoration: none; }
+.state-action.secondary { color: #173b73; background: #fff; border: 1px solid #7799ca; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; margin: 16px 0 24px; }
 .card {
   background: #fff;
@@ -226,6 +245,34 @@ h1 { color: #102f5d; letter-spacing: -.025em; }
 .mini-bar i.ok { background: #46a367; }
 .mini-bar i.warn { background: #c98720; }
 .mini-bar i.crit { background: #c83b32; }
+.node-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 18px; }
+.node-health-card { background: #fff; border: 1px solid var(--line); border-top: 5px solid #7b8798; border-radius: 10px; padding: 18px; box-shadow: var(--shadow); min-width: 0; }
+.node-health-card.crit { border-top-color: #c83b32; }
+.node-health-card.warn { border-top-color: #c98720; }
+.node-health-card.info { border-top-color: #2d5aa3; }
+.node-health-card.ok { border-top-color: #46a367; }
+.node-health-card > header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+.node-health-card h2 { margin: 3px 0 12px; color: #173b73; overflow-wrap: anywhere; }
+.node-health-card h3 { margin: 18px 0 7px; font-size: 14px; color: #405777; }
+.node-health-facts { display: grid; grid-template-columns: repeat(4, minmax(105px, 1fr)); gap: 9px; }
+.node-health-facts > span { display: grid; align-content: start; gap: 4px; min-height: 88px; padding: 10px; border: 1px solid #d5e1f2; background: #f8fbff; }
+.node-health-facts small { color: #66758a; }
+.composition-bar { display: flex; width: 100%; height: 18px; overflow: hidden; border: 1px solid #9fb2ce; border-radius: 999px; background: #eef3f8; }
+.composition-bar span { display: block; min-width: 1px; height: 100%; }
+.composition-bar .system, .composition-legend i.system { background: #326ce5; }
+.composition-bar .daemon, .composition-legend i.daemon { background: #70b7ff; }
+.composition-bar .workload, .composition-legend i.workload { background: #46a367; }
+.composition-bar .overhead, .composition-legend i.overhead { background: #c98720; }
+.composition-bar .headroom, .composition-legend i.headroom { background: #dfe5ec; }
+.composition-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 11px; color: #52657f; }
+.composition-legend span { display: inline-flex; gap: 5px; align-items: center; }
+.composition-legend i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.composition-unavailable { padding: 10px; border: 1px dashed #a9b5c5; color: #66758a; background: #f5f7fa; }
+.node-health-details { margin-top: 16px; border: 1px solid #d5e1f2; background: #f8fbff; }
+.node-health-details summary { cursor: pointer; padding: 11px 13px; color: #24528e; font-weight: 800; }
+.node-health-details p { margin: 0; padding: 7px 13px; font-size: 13px; }
+.node-health-details p:last-child { padding-bottom: 13px; }
+.node-diagnosis { margin: 14px 0 0; padding: 11px 13px; background: #edf4ff; border-left: 4px solid #326ce5; }
 .runtime-config { min-width: 250px; max-width: 520px; }
 .runtime-config summary { cursor: pointer; color: #24528e; font-weight: 750; white-space: nowrap; }
 .runtime-config div { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e1e5eb; line-height: 1.35; }
@@ -269,6 +316,7 @@ h1 { color: #102f5d; letter-spacing: -.025em; }
   .brand strong { font-size: 18px; }
   .brand em, .headline { display: none; }
   .health { margin-left: auto; }
+  .node-health-facts { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
 }
 .inline-action{display:inline-flex;margin:0}
 .inline-action input{display:none}

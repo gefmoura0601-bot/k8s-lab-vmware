@@ -4,18 +4,19 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 
 1. contrato único `operational-insights.json`;
 2. `Events & Diagnostics`, reutilizando Events e Pods sanitizados;
-3. `Versions & Lifecycle`, reutilizando node info, imagens e tecnologias;
-4. `Manifest Quality`, reutilizando findings estáveis e manifests sanitizados;
-5. `Container Tuning`, reutilizando telemetria e recomendações de capacidade;
-6. `Best Practices`, com regras genéricas e aplicabilidade EKS, AKS e GKE;
-7. logs opcionais, por serem a evidência de maior risco e custo;
-8. catálogo versionado de lifecycle para Kubernetes, EKS e GKE, com staleness explícito;
-9. evidência normalizada read-only de EKS, AKS e GKE;
-10. navegação agrupada, busca global e página Cloud Provider;
-11. quality gate para deduplicação, severidade coerente e confiança mínima de `PASS`;
-12. métricas de impacto por coleta e por componente;
-13. cancelamento/timeout com estado terminal preservado desde o preflight;
-14. smoke de logs sanitizados sem exposição de conteúdo no output de validação.
+3. `Node Health`, reutilizando Nodes, Pods e Metrics API sem SSH ou acesso ao filesystem;
+4. `Versions & Lifecycle`, reutilizando node info, imagens e tecnologias;
+5. `Manifest Quality`, reutilizando findings estáveis e manifests sanitizados;
+6. `Container Tuning`, reutilizando telemetria e recomendações de capacidade;
+7. `Best Practices`, com regras genéricas e aplicabilidade EKS, AKS e GKE;
+8. logs opcionais, por serem a evidência de maior risco e custo;
+9. catálogo versionado de lifecycle para Kubernetes, EKS e GKE, com staleness explícito;
+10. evidência normalizada read-only de EKS, AKS e GKE;
+11. navegação agrupada, busca global e página Cloud Provider;
+12. quality gate para deduplicação, severidade coerente e confiança mínima de `PASS`;
+13. métricas de impacto por coleta e por componente;
+14. cancelamento/timeout com estado terminal preservado desde o preflight;
+15. smoke de logs sanitizados sem exposição de conteúdo no output de validação.
 
 ## Guardrails
 

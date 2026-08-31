@@ -102,13 +102,16 @@ check_optional_access() {
 
 if ((api_ready == 1)); then
   check_optional_access get nodes
+  check_optional_access list nodes.metrics.k8s.io
   if [[ -n "$ASSESSMENT_NAMESPACE" ]]; then
     check_required_access list pods -n "$ASSESSMENT_NAMESPACE"
+    check_optional_access list pods.metrics.k8s.io -n "$ASSESSMENT_NAMESPACE"
     check_required_access list deployments.apps -n "$ASSESSMENT_NAMESPACE"
     check_optional_access get "namespace/$ASSESSMENT_NAMESPACE"
   else
     check_required_access list namespaces
     check_required_access list pods --all-namespaces
+    check_optional_access list pods.metrics.k8s.io --all-namespaces
     check_required_access list deployments.apps --all-namespaces
   fi
   check_optional_access list customresourcedefinitions.apiextensions.k8s.io

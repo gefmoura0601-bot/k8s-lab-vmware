@@ -80,14 +80,15 @@ O dashboard usa o ícone oficial do Kubernetes e a cor primária `#326CE5`, mant
 A série `0.4.0-rc` adiciona áreas baseadas no mesmo artefato sanitizado:
 
 - **Events & Diagnostics:** Events deduplicados, estado de Pods e troubleshooting, sem persistir mensagens livres;
-- **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias, com catálogo oficial versionado; versão desconhecida ou catálogo vencido permanece `UNKNOWN`;
+- **Node Health:** uso total, requests, reserva, densidade de Pods, condições de pressão e decomposição entre Kubernetes/System Pods, DaemonSets, workloads e `Node overhead / não atribuído`, usando Kubernetes API e Metrics API;
+- **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias, com catálogo oficial versionado; `UNKNOWN` indica estado indeterminado e `EVIDENCE_UNAVAILABLE` indica componente detectado sem fonte confiável de lifecycle;
 - **Manifest Quality:** segurança, reliability, scheduling, storage, network e supply chain avaliados sobre objetos da Kubernetes API;
 - **Container Tuning:** evolução das propostas de requests/limits, sempre sem alteração automática;
 - **Best Practices:** regras genéricas e pacotes EKS, AKS e GKE com aplicabilidade e responsabilidade explícitas.
 
 O artefato fica em `operational-insights.json` e pode ser exportado por `GET /export-operational`.
 
-O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Versions, Manifest Quality e Best Practices; conteúdo de logs não é indexado.
+O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Node Health, Versions, Manifest Quality e Best Practices; conteúdo de logs não é indexado.
 
 Logs permanecem desabilitados por padrão. Para coleta explícita:
 
@@ -121,6 +122,8 @@ Exemplos auditáveis ficam em `deploy/`:
 - `iam-account-security-optional.json`: GuardDuty opcional, separado do perfil padrão.
 - `azure-aks-assessment-readonly-role.json`: Azure RBAC custom role somente leitura para configuração, node pools, upgrade profile e versões regionais;
 - `gcp-gke-assessment-readonly-role.yaml`: custom role GCP mínima para leitura do cluster e server config.
+
+O ClusterRole inclui `get/list` em `nodes` e `pods` de `metrics.k8s.io`. A Role namespaced inclui apenas Pod metrics; sem acesso cluster-scoped a nodes e Node metrics, `Node Health` permanece `PARTIAL` ou `EVIDENCE_UNAVAILABLE`, nunca `PASS`.
 
 Os exemplos não concedem leitura de Secrets ou ConfigMaps. Substitua os namespaces e vincule as roles somente à identidade aprovada. APIs opcionais sem permissão ficam `PARTIAL` ou `UNKNOWN`.
 
@@ -197,6 +200,7 @@ python3 tools/eks-assessment/src/eks_comprehensive_assessment.py \
 ## Cobertura
 
 - saúde de nodes, pods, eventos, restarts e estados de containers;
+- uso e capacidade dos nodes com decomposição provider-neutral baseada na Metrics API; detalhes e limitações estão em [`docs/node-health.md`](docs/node-health.md);
 - Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Rollouts e Pods independentes;
 - requests/limits, probes, init containers e ephemeral containers;
 - HPA, VPA, KEDA, PDB, réplicas, topology spread, anti-affinity e conflitos entre autoscalers;
@@ -234,8 +238,9 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `comprehensive-assessment.json`: checks, fingerprints, cobertura, tecnologias, semântica, AWS/EKS e capacidade;
 - `aws-eks-assessment.json`: configuração gerenciada exposta pelas APIs AWS/EKS, node groups, add-ons, identidade, rede e cobertura das APIs; não contém inspeção direta do control plane;
 - `cloud-provider-assessment.json`: contrato normalizado EKS/AKS/GKE, lifecycle e Best Practices comprováveis, sem payload cloud bruto ou identificador de conta;
-- `operational-insights.json`: Events, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
+- `operational-insights.json`: Events, Node Health, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
+- `node-metrics.json`, `pod-metrics.json`: uso pontual sanitizado da Metrics API; quando indisponível, os arquivos ficam vazios e a cobertura é declarada incompleta;
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
 - `application-manifests-sanitized.json`: manifests de aplicação sem status/managed fields, valores arbitrários de `env`, dados de Secret ou valores de ConfigMap;
 - `api-resources.json`: APIs listáveis descobertas;

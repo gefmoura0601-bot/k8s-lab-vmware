@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0-rc.4 — 2026-08-31
+
+- torna o banner de saúde acionável, explicando por que o ambiente está `CRÍTICO` e destacando os principais fatores;
+- adiciona `Node Health` provider-neutral para on-premises, EKS, AKS e GKE;
+- coleta Node e Pod metrics via `metrics.k8s.io` com RBAC estritamente read-only;
+- separa uso observado entre Kubernetes/System Pods, DaemonSets, application workloads, headroom e `Node overhead / não atribuído`;
+- combina uso, requests, reserva, densidade de Pods, `Ready` e condições de pressão sem presumir acesso ao node;
+- impede `PASS` de Node Health quando a Metrics API ou a condição `Ready` não fornecem evidência suficiente;
+- troca lifecycle genérico de imagens detectadas de `UNKNOWN` para `EVIDENCE_UNAVAILABLE`, mantendo `UNKNOWN` para versão realmente indeterminada;
+- documenta thresholds, fórmulas, limitações de atribuição e permissões mínimas.
+
 ## 0.4.0-rc.3 — 2026-08-30
 
 - adiciona `cloud-provider-assessment.json` com evidência read-only normalizada para EKS, AKS e GKE;

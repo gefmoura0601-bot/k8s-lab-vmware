@@ -81,6 +81,45 @@ class DashboardAccessTests(unittest.TestCase):
             self.assertIn("Nenhum resultado", hidden)
             self.assertNotIn("never-index-this-secret</td>", hidden)
 
+    def test_overview_explains_critical_state_and_renders_node_health(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection = root / "eks-20260831-node-health"
+            collection.mkdir()
+            (collection / "metadata.json").write_text(json.dumps({"clusterName": "lab", "createdAt": "2026-08-31T00:00:00Z"}), encoding="utf-8")
+            (collection / "nodes.json").write_text(json.dumps({"items": [{"metadata": {"name": "node-a", "labels": {}}, "status": {"conditions": [{"type": "Ready", "status": "True"}], "nodeInfo": {"kubeletVersion": "v1.35.0"}}}]}), encoding="utf-8")
+            finding = {"severity": "CRIT", "category": "Security", "check": "Privileged container", "namespace": "apps", "workload": "Deployment/api", "detail": "privileged=true", "recommendation": "Remover privilégio."}
+            comprehensive = {"summary": {"checks": 1, "workloads": 1, "containers": 1, "passed": 0, "notApplicable": 0}, "findings": [finding], "technologies": [], "capacityRecommendations": []}
+            (collection / "comprehensive-assessment.json").write_text(json.dumps(comprehensive), encoding="utf-8")
+            node_health = {
+                "state": "PASS",
+                "notice": "Uso observado vem da Metrics API. Node overhead / não atribuído inclui OS e runtime.",
+                "summary": {"nodes": 1, "critical": 0, "warnings": 0, "partial": 0, "passed": 1, "metricsNodes": 1, "metricsCoveragePercent": 100.0},
+                "items": [{
+                    "node": "node-a", "state": "PASS", "ready": True, "pressureConditions": [], "diagnosis": ["Dentro dos thresholds"],
+                    "runtime": "containerd://2", "os": "Linux", "allocatable": {"cpuCores": 4, "memoryBytes": 8589934592, "pods": 110}, "nodeReserve": {"cpuCores": 0.2, "memoryBytes": 268435456},
+                    "usage": {"cpu": {"value": 1, "percent": 25}, "memory": {"value": 2147483648, "percent": 25}, "pods": {"value": 10, "percent": 9.1}, "requests": {"cpuCores": 2, "memoryBytes": 3221225472, "cpuPercent": 50, "memoryPercent": 37.5}, "breakdown": {"kubernetesPods": {"cpuCores": 0.1, "memoryBytes": 134217728}, "daemonSets": {"cpuCores": 0.1, "memoryBytes": 134217728}, "workloads": {"cpuCores": 0.5, "memoryBytes": 1073741824}, "nodeOverheadUnattributed": {"cpuCores": 0.3, "memoryBytes": 805306368}, "headroom": {"cpuCores": 3, "memoryBytes": 6442450944}}},
+                    "evidence": {"metrics": "MetricsAPI", "runningPodsObserved": 10, "runningPodsExpected": 10},
+                }],
+            }
+            operational = {"nodeHealth": node_health, "bestPractices": {"rules": []}, "logs": {"entries": []}}
+            (collection / "operational-insights.json").write_text(json.dumps(operational), encoding="utf-8")
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root
+            handler.static = STATIC
+            overview = handler.overview(collection)
+            self.assertIn("Estado CRÍTICO porque 1 finding(s)", overview)
+            self.assertIn("não significa necessariamente indisponibilidade total", overview)
+            self.assertIn("Ver findings críticos", overview)
+            self.assertIn("/node-health?collection=eks-20260831-node-health", overview)
+            page = handler.node_health(collection)
+            self.assertIn("Node Health", page)
+            self.assertIn("Node overhead / não atribuído", page)
+            self.assertIn("containerd://2", page)
+            nodes_page = handler.resources_page(collection, {"kind": ["nodes"]})
+            self.assertIn("Node Health", nodes_page)
+            self.assertIn("25%", nodes_page)
+
 
 if __name__ == "__main__":
     unittest.main()
