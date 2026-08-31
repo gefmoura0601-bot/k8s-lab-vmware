@@ -57,6 +57,20 @@ collect_snapshot() {
   return 1
 }
 
+collect_raw_snapshot() {
+  local key="$1" output="$2" path="$3" temporary
+  temporary="$(mktemp "$OUTPUT_DIR/.${key}.XXXXXX")"
+  if kubectl get --raw "$path" | "$PYTHON_BIN" "$SANITIZER" --mode snapshot >"$temporary"; then
+    mv -f "$temporary" "$output"
+    COLLECTION_STATE["$key"]="AVAILABLE"
+    return 0
+  fi
+  rm -f "$temporary"
+  printf '{"apiVersion":"v1","kind":"List","items":[]}\n' >"$output"
+  COLLECTION_STATE["$key"]="UNAVAILABLE"
+  return 1
+}
+
 REPORT="$OUTPUT_DIR/report.md"
 FINDINGS="$OUTPUT_DIR/findings.tsv"
 METRICS="$OUTPUT_DIR/prometheus-baseline.tsv"
@@ -78,6 +92,13 @@ collect_snapshot nodes "$OUTPUT_DIR/nodes.json" snapshot get nodes || warn "Node
 collect_snapshot pods "$OUTPUT_DIR/pods.json" snapshot get pods "${scope[@]}" || warn "Pods indisponíveis; cobertura ficará UNKNOWN"
 collect_snapshot workloads "$OUTPUT_DIR/workloads.json" snapshot get deployments,statefulsets,daemonsets "${scope[@]}" || warn "Workloads indisponíveis; cobertura ficará UNKNOWN"
 collect_snapshot events "$OUTPUT_DIR/events.json" events get events "${scope[@]}" --sort-by=.lastTimestamp || warn "Events indisponíveis; cobertura ficará UNKNOWN"
+collect_raw_snapshot node_metrics "$OUTPUT_DIR/node-metrics.json" "/apis/metrics.k8s.io/v1beta1/nodes" || warn "Node metrics indisponíveis; Node Health ficará PARTIAL"
+if [[ -n "$ASSESSMENT_NAMESPACE" ]]; then
+  pod_metrics_path="/apis/metrics.k8s.io/v1beta1/namespaces/${ASSESSMENT_NAMESPACE}/pods"
+else
+  pod_metrics_path="/apis/metrics.k8s.io/v1beta1/pods"
+fi
+collect_raw_snapshot pod_metrics "$OUTPUT_DIR/pod-metrics.json" "$pod_metrics_path" || warn "Pod metrics indisponíveis; decomposição de uso dos nodes ficará parcial"
 
 cat >"$REPORT" <<EOF
 # EKS assessment

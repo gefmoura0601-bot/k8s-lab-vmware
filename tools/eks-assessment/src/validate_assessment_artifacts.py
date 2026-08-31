@@ -99,7 +99,7 @@ def main() -> int:
             errors.append(f"missing artifact: {filename}")
             continue
         documents[filename] = parse(path, errors)
-    for filename in ("nodes.json", "pods.json", "workloads.json", "namespaces.json", "pvcs.json"):
+    for filename in ("nodes.json", "pods.json", "node-metrics.json", "pod-metrics.json", "workloads.json", "namespaces.json", "pvcs.json"):
         path = root / filename
         if path.is_file():
             walk(parse(path, errors), filename, errors)
@@ -148,9 +148,16 @@ def main() -> int:
         if modern_cis and (cis_summary.get("postureScorePercent") is None or cis_summary.get("evidenceCoveragePercent") is None or not isinstance(cis_summary.get("domains"), list)):
             errors.append("CIS posture, evidence coverage or domain scores missing")
     operational = documents.get("operational-insights.json", {})
-    required_domains = {"diagnostics", "versions", "manifestQuality", "containerTuning", "bestPractices", "logs"}
+    required_domains = {"diagnostics", "nodeHealth", "versions", "manifestQuality", "containerTuning", "bestPractices", "logs"}
     if operational.get("readOnly") is not True or not required_domains.issubset(operational):
         errors.append("operational insights domains or read-only invariant missing")
+    node_health = operational.get("nodeHealth") or {}
+    if node_health.get("state") not in {"PASS", "WARN", "CRIT", "PARTIAL", "EVIDENCE_UNAVAILABLE"}:
+        errors.append("invalid Node Health state")
+    for item in node_health.get("items") or []:
+        evidence = item.get("evidence") or {}
+        if item.get("state") == "PASS" and (not item.get("ready") or evidence.get("metrics") != "MetricsAPI"):
+            errors.append("Node Health passed without Ready and Metrics API evidence")
     log_evidence = operational.get("logs") or {}
     if log_evidence.get("state") == "COLLECTED" and not log_evidence.get("redaction"):
         errors.append("collected logs lack redaction metadata")

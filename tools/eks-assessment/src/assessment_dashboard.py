@@ -399,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
         groups = [
             ("VISÃO", [("overview", "/", "Visão geral"), ("search", "/search", "Busca global")]),
             ("ANÁLISE", [("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("best", "/best-practices", "Best Practices")]),
-            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
+            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
             ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
             ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
             ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
@@ -433,8 +433,29 @@ class Handler(BaseHTTPRequestHandler):
         cards = [("NODES", summary["nodes"], "nodes"), ("NODES READY", summary["readyNodes"], "nodes"), ("PODS", summary["pods"], "pods"), ("RUNNING", summary["running"], "pods&status=Running"), ("PENDING", summary["pending"], "pods&status=Pending"), ("FAILED", summary["failed"], "pods&status=Failed"), ("DEPLOYMENTS", summary["deployments"], "deployments"), ("STATEFULSETS", summary["statefulsets"], "statefulsets"), ("DAEMONSETS", summary["daemonsets"], "daemonsets"), ("JOBS", summary["jobs"], "jobs"), ("CRONJOBS", summary["cronjobs"], "cronjobs"), ("ROLLOUTS", summary["rollouts"], "rollouts"), ("HPA", summary["hpas"], "hpas"), ("KEDA", summary["keda"], "keda"), ("PVC", summary["pvcs"], "pvcs"), ("RABBITMQ", f'{summary["rabbitReady"]}/{summary["rabbitDesired"]}', "rabbitmq")]
         card_html = "".join(f'<a class="card" href="/resources?collection={ident}&kind={kind}"><small>{label}</small><b>{count}</b></a>' for label, count, kind in cards)
         discovery = value.get("discovery") or {}; scanner = value.get("comprehensive", {}).get("summary", {})
+        node_health = (value.get("operationalInsights") or {}).get("nodeHealth") or {}
+        node_health_state = node_health.get("state", "EVIDENCE_UNAVAILABLE")
+        card_html += f'<a class="card" href="/node-health?collection={ident}"><small>NODE HEALTH</small><b>{esc(node_health_state)}</b></a>'
         priority = table(findings[:20], [("severity", "Severidade"), ("category", "Categoria"), ("namespace", "Namespace"), ("workload", "Workload"), ("check", "Check"), ("detail", "Evidência"), ("recommendation", "Recomendação")])
-        body = f'<section class="state"><small>SAÚDE DO AMBIENTE</small><h1>{state}</h1><p>{critical} crítico(s), {warnings} alerta(s), {unknown} desconhecido(s), {partial} parcial(is), {scanner.get("passed",0)} conforme(s), {scanner.get("notApplicable",0)} N/A. {scanner.get("checks","N/A")} checks em {scanner.get("workloads","N/A")} workloads / {scanner.get("containers","N/A")} containers. Discovery {discovery.get("succeeded","N/A")}/{discovery.get("sections","N/A")}.</p></section><div class="cards">{card_html}</div><h2>Problemas e recomendações prioritárias</h2>{priority}'
+        state_css = "critical" if critical else "warning" if warnings else "incomplete" if unknown or partial else "healthy"
+        if critical:
+            explanation = f'Estado CRÍTICO porque {critical} finding(s) de severidade CRIT exigem priorização. Isso indica riscos relevantes; não significa necessariamente indisponibilidade total do cluster.'
+            action = f'<a class="state-action" href="/problems?collection={ident}&severity=CRIT">Ver findings críticos</a>'
+        elif warnings:
+            explanation = f'Estado ATENÇÃO porque existem {warnings} finding(s) WARN sem findings CRIT nesta coleta.'
+            action = f'<a class="state-action" href="/problems?collection={ident}&severity=WARN">Ver alertas</a>'
+        elif unknown or partial:
+            explanation = 'A avaliação possui evidência incompleta. Ausência de evidência nunca é tratada como conformidade.'
+            action = f'<a class="state-action" href="/coverage?collection={ident}">Ver cobertura</a>'
+        else:
+            explanation = 'Nenhum finding CRIT ou WARN foi identificado com a evidência disponível nesta coleta.'
+            action = f'<a class="state-action" href="/assessment?collection={ident}">Abrir assessment</a>'
+        drivers = Counter(x.get("category", "Assessment") for x in findings if x.get("severity") == ("CRIT" if critical else "WARN"))
+        driver_text = ", ".join(f'{name} ({count})' for name, count in drivers.most_common(4))
+        driver_html = f'<p class="state-drivers"><strong>Principais fatores:</strong> {esc(driver_text)}</p>' if driver_text else ''
+        counts_html = f'<div class="state-counts"><span class="crit">{critical} CRIT</span><span class="warn">{warnings} WARN</span><span class="unknown">{unknown} UNKNOWN</span><span class="partial">{partial} PARTIAL</span><span class="pass">{scanner.get("passed",0)} PASS</span><span>{scanner.get("notApplicable",0)} N/A</span></div>'
+        state_actions = f'<div class="state-actions">{action}<a class="state-action secondary" href="/node-health?collection={ident}">Abrir Node Health</a></div>'
+        body = f'<section class="state {state_css}"><small>SAÚDE DO AMBIENTE</small><h1>{state}</h1><p class="state-explanation">{esc(explanation)}</p>{driver_html}{counts_html}<p class="state-scope">{scanner.get("checks","N/A")} checks em {scanner.get("workloads","N/A")} workloads / {scanner.get("containers","N/A")} containers. Discovery {discovery.get("succeeded","N/A")}/{discovery.get("sections","N/A")}.</p>{state_actions}</section><div class="cards">{card_html}</div><h2>Problemas e recomendações prioritárias</h2>{priority}'
         return self.layout("Visão geral", body, directory, "overview")
 
     def search_page(self, directory: Path | None, query: dict[str, list[str]]) -> str:
@@ -474,6 +495,7 @@ class Handler(BaseHTTPRequestHandler):
         operational = value.get("operationalInsights") or {}
         sections = [
             ("Event", ((operational.get("diagnostics") or {}).get("events") or []), "/diagnostics", "reason", "type", "recommendation"),
+            ("Node Health", ((operational.get("nodeHealth") or {}).get("items") or []), "/node-health", "node", "state", "diagnosis"),
             ("Version", ((operational.get("versions") or {}).get("items") or []), "/versions", "name", "supportState", "version"),
             ("Manifest Quality", ((operational.get("manifestQuality") or {}).get("findings") or []), "/manifest-quality", "check", "severity", "evidence"),
             ("Best Practice", ((operational.get("bestPractices") or {}).get("rules") or []), "/best-practices", "ruleId", "status", "recommendation"),
@@ -499,6 +521,10 @@ class Handler(BaseHTTPRequestHandler):
         namespaces = sorted({x.get("namespace") for x in all_rows if x.get("namespace") not in (None, "-")})
         options = "".join(f'<option value="{esc(x)}" {"selected" if x == namespace else ""}>{esc(x)}</option>' for x in namespaces)
         filters = f'<form class="filters"><input type="hidden" name="collection" value="{esc(directory.name)}"><input type="hidden" name="kind" value="{esc(kind)}"><input name="search" value="{esc(query.get("search",[""])[0])}" placeholder="Filtrar nome, namespace, status ou detalhe"><select name="namespace"><option value="">Todos os namespaces</option>{options}</select><button>Filtrar</button></form>'
+        node_health_map = {
+            str(item.get("node")): item
+            for item in (((value.get("operationalInsights") or {}).get("nodeHealth") or {}).get("items") or [])
+        }
         rendered = []
         for row in rows:
             copy = dict(row)
@@ -506,10 +532,25 @@ class Handler(BaseHTTPRequestHandler):
                 params = urlencode({"collection": directory.name, "namespace": row.get("namespace", ""), "kind": row.get("kind", ""), "name": row.get("name", "")})
                 copy["nameHtml"] = f'<a class="resource-link" href="/workload?{params}">{esc(row.get("name"))}</a>'
             else: copy["nameHtml"] = esc(row.get("name"))
+            if kind == "nodes":
+                health = node_health_map.get(str(row.get("name"))) or {}
+                health_state = str(health.get("state") or "EVIDENCE_UNAVAILABLE")
+                css = {"CRIT": "crit", "WARN": "warn", "PARTIAL": "info", "PASS": "ok"}.get(health_state, "na")
+                health_href = urlencode({"collection": directory.name})
+                copy["healthHtml"] = f'<a href="/node-health?{health_href}"><span class="metric-status {css}">{esc(health_state)}</span></a>'
+                health_usage = health.get("usage") or {}
+                copy["cpuHtml"] = percent_html(finite_number((health_usage.get("cpu") or {}).get("percent")), 85, 95)
+                copy["memoryHtml"] = percent_html(finite_number((health_usage.get("memory") or {}).get("percent")), 80, 90)
+                copy["podsHtml"] = percent_html(finite_number((health_usage.get("pods") or {}).get("percent")), 80, 95)
             rendered.append(copy)
-        columns = [("kind", "Kind"), ("namespace", "Namespace"), ("nameHtml", "Nome"), ("status", "Status"), ("ready", "Ready"), ("node", "Node"), ("restarts", "Restarts"), ("detail", "Detalhe")]
+        if kind == "nodes":
+            columns = [("kind", "Kind"), ("nameHtml", "Nome"), ("status", "Status"), ("healthHtml", "Node Health"), ("cpuHtml", "CPU em uso"), ("memoryHtml", "Memória em uso"), ("podsHtml", "Densidade de Pods"), ("detail", "Detalhe")]
+            raw_columns = {"nameHtml", "healthHtml", "cpuHtml", "memoryHtml", "podsHtml"}
+        else:
+            columns = [("kind", "Kind"), ("namespace", "Namespace"), ("nameHtml", "Nome"), ("status", "Status"), ("ready", "Ready"), ("node", "Node"), ("restarts", "Restarts"), ("detail", "Detalhe")]
+            raw_columns = {"nameHtml"}
         active = "rabbitmq" if kind == "rabbitmq" else "nodes" if kind == "nodes" else "namespaces" if kind == "namespaces" else "workloads"
-        return self.layout(kind.upper(), f'<h1>{esc(kind.upper())} <small>{len(rows)} item(ns)</small></h1>{filters}{table(rendered, columns, {"nameHtml"})}', directory, active)
+        return self.layout(kind.upper(), f'<h1>{esc(kind.upper())} <small>{len(rows)} item(ns)</small></h1>{filters}{table(rendered, columns, raw_columns)}', directory, active)
 
     def problems(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory: return self.overview(None)
@@ -571,14 +612,81 @@ class Handler(BaseHTTPRequestHandler):
         pods = [{**x, "reasons": ", ".join(x.get("reasons") or [])} for x in value.get("podStates") or []]
         return self.layout("Events & Diagnostics", f'<h1>Events & Diagnostics</h1><p>Events deduplicados e correlacionados com estado de Pods. Mensagens livres não são persistidas.</p>{facts}<h2>Events</h2>{events}<h2>Pods com sinais operacionais</h2>{table(pods,[("namespace","Namespace"),("pod","Pod"),("phase","Phase"),("restarts","Restarts"),("reasons","Reasons"),("node","Node")])}', directory, "diagnostics")
 
+    def node_health(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("nodeHealth") or {}
+        summary = value.get("summary") or {}
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Estado</small><b>{esc(value.get("state", "EVIDENCE_UNAVAILABLE"))}</b></div>'
+            f'<div><small>Nodes avaliados</small><b>{summary.get("nodes", 0)}</b></div>'
+            f'<div><small>CRIT / WARN</small><b>{summary.get("critical", 0)} / {summary.get("warnings", 0)}</b></div>'
+            f'<div><small>Metrics API</small><b>{summary.get("metricsNodes", 0)}/{summary.get("nodes", 0)}</b></div>'
+            f'<div><small>Cobertura de uso</small><b>{summary.get("metricsCoveragePercent", 0):.0f}%</b></div>'
+            '</div>'
+        )
+
+        def composition(item: dict, resource: str) -> str:
+            usage = item.get("usage") or {}
+            breakdown = usage.get("breakdown") or {}
+            allocatable = item.get("allocatable") or {}
+            key = "cpuCores" if resource == "cpu" else "memoryBytes"
+            reference = finite_number(allocatable.get(key))
+            formatter = human_cpu if resource == "cpu" else human_bytes
+            parts = (
+                ("kubernetesPods", "Kubernetes/System Pods", "system"),
+                ("daemonSets", "DaemonSets", "daemon"),
+                ("workloads", "Application workloads", "workload"),
+                ("nodeOverheadUnattributed", "Node overhead / não atribuído", "overhead"),
+                ("headroom", "Headroom", "headroom"),
+            )
+            segments, legend = [], []
+            for name, label, css in parts:
+                value_number = finite_number((breakdown.get(name) or {}).get(key))
+                width = min(100.0, max(0.0, ratio_percent(value_number, reference) or 0.0))
+                if value_number is not None and width > 0:
+                    segments.append(f'<span class="{css}" style="width:{width:.2f}%" title="{esc(label)}: {esc(formatter(value_number))}"></span>')
+                legend.append(f'<span><i class="{css}"></i>{esc(label)} <b>{esc(formatter(value_number))}</b></span>')
+            if not segments:
+                return '<div class="composition-unavailable">EVIDENCE_UNAVAILABLE</div>'
+            return f'<div class="composition-bar">{"".join(segments)}</div><div class="composition-legend">{"".join(legend)}</div>'
+
+        cards = []
+        css_by_state = {"CRIT": "crit", "WARN": "warn", "PARTIAL": "info", "PASS": "ok"}
+        for item in value.get("items") or []:
+            state = str(item.get("state") or "PARTIAL")
+            css = css_by_state.get(state, "na")
+            usage = item.get("usage") or {}
+            cpu, memory, pods = usage.get("cpu") or {}, usage.get("memory") or {}, usage.get("pods") or {}
+            requests = usage.get("requests") or {}
+            reserve = item.get("nodeReserve") or {}
+            evidence = item.get("evidence") or {}
+            diagnostics = "; ".join(str(x) for x in item.get("diagnosis") or [])
+            pressure = ", ".join(item.get("pressureConditions") or []) or "nenhuma"
+            cpu_request_percent = finite_number(requests.get("cpuPercent"))
+            memory_request_percent = finite_number(requests.get("memoryPercent"))
+            cpu_request_label = f"{cpu_request_percent:.1f}%" if cpu_request_percent is not None else "N/A"
+            memory_request_label = f"{memory_request_percent:.1f}%" if memory_request_percent is not None else "N/A"
+            ready_label = "sim" if item.get("ready") is True else "não" if item.get("ready") is False else "UNKNOWN"
+            cards.append(
+                f'<article class="node-health-card {css}"><header><div><small>NODE</small><h2>{esc(item.get("node"))}</h2></div><span class="metric-status {css}">{esc(state)}</span></header>'
+                f'<div class="node-health-facts"><span><small>Ready</small><b>{ready_label}</b></span><span><small>CPU em uso</small><b>{esc(human_cpu(finite_number(cpu.get("value"))))}</b>{percent_html(finite_number(cpu.get("percent")), 85, 95)}</span><span><small>Memória em uso</small><b>{esc(human_bytes(finite_number(memory.get("value"))))}</b>{percent_html(finite_number(memory.get("percent")), 80, 90)}</span><span><small>Pods</small><b>{pods.get("value", 0)}/{(item.get("allocatable") or {}).get("pods", "N/A")}</b>{percent_html(finite_number(pods.get("percent")), 80, 95)}</span></div>'
+                f'<h3>Decomposição observada de CPU</h3>{composition(item, "cpu")}<h3>Decomposição observada de memória</h3>{composition(item, "memory")}'
+                f'<details class="node-health-details"><summary>Capacidade, reserva e evidência</summary><p><b>Requests:</b> CPU {esc(human_cpu(finite_number(requests.get("cpuCores"))))} ({esc(cpu_request_label)}); memória {esc(human_bytes(finite_number(requests.get("memoryBytes"))))} ({esc(memory_request_label)}).</p><p><b>Reserva do node:</b> CPU {esc(human_cpu(finite_number(reserve.get("cpuCores"))))}; memória {esc(human_bytes(finite_number(reserve.get("memoryBytes"))))}. Reserva é capacity menos allocatable, não uso real.</p><p><b>Runtime:</b> {esc(item.get("runtime"))} · <b>OS:</b> {esc(item.get("os"))}</p><p><b>Pressão:</b> {esc(pressure)} · <b>Evidence Source:</b> KubernetesAPI + {esc(evidence.get("metrics"))} · <b>Pod metrics:</b> {evidence.get("runningPodsObserved", 0)}/{evidence.get("runningPodsExpected", 0)}.</p></details>'
+                f'<p class="node-diagnosis"><strong>Diagnóstico:</strong> {esc(diagnostics)}</p></article>'
+            )
+        content = "".join(cards) or '<div class="message">Node Health indisponível nesta coleta. Execute uma nova coleta com acesso read-only a nodes e metrics.k8s.io.</div>'
+        notice = f'<div class="metric-legend">{esc(value.get("notice") or "Esta coleta não possui evidência de Node Health.")}</div>'
+        return self.layout("Node Health", f'<h1>Node Health</h1><p>Saúde provider-neutral para on-premises, EKS, AKS e GKE, sem SSH ou acesso ao filesystem do node.</p>{notice}{facts}<div class="node-health-grid">{content}</div>', directory, "node-health")
+
     def versions(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         value = (details(directory).get("operationalInsights") or {}).get("versions") or {}
         summary = value.get("summary") or {}
         catalog = value.get("catalog") or {}
         catalog_state = "DESATUALIZADO" if catalog.get("stale") else "ATUAL"
-        message = f'<div class="message warn">{esc(value.get("notice",""))} Componentes: {summary.get("components",0)}; versões desconhecidas: {summary.get("unknownVersions",0)}; fim de suporte: {summary.get("endOfSupport",0)}; version skew nos nodes: {"sim" if summary.get("nodeVersionSkew") else "não"}. Catálogo: {esc(catalog.get("asOf","UNKNOWN"))} ({catalog_state}).</div>'
-        columns = [("component","Componente"),("name","Nome"),("version","Versão"),("supportState","Support State"),("supportUntil","Support Until"),("daysRemaining","Dias restantes"),("runtime","Runtime"),("os","Sistema operacional"),("kernel","Kernel"),("state","Estado"),("source","Evidence Source")]
+        message = f'<div class="message warn">{esc(value.get("notice",""))} Componentes: {summary.get("components",0)}; versões desconhecidas: {summary.get("unknownVersions",0)}; lifecycle sem evidência: {summary.get("lifecycleEvidenceUnavailable",0)}; fim de suporte: {summary.get("endOfSupport",0)}; version skew nos nodes: {"sim" if summary.get("nodeVersionSkew") else "não"}. Catálogo: {esc(catalog.get("asOf","UNKNOWN"))} ({catalog_state}).</div>'
+        columns = [("component","Componente"),("name","Nome"),("version","Versão"),("supportState","Support State"),("supportUntil","Support Until"),("daysRemaining","Dias restantes"),("lifecycleReason","Motivo"),("runtime","Runtime"),("os","Sistema operacional"),("kernel","Kernel"),("state","Estado"),("source","Evidence Source")]
         return self.layout("Versions & Lifecycle", f'<h1>Versions & Lifecycle</h1>{message}{table(value.get("items") or [],columns)}', directory, "versions")
 
     def manifest_quality(self, directory: Path | None) -> str:
@@ -1387,6 +1495,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/technologies": return self.send_html(self.technologies(directory))
         if path == "/capacity": return self.send_html(self.capacity(directory))
         if path == "/diagnostics": return self.send_html(self.diagnostics(directory))
+        if path == "/node-health": return self.send_html(self.node_health(directory))
         if path == "/versions": return self.send_html(self.versions(directory))
         if path == "/manifest-quality": return self.send_html(self.manifest_quality(directory))
         if path == "/best-practices": return self.send_html(self.best_practices(directory, query))
