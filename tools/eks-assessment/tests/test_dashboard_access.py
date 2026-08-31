@@ -120,6 +120,41 @@ class DashboardAccessTests(unittest.TestCase):
             self.assertIn("Node Health", nodes_page)
             self.assertIn("25%", nodes_page)
 
+    def test_cloud_provider_renders_facts_without_template_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection = root / "eks-20260831-cloud-provider"
+            collection.mkdir()
+            (collection / "metadata.json").write_text(
+                json.dumps({"clusterName": "lab", "createdAt": "2026-08-31T00:00:00Z"}),
+                encoding="utf-8",
+            )
+            cloud = {
+                "provider": "generic-kubernetes",
+                "state": "N/A",
+                "reason": "Cluster não identificado como EKS, AKS ou GKE.",
+                "readOnly": True,
+                "safety": {"requests": 0, "mutations": 0},
+                "summary": {"rules": 0},
+                "lifecycle": {},
+                "cluster": {},
+                "bestPractices": [],
+                "coverage": {},
+            }
+            (collection / "cloud-provider-assessment.json").write_text(
+                json.dumps(cloud), encoding="utf-8"
+            )
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root
+            handler.static = STATIC
+
+            page = handler.cloud_provider(collection)
+
+            self.assertNotIn("{facts}", page)
+            self.assertIn('<div class="facts">', page)
+            self.assertIn("Chamadas read-only", page)
+            self.assertIn("Exportar evidência sanitizada", page)
+
 
 if __name__ == "__main__":
     unittest.main()

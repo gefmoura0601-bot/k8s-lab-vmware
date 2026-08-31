@@ -40,12 +40,15 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 
 Esses gates são operacionais, não pendências de implementação local. Sem credenciais/cluster acessível, a versão permanece release candidate e nenhum ambiente cloud é marcado como validado.
 
-## Evidência local da RC.3
+## Evidência local da RC.5
 
 - preflight on-premises sem `WARN` ou `FAIL`;
 - coleta completa no lab com estado `COMPLETED` e zero mutações;
 - cancelamento real sem processo órfão, inclusive durante o preflight;
 - quality gate sem duplicidades, conflitos de severidade ou `PASS` de baixa confiança;
 - dashboard, exportações e coleta opt-in de logs sanitizados validados por smoke tests.
+- `Node Health` validado no lab com três nodes e cobertura integral da Metrics API;
+- página `Cloud Provider` protegida por regressão contra placeholders de template não resolvidos.
+- inventário live da RC.5 medido no lab: 2.072 objetos, 156 chamadas Kubernetes API, zero retry/throttling, 16,832s de coleta, 34.405.187 bytes recebidos e peak RSS de 156.073.984 bytes.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.
