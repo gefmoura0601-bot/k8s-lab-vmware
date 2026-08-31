@@ -1151,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
         body = (
             f'<h1>Cloud Provider <small>{esc(provider)}</small></h1><div class="message {message_class}">'
             f'Evidência normalizada e estritamente read-only: <b>{esc(state)}</b>. {esc(cloud.get("reason",""))} '
-            'Payloads brutos, credenciais e identificadores de conta não são persistidos.</div>{facts}'
+            f'Payloads brutos, credenciais e identificadores de conta não são persistidos.</div>{facts}'
             f'<div class="cis-actions"><a class="button" href="/export-cloud?collection={esc(directory.name)}">Exportar evidência sanitizada</a></div>'
             f'<h2>Lifecycle</h2>{table(lifecycle_rows, [("field","Campo"),("value","Valor")])}'
             f'<h2>Configuração sanitizada</h2>{table(cluster_rows, [("field","Campo"),("value","Valor")])}'

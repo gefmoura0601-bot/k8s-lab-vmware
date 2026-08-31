@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-rc.5 — 2026-08-31
+
+- corrige a renderização do painel de indicadores em `Cloud Provider`, que exibia o placeholder literal `{facts}`;
+- adiciona regressão unitária e smoke HTTP para impedir placeholders não resolvidos nessa página;
+- impede o smoke HTTP de selecionar coletas canceladas ou sem os artefatos obrigatórios;
+- registra a medição live de impacto da RC.5 no lab, sem extrapolá-la para ambientes transacionais;
+- atualiza a evidência local do roadmap sem presumir validação em EKS, AKS ou GKE reais.
+
 ## 0.4.0-rc.4 — 2026-08-31
 
 - torna o banner de saúde acionável, explicando por que o ambiente está `CRÍTICO` e destacando os principais fatores;

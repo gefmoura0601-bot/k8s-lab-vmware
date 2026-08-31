@@ -21,11 +21,20 @@ command -v curl >/dev/null || { echo "curl is required" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 if [[ -z "$COLLECTION" ]]; then
-  COLLECTION="$(find "$ROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%T@ %f\n' | sort -nr | awk 'NR==1{print $2}')"
+  while read -r _ candidate; do
+    [[ -f "$candidate/metadata.json" && -f "$candidate/nodes.json" && -f "$candidate/pods.json" && -f "$candidate/workloads.json" && -f "$candidate/comprehensive-assessment.json" ]] || continue
+    jq -e '.status == "COMPLETED" and .completed == true' "$candidate/metadata.json" >/dev/null || continue
+    COLLECTION="$(basename "$candidate")"
+    break
+  done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type d -name 'eks-*' -printf '%T@ %p\n' | sort -nr)
 fi
+[[ -n "$COLLECTION" ]] || { echo "no completed collection with required artifacts found under: $ROOT" >&2; exit 2; }
 [[ "$COLLECTION" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid collection id" >&2; exit 2; }
 DIR="$ROOT/$COLLECTION"
 [[ -d "$DIR" ]] || { echo "collection not found: $DIR" >&2; exit 2; }
+for required in metadata.json nodes.json pods.json workloads.json comprehensive-assessment.json; do
+  [[ -f "$DIR/$required" ]] || { echo "required collection artifact not found: $DIR/$required" >&2; exit 2; }
+done
 
 health="$(curl -fsS "$BASE_URL/api/health")"
 jq -e '.ok == true and .readOnly == true' >/dev/null <<<"$health"
@@ -114,6 +123,11 @@ grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
 cloud_page="$(curl -fsS "$BASE_URL/cloud?collection=$COLLECTION")"
 grep -Fq 'Cloud Provider' <<<"$cloud_page"
 grep -Fq 'Payloads brutos, credenciais e identificadores de conta não são persistidos' <<<"$cloud_page"
+grep -Fq 'Chamadas read-only' <<<"$cloud_page"
+if grep -Fq '{facts}' <<<"$cloud_page"; then
+  echo "cloud provider page leaked an unresolved template placeholder" >&2
+  exit 1
+fi
 curl -fsS "$BASE_URL/export-cloud?collection=$COLLECTION" | jq -e '.readOnly == true and .safety.mutations == 0' >/dev/null
 
 cis_page="$(curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION")"
