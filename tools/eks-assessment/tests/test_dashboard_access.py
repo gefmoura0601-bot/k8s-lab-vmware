@@ -2,8 +2,10 @@
 """Authentication tests for the remotely exposed assessment dashboard."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -56,6 +58,28 @@ class DashboardAccessTests(unittest.TestCase):
         denied = self.handler("/api/health")
         self.assertFalse(denied.authenticated())
         self.assertEqual(denied.response_status, 401)
+
+    def test_grouped_navigation_and_global_search_do_not_index_log_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection = root / "eks-20260830-search"
+            collection.mkdir()
+            (collection / "metadata.json").write_text(json.dumps({"clusterName": "lab", "context": "kind-lab", "createdAt": "2026-08-30T00:00:00Z"}), encoding="utf-8")
+            (collection / "comprehensive-assessment.json").write_text(json.dumps({"summary": {}, "findings": [], "technologies": [], "capacityRecommendations": []}), encoding="utf-8")
+            operational = {"bestPractices": {"rules": [{"ruleId": "bestpractice.gke.release.channel", "status": "PASS", "recommendation": "Manter release channel."}]}, "logs": {"entries": [{"target": "apps/deployment/api", "state": "COLLECTED", "content": "never-index-this-secret"}]}}
+            (collection / "operational-insights.json").write_text(json.dumps(operational), encoding="utf-8")
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root
+            handler.static = STATIC
+            navigation = handler.layout("Teste", "body", collection, "best")
+            self.assertIn("ANÁLISE", navigation)
+            self.assertIn("OPERAÇÕES", navigation)
+            self.assertIn("BUSCA GLOBAL", navigation)
+            result = handler.search_page(collection, {"q": ["bestpractice.gke"]})
+            self.assertIn("bestpractice.gke.release.channel", result)
+            hidden = handler.search_page(collection, {"q": ["never-index-this-secret"]})
+            self.assertIn("Nenhum resultado", hidden)
+            self.assertNotIn("never-index-this-secret</td>", hidden)
 
 
 if __name__ == "__main__":

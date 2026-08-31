@@ -43,12 +43,15 @@ class OperationalInsightsTests(unittest.TestCase):
     def test_logs_require_targets_and_redact_credentials(self) -> None:
         with patch.dict(os.environ, {"ASSESSMENT_INCLUDE_LOGS": "1", "ASSESSMENT_LOG_TARGETS": ""}, clear=False):
             self.assertEqual(insights.sanitized_logs()["state"], "REFUSED")
-        completed = subprocess.CompletedProcess([], 0, "token=abc Authorization: Bearer xyz\nnormal line", "")
+        completed = subprocess.CompletedProcess([], 0, 'token=abc Authorization: Bearer xyz\n{"password":"json-secret"}\nkey=AKIA1234567890ABCDEF\nhttps://user:pass@example.test\nnormal line', "")
         with patch.dict(os.environ, {"ASSESSMENT_INCLUDE_LOGS": "1", "ASSESSMENT_LOG_TARGETS": "apps/deployment/api:app"}, clear=False), patch.object(insights.subprocess, "run", return_value=completed):
             value = insights.sanitized_logs()
         content = value["entries"][0]["content"]
         self.assertNotIn("abc", content)
         self.assertNotIn("xyz", content)
+        self.assertNotIn("json-secret", content)
+        self.assertNotIn("AKIA1234567890ABCDEF", content)
+        self.assertNotIn("user:pass@", content)
         self.assertIn("[REDACTED]", content)
 
 

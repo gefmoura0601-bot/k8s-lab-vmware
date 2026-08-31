@@ -1,0 +1,18 @@
+{
+  "Name": "AKS Assessment Read Only",
+  "IsCustom": true,
+  "Description": "Leitura mínima de configuração, node pools e versões do AKS para o Kubernetes Assessment.",
+  "Actions": [
+    "Microsoft.ContainerService/managedClusters/read",
+    "Microsoft.ContainerService/managedClusters/upgradeProfiles/read",
+    "Microsoft.ContainerService/managedClusters/agentPools/read",
+    "Microsoft.ContainerService/locations/kubernetesversions/read",
+    "Microsoft.ContainerService/locations/orchestrators/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/<SUBSCRIPTION_ID>"
+  ]
+}

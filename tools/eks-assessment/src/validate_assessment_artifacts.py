@@ -28,6 +28,11 @@ SENSITIVE = re.compile(
     r"(?i)(password|passwd|token|secret|credential|private.?key|api.?key|"
     r"client.?secret|connection.?string)"
 )
+LOG_KEY_VALUE = re.compile(r'''(?ix)\b(authorization|password|passwd|token|secret|api[_-]?key|cookie|client[_-]?secret|connection[_-]?string)\b(["']?\s*[:=]\s*["']?)([^\s,;}"']+)''')
+LOG_AUTH = re.compile(r"(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+")
+LOG_JWT = re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}(?:\.[a-zA-Z0-9_-]{8,})?\b")
+LOG_AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+LOG_URL_CREDENTIALS = re.compile(r"(?i)https?://[^\s/@:]+:[^\s/@]+@")
 
 
 def safe_runtime_env_name(name: str) -> bool:
@@ -38,7 +43,7 @@ REQUIRED = (
     "metadata.json", "nodes.json", "pods.json", "workloads.json",
     "comprehensive-assessment.json", "application-manifests-sanitized.json",
     "api-resources.json", "universal-inventory.json", "aws-eks-assessment.json",
-    "operational-insights.json",
+    "cloud-provider-assessment.json", "operational-insights.json",
 )
 
 
@@ -118,6 +123,9 @@ def main() -> int:
             errors.append("unsupported finding severity")
         if not finding.get("fingerprint") or not finding.get("ruleId") or not finding.get("resourceKey"):
             errors.append("finding lacks stable identity fields")
+    quality = report.get("quality") or {}
+    if any(int(quality.get(key) or 0) for key in ("stableIdentityDuplicates", "conflictingSeverities", "lowConfidencePasses")):
+        errors.append("finding quality gate detected duplicate, conflicting or low-confidence PASS evidence")
     aws_report = documents.get("aws-eks-assessment.json", {})
     if aws_report.get("readOnly") is not True or (aws_report.get("safety") or {}).get("mutations") != 0:
         errors.append("AWS/EKS read-only safety invariant missing")
@@ -146,6 +154,32 @@ def main() -> int:
     log_evidence = operational.get("logs") or {}
     if log_evidence.get("state") == "COLLECTED" and not log_evidence.get("redaction"):
         errors.append("collected logs lack redaction metadata")
+    for entry in log_evidence.get("entries") or []:
+        content = str(entry.get("content") or "") + "\n" + str(entry.get("error") or "")
+        key_value_leak = any("[REDACTED" not in match.group(3).upper() for match in LOG_KEY_VALUE.finditer(content))
+        if key_value_leak or LOG_AUTH.search(content) or LOG_JWT.search(content) or LOG_AWS_KEY.search(content) or LOG_URL_CREDENTIALS.search(content):
+            errors.append("unredacted credential pattern in optional logs")
+    cloud = documents.get("cloud-provider-assessment.json", {})
+    if cloud.get("readOnly") is not True or (cloud.get("safety") or {}).get("mutations") != 0:
+        errors.append("cloud-provider read-only safety invariant missing")
+    if cloud.get("provider") not in {"eks", "aks", "gke", "generic-kubernetes"}:
+        errors.append("unsupported cloud provider")
+    if (cloud.get("safety") or {}).get("rawPayloadsPersisted") is not False:
+        errors.append("cloud-provider raw payload persistence invariant missing")
+    allowed_cloud_operations = {"get", "list", "describe", "show"}
+    if not set((cloud.get("safety") or {}).get("operations") or []).issubset(allowed_cloud_operations):
+        errors.append("cloud-provider report declares a mutable operation")
+    forbidden_cloud_keys = {"accountId", "subscriptionId", "tenantId", "projectId", "resourceId", "fqdn", "endpoint"}
+    def cloud_keys(value: Any) -> set[str]:
+        if isinstance(value, dict):
+            return set(value).intersection(forbidden_cloud_keys) | set().union(*(cloud_keys(child) for child in value.values()))
+        if isinstance(value, list):
+            return set().union(*(cloud_keys(child) for child in value)) if value else set()
+        return set()
+    if cloud_keys(cloud):
+        errors.append("cloud-provider report contains a forbidden account or endpoint identifier")
+    if cloud.get("state") not in {"AVAILABLE", "PARTIAL"} and any(item.get("status") == "PASS" for item in cloud.get("bestPractices") or []):
+        errors.append("cloud-provider best practice passed without provider evidence")
     summary = report.get("summary") or {}
     if int(summary.get("workloads") or 0) == 0 or int(summary.get("containers") or 0) == 0:
         errors.append("workload/container inventory is empty")

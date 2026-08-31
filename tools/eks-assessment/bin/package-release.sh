@@ -16,7 +16,7 @@ STAGING="$(mktemp -d)"
 trap 'rm -rf -- "$STAGING"' EXIT
 mkdir -p "$STAGING/$NAME"
 
-for item in src web deploy docs README.md VERSION CHANGELOG.md; do
+for item in src data web deploy docs README.md VERSION CHANGELOG.md; do
   [[ -e "$ROOT/$item" ]] && cp -R "$ROOT/$item" "$STAGING/$NAME/"
 done
 mkdir -p "$STAGING/$NAME/bin"

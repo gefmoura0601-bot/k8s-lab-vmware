@@ -18,6 +18,17 @@ import eks_semantic_assessment as semantic
 
 
 class AssessmentRegressionTests(unittest.TestCase):
+    def test_finding_quality_detects_duplicate_and_low_confidence_pass(self) -> None:
+        findings = [
+            {"fingerprint": "same", "ruleId": "rule.a", "severity": "WARN", "confidence": "HIGH"},
+            {"fingerprint": "same", "ruleId": "rule.a", "severity": "PASS", "confidence": "LOW"},
+        ]
+        value = comprehensive.finding_quality(findings)
+        self.assertEqual(value["state"], "WARN")
+        self.assertEqual(value["stableIdentityDuplicates"], 1)
+        self.assertEqual(value["conflictingSeverities"], 1)
+        self.assertEqual(value["lowConfidencePasses"], 1)
+
     def assessment(self, directory: Path) -> comprehensive.Assessment:
         return comprehensive.Assessment(directory, {}, {"state": "AVAILABLE", "resources": {}})
 

@@ -55,6 +55,7 @@ class CollectionSupervisor:
         self._stop = threading.Event()
         self._process: subprocess.Popen[str] | None = None
         self._deadline = 0.0
+        self._started_monotonic = 0.0
         self._state: dict[str, Any] = {
             "active": False,
             "status": "IDLE",
@@ -68,6 +69,7 @@ class CollectionSupervisor:
                 raise RuntimeError("a collection is already active")
             self._stop.clear()
             self._process = None
+            self._started_monotonic = time.monotonic()
             self._deadline = time.monotonic() + duration
             self._state = {
                 "active": True,
@@ -82,6 +84,7 @@ class CollectionSupervisor:
                 "reason": "",
                 "plannedComponents": list(planned_components or []),
                 "completedComponents": [],
+                "componentDurationsSeconds": {},
                 "progressPercent": 0,
             }
 
@@ -110,6 +113,7 @@ class CollectionSupervisor:
         return subprocess.CompletedProcess(args, 124 if kind == "TIMED_OUT" else 130, "", reason)
 
     def run(self, component: str, args: list[str], *, timeout: float, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        component_started = time.monotonic()
         with self._lock:
             if not self._state.get("active"):
                 raise RuntimeError("collection supervisor is not active")
@@ -168,6 +172,8 @@ class CollectionSupervisor:
                 planned = self._state.get("plannedComponents") or []
                 if planned:
                     self._state["progressPercent"] = min(99, round(len(completed) * 100 / len(planned)))
+                durations = self._state.setdefault("componentDurationsSeconds", {})
+                durations[component] = round(time.monotonic() - component_started, 3)
 
         if self._stop.is_set():
             stopped_result = self._stopped_result(args)
@@ -179,6 +185,7 @@ class CollectionSupervisor:
     def status(self) -> dict[str, Any]:
         with self._lock:
             value = dict(self._state)
+            value["elapsedSeconds"] = round(time.monotonic() - self._started_monotonic, 3) if self._started_monotonic else 0
             value["remainingSeconds"] = max(0, int(self._deadline - time.monotonic())) if value.get("active") else 0
             return value
 
@@ -187,6 +194,7 @@ class CollectionSupervisor:
             if self._state.get("active"):
                 inferred = self._state.get("stopKind") or status or "COMPLETED"
                 self._state.update({"status": inferred, "active": False, "component": "", "pid": None, "finishedAt": utc_iso()})
+                self._state["durationSeconds"] = round(time.monotonic() - self._started_monotonic, 3)
                 if inferred == "COMPLETED":
                     self._state["progressPercent"] = 100
             return dict(self._state)

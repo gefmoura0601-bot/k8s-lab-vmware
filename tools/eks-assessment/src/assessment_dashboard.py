@@ -18,6 +18,7 @@ from collections import Counter, defaultdict
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from assessment_process_supervisor import CollectionSupervisor
@@ -326,7 +327,7 @@ def details(directory: Path) -> dict:
     rabbit = next((x for x in resources["statefulsets"] if "rabbit" in x["name"].lower()), None)
     scanner_summary = comprehensive.get("summary") or {}
     summary = {"nodes": len(resources["nodes"]), "readyNodes": sum(1 for x in resources["nodes"] if x["ready"]), "pods": len(resources["pods"]), "running": phases["Running"], "pending": phases["Pending"], "failed": phases["Failed"], "deployments": len(resources["deployments"]), "statefulsets": len(resources["statefulsets"]), "daemonsets": len(resources["daemonsets"]), "jobs": len(resources["jobs"]), "cronjobs": len(resources["cronjobs"]), "rollouts": len(resources["rollouts"]), "namespaces": len(resources["namespaces"]), "services": len(resources["services"]), "pvcs": len(resources["pvcs"]), "hpas": len(resources["hpas"]), "keda": len(resources["keda"]), "vpas": len(resources["vpas"]), "rabbitReady": rabbit["ready"] if rabbit else 0, "rabbitDesired": rabbit.get("desired", 0) if rabbit else 0, **scanner_summary}
-    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "operationalInsights": jfile(directory / "operational-insights.json", comprehensive.get("operationalInsights", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
+    return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cloudProvider": jfile(directory / "cloud-provider-assessment.json", comprehensive.get("cloudProvider", {"state": "N/A", "provider": "generic-kubernetes"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "operationalInsights": jfile(directory / "operational-insights.json", comprehensive.get("operationalInsights", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -395,12 +396,24 @@ class Handler(BaseHTTPRequestHandler):
         value = metadata(directory) if directory else {"clusterName": cluster()[1]}
         ident = directory.name if directory else ""
         cq = urlencode({"collection": ident}) if ident else ""
-        links = [("overview", "/", "Visão geral"), ("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("diagnostics", "/diagnostics", "Events & Diagnostics"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("best", "/best-practices", "Best Practices"), ("logs", "/logs", "Logs"), ("cis", "/cis-security", "CIS Security"), ("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("capacity", "/capacity", "Container Tuning"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"), ("prometheus", "/prometheus", "Prometheus"), ("aws", "/aws", "AWS / EKS"), ("coverage", "/coverage", "Cobertura"), ("compare", "/compare", "Comparar coletas")]
+        groups = [
+            ("VISÃO", [("overview", "/", "Visão geral"), ("search", "/search", "Busca global")]),
+            ("ANÁLISE", [("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("best", "/best-practices", "Best Practices")]),
+            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
+            ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
+            ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
+            ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
+        ]
         nav = []
-        for key, path, label in links:
-            separator = "&" if "?" in path else "?"
-            href = path + (separator + cq if cq else "")
-            nav.append(f'<a class="tab {"active" if key == active else ""}" href="{href}">{esc(label)}</a>')
+        for group_label, links in groups:
+            group_active = any(key == active for key, _, _ in links)
+            items = []
+            for key, path, label in links:
+                separator = "&" if "?" in path else "?"
+                href = path + (separator + cq if cq else "")
+                items.append(f'<a class="tab {"active" if key == active else ""}" href="{href}">{esc(label)}</a>')
+            nav.append(f'<details class="nav-group" {"open" if group_active else ""}><summary>{esc(group_label)}</summary>{"".join(items)}</details>')
+        global_search = f'<form class="global-search" action="/search" method="get"><input type="hidden" name="collection" value="{esc(ident)}"><label for="global-q">BUSCA GLOBAL</label><div><input id="global-q" name="q" minlength="2" placeholder="Recurso, Rule ID, Event..."><button aria-label="Pesquisar">⌕</button></div></form>'
         options = "".join(f'<option value="{esc(x.name)}" {"selected" if directory and x == directory else ""}>{esc(x.name)}{" • baseline" if metadata(x).get("baseline") else ""}</option>' for x in self.directories()) or '<option>Nenhuma coleta</option>'
         picker = f'<form class="picker" method="get"><label>Coleta<select name="collection">{options}</select></label><button>Carregar</button></form>'
         control = SUPERVISOR.status()
@@ -408,7 +421,7 @@ class Handler(BaseHTTPRequestHandler):
         if control.get("active"):
             actions += f'<form class="inline-action" method="post" action="/cancel"><input type="hidden" name="action_token" value="{ACTION_TOKEN}"><button class="button danger" type="submit">Cancelar coleta</button></form>'
         if directory: actions += f'<a class="button" href="/export?{cq}">Exportar</a>'
-        return f'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173b73"><title>{esc(title)} · Kubernetes Assessment</title><link rel="icon" href="/kubernetes-logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css"></head><body><header><div class="environment"><span class="status-dot" aria-hidden="true"></span>KUBERNETES ASSESSMENT <span>{esc(value.get("clusterName"))}</span></div><div class="top"><div class="brand"><img src="/kubernetes-logo.svg" alt="Kubernetes"><div><strong>Kubernetes</strong><em>ASSESSMENT CONSOLE</em></div></div><span class="health">READ-ONLY</span><span class="headline">{esc(ident or "sem coleta")}</span><div class="actions">{actions}</div></div></header><main><aside><div class="nav-title">NAVEGAÇÃO</div>{"".join(nav)}</aside><section class="content">{picker}{body}</section></main></body></html>'
+        return f'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173b73"><title>{esc(title)} · Kubernetes Assessment</title><link rel="icon" href="/kubernetes-logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css"></head><body><header><div class="environment"><span class="status-dot" aria-hidden="true"></span>KUBERNETES ASSESSMENT <span>{esc(value.get("clusterName"))}</span></div><div class="top"><div class="brand"><img src="/kubernetes-logo.svg" alt="Kubernetes"><div><strong>Kubernetes</strong><em>ASSESSMENT CONSOLE</em></div></div><span class="health">READ-ONLY</span><span class="headline">{esc(ident or "sem coleta")}</span><div class="actions">{actions}</div></div></header><main><aside><div class="nav-title">NAVEGAÇÃO</div>{global_search}<nav aria-label="Navegação principal">{"".join(nav)}</nav></aside><section class="content">{picker}{body}</section></main></body></html>'
 
     def overview(self, directory: Path | None) -> str:
         if not directory: return self.layout("EKS Assessment", '<div class="message">Nenhuma coleta disponível. Use Coletar agora.</div>')
@@ -423,6 +436,57 @@ class Handler(BaseHTTPRequestHandler):
         priority = table(findings[:20], [("severity", "Severidade"), ("category", "Categoria"), ("namespace", "Namespace"), ("workload", "Workload"), ("check", "Check"), ("detail", "Evidência"), ("recommendation", "Recomendação")])
         body = f'<section class="state"><small>SAÚDE DO AMBIENTE</small><h1>{state}</h1><p>{critical} crítico(s), {warnings} alerta(s), {unknown} desconhecido(s), {partial} parcial(is), {scanner.get("passed",0)} conforme(s), {scanner.get("notApplicable",0)} N/A. {scanner.get("checks","N/A")} checks em {scanner.get("workloads","N/A")} workloads / {scanner.get("containers","N/A")} containers. Discovery {discovery.get("succeeded","N/A")}/{discovery.get("sections","N/A")}.</p></section><div class="cards">{card_html}</div><h2>Problemas e recomendações prioritárias</h2>{priority}'
         return self.layout("Visão geral", body, directory, "overview")
+
+    def search_page(self, directory: Path | None, query: dict[str, list[str]]) -> str:
+        if not directory:
+            return self.overview(None)
+        term = query.get("q", [""])[0].strip()
+        form = f'<form class="filters global-results" action="/search"><input type="hidden" name="collection" value="{esc(directory.name)}"><input name="q" minlength="2" value="{esc(term)}" placeholder="Recurso, namespace, Rule ID, Event, versão ou recomendação"><button>Pesquisar</button></form>'
+        if len(term) < 2:
+            return self.layout("Busca global", f'<h1>Busca global</h1><p>Pesquise em findings, inventário, CIS Security, Events, Versions, Manifest Quality e Best Practices.</p>{form}<div class="message">Informe ao menos dois caracteres.</div>', directory, "search")
+        value = details(directory)
+        needle = term.lower()
+        collection = quote_plus(directory.name)
+        rows: list[dict] = []
+
+        def add(source: str, title: Any, status: Any, detail: Any, href: str, payload: Any) -> None:
+            if needle not in json.dumps(payload, ensure_ascii=False, default=str).lower() or len(rows) >= 500:
+                return
+            rendered = str(detail or "-")
+            if len(rendered) > 500:
+                rendered = rendered[:497] + "..."
+            rows.append({"source": source, "title": title or "-", "status": status or "-", "detail": rendered, "open": f'<a class="resource-link" href="{esc(href)}">Abrir</a>'})
+
+        for finding in value.get("findings") or []:
+            add("Finding", finding.get("check") or finding.get("ruleId"), finding.get("severity"), finding.get("detail"), f'/problems?collection={collection}&search={quote_plus(str(finding.get("ruleId") or finding.get("check") or ""))}', finding)
+        resource_kinds = ("nodes", "namespaces", "workloads", "services", "pvcs", "hpas", "keda", "vpas", "ingresses", "gateways", "rabbitmq")
+        seen: set[tuple[str, str, str]] = set()
+        for kind in resource_kinds:
+            for item in (value.get("resources") or {}).get(kind) or []:
+                identity = (kind, str(item.get("namespace") or "-"), str(item.get("name") or item.get("ref") or "-"))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                add("Inventory", identity[2], item.get("status") or item.get("ready") or "DETECTED", item.get("detail") or identity[1], f'/resources?collection={collection}&kind={quote_plus(kind)}&search={quote_plus(term)}', item)
+        cis = value.get("cisSecurity") or {}
+        for item in cis.get("controls") or []:
+            add("CIS Security", item.get("controlId"), item.get("status"), item.get("recommendation"), f'/cis-security?collection={collection}&search={quote_plus(term)}', item)
+        operational = value.get("operationalInsights") or {}
+        sections = [
+            ("Event", ((operational.get("diagnostics") or {}).get("events") or []), "/diagnostics", "reason", "type", "recommendation"),
+            ("Version", ((operational.get("versions") or {}).get("items") or []), "/versions", "name", "supportState", "version"),
+            ("Manifest Quality", ((operational.get("manifestQuality") or {}).get("findings") or []), "/manifest-quality", "check", "severity", "evidence"),
+            ("Best Practice", ((operational.get("bestPractices") or {}).get("rules") or []), "/best-practices", "ruleId", "status", "recommendation"),
+        ]
+        for source, items_list, route, title_key, status_key, detail_key in sections:
+            for item in items_list:
+                add(source, item.get(title_key), item.get(status_key), item.get(detail_key), f'{route}?collection={collection}', item)
+        for item in ((operational.get("logs") or {}).get("entries") or []):
+            safe_log_index = {"target": item.get("target"), "state": item.get("state"), "reason": item.get("reason")}
+            add("Log", item.get("target"), item.get("state"), item.get("reason") or "Conteúdo sanitizado disponível na aba Logs.", f'/logs?collection={collection}', safe_log_index)
+        message = f'<div class="message good">{len(rows)} resultado(s) para <b>{esc(term)}</b>. Limite: 500; conteúdo de logs não é indexado.</div>' if rows else f'<div class="message">Nenhum resultado para <b>{esc(term)}</b>.</div>'
+        body = f'<h1>Busca global</h1>{form}{message}{table(rows, [("source","Origem"),("title","Item"),("status","Estado"),("detail","Detalhe"),("open","Ação")], raw={"open"})}'
+        return self.layout("Busca global", body, directory, "search")
 
     def resources_page(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory: return self.overview(None)
@@ -511,8 +575,11 @@ class Handler(BaseHTTPRequestHandler):
         if not directory: return self.overview(None)
         value = (details(directory).get("operationalInsights") or {}).get("versions") or {}
         summary = value.get("summary") or {}
-        message = f'<div class="message warn">{esc(value.get("notice",""))} Componentes: {summary.get("components",0)}; versões desconhecidas: {summary.get("unknownVersions",0)}; version skew nos nodes: {"sim" if summary.get("nodeVersionSkew") else "não"}.</div>'
-        return self.layout("Versions & Lifecycle", f'<h1>Versions & Lifecycle</h1>{message}{table(value.get("items") or [],[("component","Componente"),("name","Nome"),("version","Versão"),("runtime","Runtime"),("os","Sistema operacional"),("kernel","Kernel"),("state","Estado"),("source","Evidence Source")])}', directory, "versions")
+        catalog = value.get("catalog") or {}
+        catalog_state = "DESATUALIZADO" if catalog.get("stale") else "ATUAL"
+        message = f'<div class="message warn">{esc(value.get("notice",""))} Componentes: {summary.get("components",0)}; versões desconhecidas: {summary.get("unknownVersions",0)}; fim de suporte: {summary.get("endOfSupport",0)}; version skew nos nodes: {"sim" if summary.get("nodeVersionSkew") else "não"}. Catálogo: {esc(catalog.get("asOf","UNKNOWN"))} ({catalog_state}).</div>'
+        columns = [("component","Componente"),("name","Nome"),("version","Versão"),("supportState","Support State"),("supportUntil","Support Until"),("daysRemaining","Dias restantes"),("runtime","Runtime"),("os","Sistema operacional"),("kernel","Kernel"),("state","Estado"),("source","Evidence Source")]
+        return self.layout("Versions & Lifecycle", f'<h1>Versions & Lifecycle</h1>{message}{table(value.get("items") or [],columns)}', directory, "versions")
 
     def manifest_quality(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
@@ -950,6 +1017,41 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.layout("Prometheus", body, directory, "prometheus")
 
+    def cloud_provider(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        cloud = details(directory).get("cloudProvider") or {"state": "N/A", "provider": "generic-kubernetes"}
+        provider = str(cloud.get("provider") or "generic-kubernetes")
+        state = str(cloud.get("state") or "UNKNOWN")
+        lifecycle = cloud.get("lifecycle") or {}
+        summary = cloud.get("summary") or {}
+        safety = cloud.get("safety") or {}
+        coverage_rows = [{"domain": key, "state": item.get("state"), "reason": item.get("reason", "")} for key, item in sorted((cloud.get("coverage") or {}).items()) if isinstance(item, dict)]
+        cluster_rows = [{"field": key, "value": json.dumps(item, ensure_ascii=False) if isinstance(item, (dict, list)) else item} for key, item in sorted((cloud.get("cluster") or {}).items())]
+        lifecycle_rows = [{"field": key, "value": json.dumps(item, ensure_ascii=False) if isinstance(item, (dict, list)) else item} for key, item in sorted(lifecycle.items())]
+        practices = cloud.get("bestPractices") or []
+        message_class = "good" if state == "AVAILABLE" else "bad" if state == "UNAVAILABLE" else ""
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Provider</small><b>{esc(provider)}</b></div>'
+            f'<div><small>Estado</small><b>{esc(state)}</b></div>'
+            f'<div><small>Chamadas read-only</small><b>{esc(safety.get("requests",0))}</b></div>'
+            f'<div><small>Regras</small><b>{esc(summary.get("rules",0))}</b></div>'
+            f'<div><small>Lifecycle</small><b>{esc(lifecycle.get("supportState","UNKNOWN"))}</b></div>'
+            '</div>'
+        )
+        body = (
+            f'<h1>Cloud Provider <small>{esc(provider)}</small></h1><div class="message {message_class}">'
+            f'Evidência normalizada e estritamente read-only: <b>{esc(state)}</b>. {esc(cloud.get("reason",""))} '
+            'Payloads brutos, credenciais e identificadores de conta não são persistidos.</div>{facts}'
+            f'<div class="cis-actions"><a class="button" href="/export-cloud?collection={esc(directory.name)}">Exportar evidência sanitizada</a></div>'
+            f'<h2>Lifecycle</h2>{table(lifecycle_rows, [("field","Campo"),("value","Valor")])}'
+            f'<h2>Configuração sanitizada</h2>{table(cluster_rows, [("field","Campo"),("value","Valor")])}'
+            f'<h2>Best Practices comprováveis</h2>{table(practices, [("status","Status"),("domain","Domínio"),("ruleId","Rule ID"),("evidence","Evidência"),("recommendation","Recomendação")])}'
+            f'<h2>Cobertura das Cloud Provider APIs</h2>{table(coverage_rows, [("domain","Domínio"),("state","Estado"),("reason","Detalhe")])}'
+        )
+        return self.layout("Cloud Provider", body, directory, "cloud")
+
     def aws_eks(self, directory: Path | None) -> str:
         if not directory:
             return self.overview(None)
@@ -1093,6 +1195,21 @@ class Handler(BaseHTTPRequestHandler):
         value = details(directory)
         rows = [{"resource": key, "state": entry.get("state"), "count": entry.get("count", 0), "api": entry.get("resource", "-"), "reason": entry.get("reason", "")} for key, entry in sorted(value["coverage"].items())]
         discovery = value.get("discovery") or {}; universal = value.get("universal") or {}
+        performance = (value.get("comprehensive") or {}).get("performance") or {}
+        quality = (value.get("comprehensive") or {}).get("quality") or {}
+        request_budget = performance.get("requestBudget") or {}
+        metadata_performance = (value.get("metadata") or {}).get("performance") or {}
+        duration = metadata_performance.get("durationSeconds")
+        peak_rss = performance.get("processPeakRssBytes")
+        performance_facts = (
+            '<div class="facts">'
+            f'<div><small>Duração total</small><b>{esc(str(duration) + "s" if duration is not None else "N/A")}</b></div>'
+            f'<div><small>Kubernetes API requests</small><b>{esc(request_budget.get("requests","N/A"))}</b></div>'
+            f'<div><small>Retries / throttles</small><b>{esc(request_budget.get("retries","N/A"))} / {esc(request_budget.get("throttles","N/A"))}</b></div>'
+            f'<div><small>Response bytes</small><b>{esc(request_budget.get("responseBytes","N/A"))}</b></div>'
+            f'<div><small>Peak RSS</small><b>{esc(human_bytes(float(peak_rss)) if peak_rss is not None else "N/A")}</b></div>'
+            '</div>'
+        )
         universal_rows = []
         for entry in universal.get("resources") or []:
             params = urlencode({"collection": directory.name, "resource": entry.get("resource", "")})
@@ -1100,7 +1217,9 @@ class Handler(BaseHTTPRequestHandler):
         message = f'<div class="message good">Somente leitura. Secrets: metadados/chaves, sem valores. Discovery: {discovery.get("succeeded","N/A")} concluídas, {discovery.get("not_applicable","N/A")} N/A, {discovery.get("unavailable","N/A")} indisponíveis. Inventário universal: {universal.get("resourceTypes",0)} APIs e {universal.get("objectCount",0)} objetos; indisponíveis: {universal.get("unavailableResourceTypes",0)}.</div>'
         known = table(rows, [("resource", "Domínio profundo"), ("state", "Estado"), ("count", "Objetos"), ("api", "API usada"), ("reason", "Detalhe")])
         all_apis = table(universal_rows, [("resourceHtml", "API/recurso"), ("scope", "Escopo"), ("state", "Estado"), ("count", "Objetos"), ("mode", "Coleta"), ("reason", "Detalhe")], {"resourceHtml"})
-        return self.layout("Cobertura", f'<h1>Cobertura da descoberta</h1>{message}<h2>Domínios com análise profunda</h2>{known}<h2>Todas as APIs listáveis</h2>{all_apis}', directory, "coverage")
+        quality_facts = f'<div class="facts"><div><small>Quality gate</small><b>{esc(quality.get("state","UNKNOWN"))}</b></div><div><small>Identidades duplicadas</small><b>{esc(quality.get("stableIdentityDuplicates",0))}</b></div><div><small>Severidades conflitantes</small><b>{esc(quality.get("conflictingSeverities",0))}</b></div><div><small>PASS com baixa confiança</small><b>{esc(quality.get("lowConfidencePasses",0))}</b></div></div>'
+        calibration = table(quality.get("falsePositiveReviewCandidates") or [], [("ruleId","Rule ID"),("findings","Findings"),("reason","Motivo da revisão")])
+        return self.layout("Cobertura", f'<h1>Cobertura da descoberta</h1>{message}<h2>Impacto medido</h2>{performance_facts}<h2>Quality gate e calibração</h2>{quality_facts}{calibration}<h2>Domínios com análise profunda</h2>{known}<h2>Todas as APIs listáveis</h2>{all_apis}', directory, "coverage")
 
     def api_inventory(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory: return self.overview(None)
@@ -1232,6 +1351,12 @@ class Handler(BaseHTTPRequestHandler):
             f'<label>Perfil de coleta<select name="profile">{profiles}</select></label>'
             '<label>Namespace (vazio = cluster inteiro)<input name="namespace" placeholder="namespace opcional"></label>'
             '<label>Região AWS (opcional)<input name="region" placeholder="us-east-1"></label>'
+            '<details class="form-section"><summary>Cloud Provider APIs — AKS/GKE (opcional)</summary>'
+            '<label>AKS cluster<input name="aks_cluster" placeholder="nome do cluster"></label>'
+            '<label>AKS resource group<input name="aks_resource_group" placeholder="resource group"></label>'
+            '<label>GKE cluster<input name="gke_cluster" placeholder="nome do cluster"></label>'
+            '<label>GKE location<input name="gke_location" placeholder="us-central1"></label>'
+            '<label>GCP project<input name="gcp_project" placeholder="project usado somente na chamada; não persistido"></label></details>'
             '<label class="checkbox-row"><input type="checkbox" name="account_security" value="1"><span>Incluir GuardDuty/runtime security (requer permissão de conta)</span></label>'
             '<label class="checkbox-row"><input type="checkbox" name="include_logs" value="1"><span>Incluir logs sanitizados (opt-in; exige targets explícitos)</span></label>'
             '<label>Targets de logs (namespace/kind/name[:container], separados por vírgula)<input name="log_targets" placeholder="apps/deployment/minha-api:app"></label>'
@@ -1254,6 +1379,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/collections": return self.send_json([{"id": x.name, **metadata(x)} for x in self.directories()])
         if path == "/api/collection-status": return self.send_json(SUPERVISOR.status())
         if path == "/": return self.send_html(self.overview(directory))
+        if path == "/search": return self.send_html(self.search_page(directory, query))
         if path == "/resources": return self.send_html(self.resources_page(directory, query))
         if path == "/problems": return self.send_html(self.problems(directory, query))
         if path == "/assessment": return self.send_html(self.assessment(directory))
@@ -1266,6 +1392,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/best-practices": return self.send_html(self.best_practices(directory, query))
         if path == "/logs": return self.send_html(self.logs(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
+        if path == "/cloud": return self.send_html(self.cloud_provider(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
         if path == "/cis-report": return self.send_html(self.cis_report(directory))
@@ -1286,6 +1413,11 @@ class Handler(BaseHTTPRequestHandler):
             report = details(directory).get("operationalInsights") or {}
             if not report: return self.send_json({"error": "Operational Insights não disponível"}, 404)
             return self.send_json(report, filename=f"{directory.name}-operational-insights.json")
+        if path == "/export-cloud":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = details(directory).get("cloudProvider") or {}
+            if not report: return self.send_json({"error": "Evidência do cloud provider não disponível"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-cloud-provider.json")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
@@ -1355,6 +1487,11 @@ class Handler(BaseHTTPRequestHandler):
                 **os.environ,
                 "EKS_CLUSTER_NAME": eks_cluster_name(),
                 "AWS_REGION": form.get("region", [""])[0].strip(),
+                "AKS_CLUSTER_NAME": form.get("aks_cluster", [""])[0].strip(),
+                "AKS_RESOURCE_GROUP": form.get("aks_resource_group", [""])[0].strip(),
+                "GKE_CLUSTER_NAME": form.get("gke_cluster", [""])[0].strip(),
+                "GKE_LOCATION": form.get("gke_location", [""])[0].strip(),
+                "GCP_PROJECT": form.get("gcp_project", [""])[0].strip(),
                 "PROMETHEUS_URL": prometheus_url,
                 "PROMETHEUS_NAMESPACE": form.get("prometheus_namespace", [""])[0].strip(),
                 "PROMETHEUS_SERVICE": form.get("prometheus_service", [""])[0].strip(),
@@ -1382,6 +1519,27 @@ class Handler(BaseHTTPRequestHandler):
             )
             preflight_log = (preflight.stdout + preflight.stderr).strip()
             if preflight.returncode != 0:
+                stopped = SUPERVISOR.status().get("stopKind")
+                if stopped in {"CANCELLED", "TIMED_OUT"}:
+                    finished = SUPERVISOR.finish(stopped)
+                    output = self.root / ident
+                    output.mkdir(parents=True, exist_ok=True)
+                    interrupted_metadata = {
+                        "id": ident, "createdAt": finished.get("startedAt") or utc_iso(),
+                        "finishedAt": finished.get("finishedAt") or utc_iso(),
+                        "clusterName": detected, "context": context, "baseline": baseline,
+                        "profile": profile, "namespaceScope": namespace or "*",
+                        "status": stopped, "completed": False,
+                        "cancelled": stopped == "CANCELLED", "cancelReason": finished.get("reason") or None,
+                        "maxDurationSeconds": max_duration, "readOnly": True,
+                        "collectorComponents": ["preflight"], "collectorExitCodes": [preflight.returncode],
+                        "performance": {"durationSeconds": finished.get("durationSeconds"), "componentDurationsSeconds": finished.get("componentDurationsSeconds") or {}},
+                    }
+                    (output / "metadata.json").write_text(json.dumps(interrupted_metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+                    (output / "preflight.log").write_text(preflight_log + "\n", encoding="utf-8")
+                    if async_request:
+                        return self.send_json({"error": f"Coleta {stopped.lower()}", "collection": ident}, 409)
+                    return self.send_html(self.layout("Coleta interrompida", f'<div class="message warn">Coleta {esc(stopped)} durante o preflight. Estado parcial preservado em {esc(ident)}.</div>'), 409)
                 SUPERVISOR.finish("FAILED")
                 if async_request:
                     return self.send_json({"error": "Preflight falhou", "detail": preflight_log}, 503)
@@ -1528,7 +1686,13 @@ class Handler(BaseHTTPRequestHandler):
             value["cancelled"] = final_status == "CANCELLED"
             value["cancelReason"] = control.get("reason") or None
             value["finishedAt"] = utc_iso()
-            SUPERVISOR.finish(final_status)
+            finished_control = SUPERVISOR.finish(final_status)
+            comprehensive_value = jfile(output / "comprehensive-assessment.json", {})
+            value["performance"] = {
+                "durationSeconds": finished_control.get("durationSeconds"),
+                "componentDurationsSeconds": finished_control.get("componentDurationsSeconds") or {},
+                "scanner": comprehensive_value.get("performance") or {},
+            }
             (output / "metadata.json").write_text(
                 json.dumps(value, ensure_ascii=False, indent=2),
                 encoding="utf-8",

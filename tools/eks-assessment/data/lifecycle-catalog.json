@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0",
+  "asOf": "2026-08-30",
+  "staleAfterDays": 45,
+  "sources": {
+    "kubernetes": "https://kubernetes.io/releases/patch-releases/",
+    "eks": "https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html",
+    "aks": "https://learn.microsoft.com/azure/aks/supported-kubernetes-versions",
+    "gke": "https://cloud.google.com/kubernetes-engine/docs/release-schedule"
+  },
+  "kubernetes": {
+    "1.33": {"maintenanceEnd": "2026-04-28", "endOfSupport": "2026-06-28"},
+    "1.34": {"maintenanceEnd": "2026-08-27", "endOfSupport": "2026-10-27"},
+    "1.35": {"maintenanceEnd": "2026-12-28", "endOfSupport": "2027-02-28"},
+    "1.36": {"maintenanceEnd": "2027-04-28", "endOfSupport": "2027-06-28"},
+    "1.37": {"maintenanceEnd": "2027-08-28", "endOfSupport": "2027-10-28"}
+  },
+  "eks": {
+    "1.31": {"standardEnd": "2025-11-26", "extendedEnd": "2026-11-26"},
+    "1.32": {"standardEnd": "2026-03-23", "extendedEnd": "2027-03-23"},
+    "1.33": {"standardEnd": "2026-07-29", "extendedEnd": "2027-07-29"},
+    "1.34": {"standardEnd": "2026-12-02", "extendedEnd": "2027-12-02"},
+    "1.35": {"standardEnd": "2027-03-27", "extendedEnd": "2028-03-27"},
+    "1.36": {"standardEnd": "2027-08-02", "extendedEnd": "2028-08-02"}
+  },
+  "aks": {
+    "policy": "AKS offers three GA minor versions (N, N-1 and N-2); availability is regional and must be verified with az aks get-upgrades/get-versions."
+  },
+  "gke": {
+    "1.30": {"standardEnd": "2025-09-30", "extendedEnd": "2026-07-30"},
+    "1.31": {"standardEnd": "2026-01-16", "extendedEnd": "2026-10-22"},
+    "1.32": {"standardEnd": "2026-04-27", "extendedEnd": "2027-02-11"},
+    "1.33": {"standardEnd": "2026-08-12", "extendedEnd": "2027-06-12"},
+    "1.34": {"standardEnd": "2027-01-25", "extendedEnd": "2027-11-25"},
+    "1.35": {"standardEnd": "2027-04-11", "extendedEnd": "2028-02-11"},
+    "1.36": {"standardEnd": "2027-08-09", "extendedEnd": "2028-06-09"}
+  }
+}

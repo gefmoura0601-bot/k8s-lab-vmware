@@ -1,0 +1,5 @@
+title: GKE Assessment Read Only
+description: Leitura mínima da configuração e versões disponíveis do GKE.
+stage: GA
+includedPermissions:
+  - container.clusters.get
