@@ -75,6 +75,8 @@ class CisSecurityAssessmentTests(unittest.TestCase):
             report = assess(raw, base, collection, root)
         statuses = {item["controlId"]: item["status"] for item in report["controls"]}
         self.assertEqual("WARN", statuses["cis.k8s.rbac.wildcards"])
+        wildcard = next(item for item in report["controls"] if item["controlId"] == "cis.k8s.rbac.wildcards")
+        self.assertEqual("Remova wildcards e limite as permissões aos verbs e resources estritamente necessários.", wildcard["recommendation"])
         self.assertEqual("WARN", statuses["cis.k8s.pod.privileged"])
         self.assertEqual("WARN", statuses["cis.k8s.pod.privilege-escalation"])
         self.assertEqual("WARN", statuses["cis.k8s.pod.read-only-root-filesystem"])

@@ -37,6 +37,11 @@ class LocalizationPtBrTests(unittest.TestCase):
         value = "HPA targets Deployment/api with Ready Pods"
         self.assertEqual(value, pt_text(value))
 
+    def test_rbac_terms_remain_in_english(self) -> None:
+        value = pt_text("Replace wildcards with exact API groups, resources, resourceNames and verbs.")
+        self.assertEqual("Remova wildcards e limite as permissões aos apiGroups, resources, resourceNames e verbs estritamente necessários.", value)
+        self.assertNotIn("verbos", value)
+
 
 if __name__ == "__main__":
     unittest.main()
