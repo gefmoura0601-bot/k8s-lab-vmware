@@ -24,8 +24,10 @@ class CollectionSupervisorTests(unittest.TestCase):
         result = supervisor.run("one", [sys.executable, "-c", "print('ok')"], timeout=5)
         self.assertEqual(0, result.returncode)
         self.assertEqual(50, supervisor.status()["progressPercent"])
-        supervisor.finish("COMPLETED")
+        finished = supervisor.finish("COMPLETED")
         self.assertEqual(100, supervisor.status()["progressPercent"])
+        self.assertGreaterEqual(finished["durationSeconds"], 0)
+        self.assertIn("one", finished["componentDurationsSeconds"])
 
     def test_component_timeout_is_bounded(self) -> None:
         supervisor = CollectionSupervisor()
@@ -114,6 +116,14 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertNotIn("kubectl apply", preflight)
         self.assertNotIn("kubectl patch", preflight)
         self.assertNotIn("kubectl delete", preflight)
+
+    def test_runtime_has_no_lab_path_or_master_node_dependency(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        runtime_files = list((root / "src").glob("*.py")) + list((root / "src").glob("*.sh")) + list((root / "bin").glob("*.sh"))
+        for path in runtime_files:
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("/workspace", content, path)
+            self.assertNotIn("k8s-master", content, path)
 
     def test_help_and_version_are_processed_before_dependencies(self) -> None:
         menu = (Path(__file__).resolve().parents[1] / "bin" / "eks-assessment.sh").read_text(encoding="utf-8")

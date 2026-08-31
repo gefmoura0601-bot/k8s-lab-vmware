@@ -7,6 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMETHEUS_URL="${PROMETHEUS_URL:-}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 ASSESSMENT_NAMESPACE="${ASSESSMENT_NAMESPACE:-}"
+AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-}"
+AKS_RESOURCE_GROUP="${AKS_RESOURCE_GROUP:-${AZURE_RESOURCE_GROUP:-}}"
+GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:-}"
+GKE_LOCATION="${GKE_LOCATION:-}"
+GCP_PROJECT="${GCP_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 passed=0
 warnings=0
@@ -65,6 +70,7 @@ else
   failure "Kubeconfig" "contexto Kubernetes ausente ou inválido"
 fi
 cluster_ref="$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || true)"
+provider_ids="$(kubectl --request-timeout="$REQUEST_TIMEOUT" get nodes -o jsonpath='{range .items[*]}{.spec.providerID}{"\n"}{end}' 2>/dev/null || true)"
 
 api_ready=0
 if kubectl --request-timeout="$REQUEST_TIMEOUT" version -o json >/dev/null 2>&1; then
@@ -123,17 +129,22 @@ for eks_reference in "$cluster_ref" "$context"; do
     detected_eks_cluster="${BASH_REMATCH[2]}"
   fi
 done
-if [[ -n "$detected_eks_cluster" ]]; then
+if [[ -n "$detected_eks_cluster" || "$provider_ids" == *"aws:///"* ]]; then
   ok "Plataforma" "Amazon EKS identificado; enriquecimento AWS é opcional"
+  if [[ -z "$detected_eks_cluster" ]]; then
+    warning "AWS/EKS escopo" "defina EKS_CLUSTER_NAME para consultar a AWS API"
+  fi
   if command -v aws >/dev/null 2>&1; then
     if AWS_PAGER="" timeout --signal=TERM 15s aws sts get-caller-identity --output json >/dev/null 2>&1; then
       ok "AWS identidade" "credenciais válidas; permissões de serviço são verificadas separadamente"
-      eks_preflight_args=(eks describe-cluster --name "$detected_eks_cluster" --output json --no-cli-pager)
-      [[ -n "$detected_eks_region" ]] && eks_preflight_args+=(--region "$detected_eks_region")
-      if AWS_PAGER="" timeout --signal=TERM 20s aws "${eks_preflight_args[@]}" >/dev/null 2>&1; then
-        ok "AWS EKS" "eks:DescribeCluster disponível"
-      else
-        warning "AWS EKS" "eks:DescribeCluster indisponível; cobertura AWS/EKS ficará PARTIAL"
+      if [[ -n "$detected_eks_cluster" ]]; then
+        eks_preflight_args=(eks describe-cluster --name "$detected_eks_cluster" --output json --no-cli-pager)
+        [[ -n "$detected_eks_region" ]] && eks_preflight_args+=(--region "$detected_eks_region")
+        if AWS_PAGER="" timeout --signal=TERM 20s aws "${eks_preflight_args[@]}" >/dev/null 2>&1; then
+          ok "AWS EKS" "eks:DescribeCluster disponível"
+        else
+          warning "AWS EKS" "eks:DescribeCluster indisponível; cobertura AWS/EKS ficará PARTIAL"
+        fi
       fi
     else
       warning "AWS" "CLI disponível, mas identidade/endpoint AWS está indisponível"
@@ -143,6 +154,41 @@ if [[ -n "$detected_eks_cluster" ]]; then
   fi
 else
   not_applicable "AWS/EKS" "contexto não identificado como EKS; scan Kubernetes permanece completo"
+fi
+
+if [[ "$provider_ids" == *"azure:///"* || -n "$AKS_CLUSTER_NAME" ]]; then
+  ok "Plataforma" "Azure Kubernetes Service identificado; enriquecimento Azure é opcional"
+  if ! command -v az >/dev/null 2>&1; then
+    warning "Azure CLI" "az ausente; scan Kubernetes continuará e AKS ficará UNKNOWN"
+  elif [[ -z "$AKS_CLUSTER_NAME" || -z "$AKS_RESOURCE_GROUP" ]]; then
+    warning "AKS escopo" "defina AKS_CLUSTER_NAME e AKS_RESOURCE_GROUP"
+  elif timeout --signal=TERM 25s az aks show --resource-group "$AKS_RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --only-show-errors --output none >/dev/null 2>&1; then
+    ok "Azure AKS" "Microsoft.ContainerService/managedClusters/read disponível"
+  else
+    warning "Azure AKS" "aks show indisponível; cobertura AKS ficará PARTIAL"
+  fi
+else
+  not_applicable "Azure/AKS" "contexto não identificado como AKS"
+fi
+
+if [[ "$context" =~ ^gke_([^_]+)_([^_]+)_(.+)$ ]]; then
+  GCP_PROJECT="${GCP_PROJECT:-${BASH_REMATCH[1]}}"
+  GKE_LOCATION="${GKE_LOCATION:-${BASH_REMATCH[2]}}"
+  GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:-${BASH_REMATCH[3]}}"
+fi
+if [[ "$provider_ids" == *"gce://"* || -n "$GKE_CLUSTER_NAME" ]]; then
+  ok "Plataforma" "Google Kubernetes Engine identificado; enriquecimento Google Cloud é opcional"
+  if ! command -v gcloud >/dev/null 2>&1; then
+    warning "Google Cloud CLI" "gcloud ausente; scan Kubernetes continuará e GKE ficará UNKNOWN"
+  elif [[ -z "$GKE_CLUSTER_NAME" || -z "$GKE_LOCATION" || -z "$GCP_PROJECT" ]]; then
+    warning "GKE escopo" "defina GKE_CLUSTER_NAME, GKE_LOCATION e GCP_PROJECT"
+  elif timeout --signal=TERM 25s gcloud container clusters describe "$GKE_CLUSTER_NAME" --location "$GKE_LOCATION" --project "$GCP_PROJECT" --format=none --quiet >/dev/null 2>&1; then
+    ok "Google GKE" "container.clusters.get disponível"
+  else
+    warning "Google GKE" "clusters describe indisponível; cobertura GKE ficará PARTIAL"
+  fi
+else
+  not_applicable "Google/GKE" "contexto não identificado como GKE"
 fi
 
 if [[ -n "$PROMETHEUS_URL" ]]; then

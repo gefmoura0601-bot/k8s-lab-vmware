@@ -1,12 +1,14 @@
 # Assessment completo de EKS/Kubernetes
 
-O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina cinco camadas:
+O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina sete camadas:
 
 1. `assess-eks.sh`: saúde e baseline pontual;
 2. `eks-cluster-discovery.sh`: inventário técnico baseado nas salvaguardas do projeto oficial `sample-eks-cluster-discovery-tool`;
 3. `aws_eks_assessment.py`: configuração gerenciada do EKS exposta pelas APIs AWS, add-ons, node groups, EKS Cluster Insights, identidade, rede e segurança de conta opcional;
-4. `eks_semantic_assessment.py`: análise semântica de workloads, rede, storage/DR, RBAC/admission, autoscaling, operators e supply chain;
-5. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas.
+4. `cloud_provider_assessment.py`: evidência normalizada EKS, AKS ou GKE, sem persistir payloads brutos nem identificadores de conta;
+5. `eks_semantic_assessment.py`: análise semântica de workloads, rede, storage/DR, RBAC/admission, autoscaling, operators e supply chain;
+6. `operational_insights.py`: Events, lifecycle, Manifest Quality, Container Tuning, Best Practices e logs opcionais;
+7. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas.
 
 Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso comprovadamente não aplicável é `N/A`; evidência ausente é `UNKNOWN`; coleta incompleta é `PARTIAL`. Falha de RBAC/API nunca é conformidade. Nenhum componente aplica, altera, reinicia, escala ou exclui recursos.
 
@@ -17,7 +19,7 @@ Execute a partir da raiz do repositório em qualquer host Linux autorizado, como
 - Bash, Python 3.10+, `kubectl`, `jq`, `curl`, `timeout` e `setsid`;
 - kubeconfig/contexto apontando para o cluster e RBAC somente leitura;
 - conectividade com a API Kubernetes e, quando utilizado, com o Prometheus;
-- AWS CLI e credenciais AWS somente leitura apenas para o enriquecimento específico de EKS.
+- AWS CLI, Azure CLI ou Google Cloud CLI e identidade somente leitura apenas para o enriquecimento do provider correspondente.
 
 O host não precisa pertencer ao cluster. Em EKS, o assessment não acessa hosts do control plane, etcd ou processos internos; ele usa a API Kubernetes e, opcionalmente, as configurações gerenciadas expostas pelas APIs AWS.
 
@@ -31,7 +33,7 @@ Antes de coletar, valide dependências, contexto, API, RBAC e integrações opci
 bash tools/eks-assessment/src/assessment-preflight.sh
 ```
 
-O menu e o botão web de coleta executam esse preflight automaticamente e não criam uma coleta quando há falha obrigatória. Restrições em APIs opcionais deixam a cobertura `PARTIAL`; ambiente não EKS e Prometheus não configurado ficam `N/A`.
+O menu e o botão web de coleta executam esse preflight automaticamente e não criam uma coleta quando há falha obrigatória. Restrições em APIs opcionais deixam a cobertura `PARTIAL`; integrações não aplicáveis e Prometheus não configurado ficam `N/A`. EKS, AKS e GKE são detectados por contexto/provider ID; CLIs e escopos cloud são gates opcionais.
 
 O interpretador Python 3.10+ é selecionado automaticamente. Para fixar um binário compatível:
 
@@ -75,15 +77,17 @@ O dashboard usa o ícone oficial do Kubernetes e a cor primária `#326CE5`, mant
 
 ### Operational Insights
 
-A release `0.4.0-rc.1` adiciona áreas baseadas no mesmo artefato sanitizado:
+A série `0.4.0-rc` adiciona áreas baseadas no mesmo artefato sanitizado:
 
 - **Events & Diagnostics:** Events deduplicados, estado de Pods e troubleshooting, sem persistir mensagens livres;
-- **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias; versão desconhecida permanece `UNKNOWN`;
+- **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias, com catálogo oficial versionado; versão desconhecida ou catálogo vencido permanece `UNKNOWN`;
 - **Manifest Quality:** segurança, reliability, scheduling, storage, network e supply chain avaliados sobre objetos da Kubernetes API;
 - **Container Tuning:** evolução das propostas de requests/limits, sempre sem alteração automática;
 - **Best Practices:** regras genéricas e pacotes EKS, AKS e GKE com aplicabilidade e responsabilidade explícitas.
 
 O artefato fica em `operational-insights.json` e pode ser exportado por `GET /export-operational`.
+
+O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Versions, Manifest Quality e Best Practices; conteúdo de logs não é indexado.
 
 Logs permanecem desabilitados por padrão. Para coleta explícita:
 
@@ -115,16 +119,20 @@ Exemplos auditáveis ficam em `deploy/`:
 - `rbac-cluster-readonly.yaml`: ClusterRole para inventário Kubernetes amplo;
 - `iam-eks-readonly.json`: APIs AWS/EKS do enriquecimento padrão;
 - `iam-account-security-optional.json`: GuardDuty opcional, separado do perfil padrão.
+- `azure-aks-assessment-readonly-role.json`: Azure RBAC custom role somente leitura para configuração, node pools, upgrade profile e versões regionais;
+- `gcp-gke-assessment-readonly-role.yaml`: custom role GCP mínima para leitura do cluster e server config.
 
 Os exemplos não concedem leitura de Secrets ou ConfigMaps. Substitua os namespaces e vincule as roles somente à identidade aprovada. APIs opcionais sem permissão ficam `PARTIAL` ou `UNKNOWN`.
 
 ## Visibilidade por plataforma
 
 - **Amazon EKS:** executa o scan genérico pela API Kubernetes e, quando AWS CLI/credenciais estão disponíveis, usa apenas operações AWS `list`, `describe` e `get` para configuração do cluster, node groups, add-ons e EKS Cluster Insights.
+- **Azure AKS:** com `AKS_CLUSTER_NAME` e `AKS_RESOURCE_GROUP`, usa `az aks show/get-upgrades/nodepool list/get-versions`; o control plane permanece `MANAGED_PROVIDER`.
+- **Google GKE:** detecta o contexto padrão ou usa `GKE_CLUSTER_NAME`, `GKE_LOCATION` e `GCP_PROJECT`; consulta somente `clusters describe` e `get-server-config`.
 - **Kubernetes autogerenciado/on-premises:** executa o mesmo scan pela API Kubernetes. Objetos do control plane visíveis pela API podem ser inventariados como recursos comuns, sem SSH, leitura de filesystem, acesso direto ao etcd ou inspeção de processos dos hosts.
 - **Outros Kubernetes gerenciados:** mantém o scan genérico; verificações exclusivas de AWS/EKS ficam `N/A`, `UNKNOWN` ou `PARTIAL`, conforme aplicabilidade e evidência disponível.
 
-O nome do cluster parte do contexto Kubernetes atual. Para o enriquecimento EKS, ele pode ser obtido do ARN do contexto ou informado por `EKS_CLUSTER_NAME`; a região pode vir do contexto/AWS CLI ou de `AWS_REGION`/`AWS_DEFAULT_REGION`.
+O nome do cluster parte do contexto Kubernetes atual. Para o enriquecimento EKS, ele pode ser obtido do ARN do contexto ou informado por `EKS_CLUSTER_NAME`; a região pode vir do contexto/AWS CLI ou de `AWS_REGION`/`AWS_DEFAULT_REGION`. Os escopos AKS/GKE e exemplos read-only estão documentados em [`docs/cloud-provider-evidence.md`](docs/cloud-provider-evidence.md).
 
 ## CIS Security
 
@@ -159,6 +167,8 @@ O relatório estruturado é gravado em `cis-security-assessment.json` e também 
 - `Ctrl+C`, `SIGTERM`, o botão **Cancelar coleta** ou a saída do menu encerram o grupo completo de processos;
 - após TERM há 10s de graça e então KILL, evitando `kubectl`, `aws`, helpers ou port-forwards órfãos;
 - artefatos parciais são preservados com estado `CANCELLED` ou `TIMED_OUT`, nunca como coleta concluída.
+
+Cada coleta registra `metadata.performance.durationSeconds`; a web também registra duração por componente. `comprehensive-assessment.json.performance` informa chamadas/retries/throttling/bytes da Kubernetes API, peak RSS do processo e tamanho da coleta antes do relatório. Isso permite calibrar impacto sem persistir conteúdo adicional.
 
 Smoke de cancelamento real: `bash tools/eks-assessment/tests/smoke-assessment-cancellation.sh`.
 
@@ -223,6 +233,8 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 
 - `comprehensive-assessment.json`: checks, fingerprints, cobertura, tecnologias, semântica, AWS/EKS e capacidade;
 - `aws-eks-assessment.json`: configuração gerenciada exposta pelas APIs AWS/EKS, node groups, add-ons, identidade, rede e cobertura das APIs; não contém inspeção direta do control plane;
+- `cloud-provider-assessment.json`: contrato normalizado EKS/AKS/GKE, lifecycle e Best Practices comprováveis, sem payload cloud bruto ou identificador de conta;
+- `operational-insights.json`: Events, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
 - `application-manifests-sanitized.json`: manifests de aplicação sem status/managed fields, valores arbitrários de `env`, dados de Secret ou valores de ConfigMap;
@@ -235,7 +247,7 @@ Valores de tuning explicitamente permitidos (`JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, o
 
 ## Versão e distribuição
 
-A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
+A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `data/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
 
 Gere o pacote portátil, o checksum e o SBOM SPDX com:
 

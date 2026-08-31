@@ -25,9 +25,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    import resource as process_resource
+except ImportError:  # pragma: no cover - assessment runtime is Linux
+    process_resource = None
+
 from eks_semantic_assessment import apply_semantic_assessment
 from cis_security_assessment import generate as generate_cis_security
 from operational_insights import generate as generate_operational_insights
+from cloud_provider_assessment import generate as generate_cloud_provider_assessment
 
 
 SCHEMA_VERSION = "4.0"
@@ -156,6 +162,33 @@ TECH_PATTERNS = {
 
 def utcnow() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def peak_rss_bytes() -> int | None:
+    if process_resource is None:
+        return None
+    value = int(process_resource.getrusage(process_resource.RUSAGE_SELF).ru_maxrss)
+    return value if sys.platform == "darwin" else value * 1024
+
+
+def finding_quality(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    by_fingerprint: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for finding in findings:
+        by_fingerprint[str(finding.get("fingerprint") or "")].append(finding)
+    duplicates = sum(len(values) - 1 for key, values in by_fingerprint.items() if key and len(values) > 1)
+    conflicts = sum(len({str(item.get("severity")) for item in values}) > 1 for key, values in by_fingerprint.items() if key)
+    low_confidence_pass = sum(item.get("severity") == "PASS" and item.get("confidence") == "LOW" for item in findings)
+    rule_counts = Counter(str(item.get("ruleId") or "UNKNOWN") for item in findings)
+    threshold = max(20, round(len(findings) * 0.08))
+    review = [{"ruleId": rule_id, "findings": count, "reason": "high-volume rule; calibrate against expected policy and workload ownership"} for rule_id, count in rule_counts.most_common() if count >= threshold][:20]
+    return {
+        "state": "PASS" if not (duplicates or conflicts or low_confidence_pass) else "WARN",
+        "stableIdentityDuplicates": duplicates,
+        "conflictingSeverities": conflicts,
+        "lowConfidencePasses": low_confidence_pass,
+        "highVolumeThreshold": threshold,
+        "falsePositiveReviewCandidates": review,
+    }
 
 
 def load_json(path: Path, fallback: Any = None) -> Any:
@@ -1214,9 +1247,10 @@ class Assessment:
         self.extension_coverage()
         self.manifests()
         self.persist_sanitized_snapshots()
+        cloud_provider = generate_cloud_provider_assessment(self.directory)
         cis_security = generate_cis_security(self.directory, self.raw, self.base, self.collection, self.aws_eks)
         operational = generate_operational_insights(
-            self.directory, self.workloads, self.findings, self.capacity, technologies, self.aws_eks
+            self.directory, self.workloads, self.findings, self.capacity, technologies, self.aws_eks, cloud_provider
         )
         order = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
         self.findings.sort(key=lambda x: (order.get(x["severity"], 9), x["category"], x["namespace"], x["workload"], x["check"]))
@@ -1228,6 +1262,8 @@ class Assessment:
             severities = {x["severity"] for x in values}
             state = next((level for level in ("CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A") if level in severities), "N/A")
             categories.append({"name": category, "state": state, "counts": dict(Counter(x["severity"] for x in values))})
+        collection_bytes = sum(path.stat().st_size for path in self.directory.rglob("*") if path.is_file())
+        quality = finding_quality(self.findings)
         return {
             "schemaVersion": SCHEMA_VERSION, "generatedAt": utcnow(), "readOnly": True,
             "safety": {"kubectlVerbs": ["get", "list"], "secrets": "not-collected", "configMapValues": "not-collected", "environmentValues": "redacted-except-runtime-tuning", "eventMessages": "omitted", "mutations": 0},
@@ -1242,11 +1278,14 @@ class Assessment:
                 "objectsInventoried": (self.collection.get("universalInventory") or {}).get("objectCount", 0),
             },
             "collection": self.collection, "categories": categories, "findings": self.findings,
+            "quality": quality,
+            "performance": {"requestBudget": self.collection.get("requestBudget") or {}, "processPeakRssBytes": peak_rss_bytes(), "collectionBytesBeforeReport": collection_bytes},
             "workloads": self.workloads, "technologies": technologies,
             "capacityRecommendations": self.capacity,
             "semantic": self.semantic_summary,
             "cisSecurity": cis_security,
             "operationalInsights": operational,
+            "cloudProvider": cloud_provider,
             "awsEks": {
                 "state": self.aws_eks.get("state", "UNKNOWN") if isinstance(self.aws_eks, dict) else "UNKNOWN",
                 "reason": self.aws_eks.get("reason", "") if isinstance(self.aws_eks, dict) else "",
@@ -1255,7 +1294,7 @@ class Assessment:
                 "inventory": self.aws_eks.get("inventory", {}) if isinstance(self.aws_eks, dict) else {},
             },
             "prometheus": {"state": telemetry.get("state", "DISABLED"), "window": telemetry.get("window"), "reason": telemetry.get("reason", "")},
-            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cisSecurity": "cis-security-assessment.json", "operationalInsights": "operational-insights.json"},
+            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cloudProvider": "cloud-provider-assessment.json", "cisSecurity": "cis-security-assessment.json", "operationalInsights": "operational-insights.json"},
         }
 
 

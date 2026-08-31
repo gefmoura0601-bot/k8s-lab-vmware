@@ -11,6 +11,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from lifecycle_catalog import assess as assess_lifecycle, catalog_metadata, load_catalog
+
 
 def load(path: Path, fallback: Any) -> Any:
     try:
@@ -63,12 +65,33 @@ def event_recommendation(reason: str) -> str:
     return next((text for token, text in mapping if token in value), "Correlacionar o Event com o controller, Pod, node e dependências.")
 
 
-def versions(nodes: list[dict[str, Any]], workloads: list[dict[str, Any]], technologies: list[dict[str, Any]]) -> dict[str, Any]:
+def versions(directory: Path, nodes: list[dict[str, Any]], workloads: list[dict[str, Any]], technologies: list[dict[str, Any]], detected: str, cloud: dict[str, Any]) -> dict[str, Any]:
     rows = []
+    catalog = load_catalog()
+    catalog_info = catalog_metadata(catalog)
+    cloud_cluster = cloud.get("cluster") or {}
+    cloud_lifecycle = cloud.get("lifecycle") or {}
+    control_plane_version = cloud_cluster.get("version")
+    if control_plane_version:
+        rows.append({
+            "component": "Control plane", "name": detected, "version": control_plane_version,
+            "runtime": "managed" if detected in {"eks", "aks", "gke"} else "UNKNOWN", "os": "N/A", "kernel": "N/A",
+            "state": "DETECTED", "source": "CloudProviderAPI",
+            "supportState": cloud_lifecycle.get("supportState", "UNKNOWN"),
+            "supportUntil": cloud_lifecycle.get("supportUntil", "UNKNOWN"),
+            "daysRemaining": cloud_lifecycle.get("daysRemaining"),
+        })
+    else:
+        kubernetes = load(directory / "kubernetes-version.json", {})
+        server_version = (kubernetes.get("serverVersion") or {}).get("gitVersion") if isinstance(kubernetes, dict) else None
+        if server_version:
+            lifecycle = assess_lifecycle(server_version, "generic-kubernetes", catalog=catalog)
+            rows.append({"component": "Control plane", "name": "Kubernetes API", "version": server_version, "runtime": "UNKNOWN", "os": "N/A", "kernel": "N/A", "state": "DETECTED", "source": "KubernetesAPI", **{key: lifecycle.get(key) for key in ("supportState", "supportUntil", "daysRemaining")}})
     node_versions = Counter()
     for node in nodes:
         meta, info = node.get("metadata") or {}, (node.get("status") or {}).get("nodeInfo") or {}
-        row = {"component": "Node", "name": meta.get("name", "-"), "version": info.get("kubeletVersion", "UNKNOWN"), "runtime": info.get("containerRuntimeVersion", "UNKNOWN"), "os": info.get("osImage", "UNKNOWN"), "kernel": info.get("kernelVersion", "UNKNOWN"), "state": "DETECTED", "source": "KubernetesAPI"}
+        lifecycle = assess_lifecycle(info.get("kubeletVersion"), detected, support_type=str(cloud_cluster.get("supportType") or ""), release_channel=str(cloud_cluster.get("releaseChannel") or ""), catalog=catalog)
+        row = {"component": "Node", "name": meta.get("name", "-"), "version": info.get("kubeletVersion", "UNKNOWN"), "runtime": info.get("containerRuntimeVersion", "UNKNOWN"), "os": info.get("osImage", "UNKNOWN"), "kernel": info.get("kernelVersion", "UNKNOWN"), "state": "DETECTED", "source": "KubernetesAPI", **{key: lifecycle.get(key) for key in ("supportState", "supportUntil", "daysRemaining")}}
         rows.append(row); node_versions[str(row["version"])] += 1
     images: dict[str, set[str]] = defaultdict(set)
     for workload in workloads:
@@ -79,12 +102,12 @@ def versions(nodes: list[dict[str, Any]], workloads: list[dict[str, Any]], techn
                 version = image.rsplit(":", 1)[1] if ":" in image.rsplit("/", 1)[-1] else ("digest" if "@sha256:" in image else "UNKNOWN")
                 images[component].add(version)
     for name, detected in sorted(images.items()):
-        rows.append({"component": "Container image", "name": name, "version": ", ".join(sorted(detected)), "runtime": "-", "os": "-", "kernel": "-", "state": "UNKNOWN" if "UNKNOWN" in detected else "DETECTED", "source": "KubernetesAPI"})
+        rows.append({"component": "Container image", "name": name, "version": ", ".join(sorted(detected)), "runtime": "-", "os": "-", "kernel": "-", "state": "UNKNOWN" if "UNKNOWN" in detected else "DETECTED", "source": "KubernetesAPI", "supportState": "UNKNOWN", "supportUntil": "UNKNOWN", "daysRemaining": None})
     for technology in technologies:
         if technology.get("state") == "DETECTED" and not any(x["name"].lower() == str(technology.get("name", "")).lower() for x in rows):
-            rows.append({"component": "Technology", "name": technology.get("name"), "version": "UNKNOWN", "runtime": "-", "os": "-", "kernel": "-", "state": "UNKNOWN", "source": "Heuristic"})
+            rows.append({"component": "Technology", "name": technology.get("name"), "version": "UNKNOWN", "runtime": "-", "os": "-", "kernel": "-", "state": "UNKNOWN", "source": "Heuristic", "supportState": "UNKNOWN", "supportUntil": "UNKNOWN", "daysRemaining": None})
     skew = len(node_versions) > 1
-    return {"summary": {"components": len(rows), "unknownVersions": sum(x["version"] == "UNKNOWN" for x in rows), "nodeVersionSkew": skew}, "items": rows, "notice": "Lifecycle/EOL exige catálogo oficial atualizado; UNKNOWN nunca é apresentado como suportado."}
+    return {"summary": {"components": len(rows), "unknownVersions": sum(x["version"] == "UNKNOWN" for x in rows), "nodeVersionSkew": skew, "endOfSupport": sum(x.get("supportState") == "END_OF_SUPPORT" for x in rows), "lifecycleUnknown": sum(str(x.get("supportState", "UNKNOWN")).startswith("UNKNOWN") for x in rows)}, "items": rows, "catalog": catalog_info, "notice": "Lifecycle/EOL usa catálogo oficial versionado e evidência regional do provider; catálogo desatualizado ou versão sem evidência permanece UNKNOWN."}
 
 
 def manifest_quality(workloads: list[dict[str, Any]], findings: list[dict[str, Any]]) -> dict[str, Any]:
@@ -109,7 +132,8 @@ def tuning(capacity: list[dict[str, Any]]) -> dict[str, Any]:
     return {"summary": dict(Counter(x["action"] for x in rows)), "recommendations": rows, "notice": "Propostas exigem teste de carga e validação humana; nenhuma alteração é aplicada."}
 
 
-def best_practices(detected: str, findings: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def best_practices(detected: str, findings: list[dict[str, Any]], nodes: list[dict[str, Any]], cloud: dict[str, Any] | None = None) -> dict[str, Any]:
+    cloud = cloud or {}
     rows = []
     domains = {"Security": "Security", "SupplyChain": "Security", "Reliability": "Reliability", "Health": "Operations", "Scheduling": "Scalability", "Autoscaling": "Scalability", "Network": "Networking", "Storage": "Reliability", "Cost": "Cost"}
     for finding in findings:
@@ -121,15 +145,38 @@ def best_practices(detected: str, findings: list[dict[str, Any]], nodes: list[di
         "aks": [("aks.identity.workload", "Security", "Validar Microsoft Entra Workload ID e Azure RBAC."), ("aks.nodepools.system", "Reliability", "Validar separação e resiliência do system node pool."), ("aks.upgrade.channels", "Operations", "Validar canais de upgrade e manutenção."), ("aks.network.egress", "Networking", "Validar modelo de rede, egress e capacidade de endereços.")],
         "gke": [("gke.identity.workload", "Security", "Validar Workload Identity Federation for GKE."), ("gke.release.channel", "Operations", "Validar release channel e estratégia de upgrade."), ("gke.shielded.nodes", "Security", "Validar Shielded GKE Nodes quando aplicável."), ("gke.network.private", "Networking", "Validar private cluster, egress e políticas de rede.")],
     }
+    evidenced = {str(item.get("ruleId")): item for item in cloud.get("bestPractices") or [] if isinstance(item, dict)}
     for provider, rules in provider_rules.items():
         for rule_id, domain, recommendation in rules:
             applicable = provider == detected
-            rows.append({"ruleId": f"bestpractice.{rule_id}", "provider": provider, "domain": domain, "status": "MANUAL" if applicable else "N/A", "applicability": "MANUAL_REVIEW" if applicable else "NOT_APPLICABLE", "responsibility": "SHARED" if applicable else "CLOUD_PROVIDER", "resource": "cluster", "evidence": "Provider detected; cloud API evidence is required." if applicable else f"Detected platform: {detected}", "recommendation": recommendation})
-    return {"platform": detected, "summary": dict(Counter(x["status"] for x in rows)), "rules": rows, "notice": "Recomendações baseadas em evidência disponível; não representam certificação do provider."}
+            evidence = evidenced.get(f"bestpractice.{rule_id}") if applicable else None
+            if evidence:
+                rows.append({**evidence, "provider": provider, "domain": evidence.get("domain") or domain})
+            else:
+                rows.append({"ruleId": f"bestpractice.{rule_id}", "provider": provider, "domain": domain, "status": "MANUAL" if applicable else "N/A", "applicability": "MANUAL_REVIEW" if applicable else "NOT_APPLICABLE", "responsibility": "SHARED" if applicable else "CLOUD_PROVIDER", "resource": "cluster", "evidence": "Provider identificado; evidência da Cloud Provider API indisponível." if applicable else f"Plataforma detectada: {detected}", "recommendation": recommendation})
+    return {"platform": detected, "cloudEvidenceState": cloud.get("state", "N/A"), "summary": dict(Counter(x["status"] for x in rows)), "rules": rows, "notice": "Recomendações baseadas em evidência disponível; não representam certificação do provider."}
 
 
-SECRET = re.compile(r"(?i)(authorization|password|passwd|token|secret|api[_-]?key|cookie)(\s*[:=]\s*)([^\s,;]+)")
-BEARER = re.compile(r"(?i)bearer\s+[a-z0-9._~+/=-]+")
+SECRET = re.compile(r'''(?ix)\b(authorization|password|passwd|token|secret|api[_-]?key|cookie|client[_-]?secret|connection[_-]?string)\b(["']?\s*[:=]\s*["']?)([^\s,;}"']+)''')
+AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+")
+JWT = re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}(?:\.[a-zA-Z0-9_-]{8,})?\b")
+AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+URL_CREDENTIALS = re.compile(r"(?i)(https?://)([^\s/@:]+):([^\s/@]+)@")
+
+
+def redact_log_text(value: str) -> str:
+    value = AUTH_SCHEME.sub("Bearer [REDACTED]", value)
+    value = JWT.sub("[REDACTED-JWT]", value)
+    value = AWS_ACCESS_KEY.sub("[REDACTED-AWS-KEY]", value)
+    value = URL_CREDENTIALS.sub(r"\1[REDACTED]@", value)
+    return SECRET.sub(r"\1\2[REDACTED]", value)
+
+
+def utf8_prefix(value: str, max_bytes: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8", "replace")
+    if len(encoded) <= max_bytes:
+        return value, False
+    return encoded[:max_bytes].decode("utf-8", "ignore"), True
 
 
 def sanitized_logs() -> dict[str, Any]:
@@ -147,19 +194,21 @@ def sanitized_logs() -> dict[str, Any]:
         command = ["kubectl", "logs", "-n", namespace, f"{kind}/{name}", "--tail=200", "--since=1h", "--timestamps=true"]
         if container: command += ["-c", container]
         result = subprocess.run(command, text=True, capture_output=True, timeout=30, check=False)
-        text = result.stdout[:max(0, limit-used)]
-        text = SECRET.sub(r"\1\2[REDACTED]", BEARER.sub("Bearer [REDACTED]", text))
+        remaining = max(0, limit - used)
+        source, source_truncated = utf8_prefix(result.stdout, remaining)
+        text, redaction_truncated = utf8_prefix(redact_log_text(source), remaining)
         used += len(text.encode("utf-8"))
-        output.append({"target": target, "state": "COLLECTED" if result.returncode == 0 else "UNAVAILABLE", "content": text, "truncated": len(result.stdout) > len(text), "error": result.stderr[:500] if result.returncode else ""})
+        output.append({"target": target, "state": "COLLECTED" if result.returncode == 0 else "UNAVAILABLE", "content": text, "truncated": source_truncated or redaction_truncated, "error": redact_log_text(result.stderr[:500]) if result.returncode else ""})
         if used >= limit: break
-    return {"state": "COLLECTED" if any(x.get("state") == "COLLECTED" for x in output) else "UNAVAILABLE", "maxBytes": limit, "bytes": used, "redaction": ["credentials", "bearer tokens"], "entries": output}
+    return {"state": "COLLECTED" if any(x.get("state") == "COLLECTED" for x in output) else "UNAVAILABLE", "maxBytes": limit, "bytes": used, "redaction": ["key-value credentials", "authorization schemes", "JWT", "AWS access keys", "URL credentials"], "entries": output}
 
 
-def generate(directory: Path, workloads: list[dict[str, Any]], findings: list[dict[str, Any]], capacity: list[dict[str, Any]], technologies: list[dict[str, Any]], aws: dict[str, Any]) -> dict[str, Any]:
+def generate(directory: Path, workloads: list[dict[str, Any]], findings: list[dict[str, Any]], capacity: list[dict[str, Any]], technologies: list[dict[str, Any]], aws: dict[str, Any], cloud: dict[str, Any] | None = None) -> dict[str, Any]:
     nodes = items(load(directory / "nodes.json", {"items": []}))
     pods = items(load(directory / "pods.json", {"items": []}))
     events = items(load(directory / "events.json", {"items": []}))
-    detected = platform(nodes, aws)
-    value = {"schemaVersion": "1.0", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True, "platform": detected, "diagnostics": diagnostics(events, pods), "versions": versions(nodes, workloads, technologies), "manifestQuality": manifest_quality(workloads, findings), "containerTuning": tuning(capacity), "bestPractices": best_practices(detected, findings, nodes), "logs": sanitized_logs()}
+    cloud = cloud or load(directory / "cloud-provider-assessment.json", {})
+    detected = str(cloud.get("provider") or platform(nodes, aws))
+    value = {"schemaVersion": "1.1", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True, "platform": detected, "diagnostics": diagnostics(events, pods), "versions": versions(directory, nodes, workloads, technologies, detected, cloud), "manifestQuality": manifest_quality(workloads, findings), "containerTuning": tuning(capacity), "bestPractices": best_practices(detected, findings, nodes, cloud), "logs": sanitized_logs(), "cloudProvider": {"provider": detected, "state": cloud.get("state", "N/A"), "summary": cloud.get("summary") or {}, "lifecycle": cloud.get("lifecycle") or {}}}
     (directory / "operational-insights.json").write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     return value

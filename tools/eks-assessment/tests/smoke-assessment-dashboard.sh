@@ -38,6 +38,7 @@ paths=(
   "/kubernetes-logo.svg"
   "/api/collection-status"
   "/?collection=$COLLECTION"
+  "/search?collection=$COLLECTION&q=Deployment"
   "/assessment?collection=$COLLECTION"
   "/problems?collection=$COLLECTION"
   "/resources?collection=$COLLECTION&kind=nodes"
@@ -49,11 +50,13 @@ paths=(
   "/technologies?collection=$COLLECTION"
   "/capacity?collection=$COLLECTION"
   "/prometheus?collection=$COLLECTION"
+  "/cloud?collection=$COLLECTION"
   "/aws?collection=$COLLECTION"
   "/cis-security?collection=$COLLECTION"
   "/coverage?collection=$COLLECTION"
   "/compare?collection=$COLLECTION"
   "/export?collection=$COLLECTION"
+  "/export-cloud?collection=$COLLECTION"
   "/manifests?collection=$COLLECTION"
 )
 for path in "${paths[@]}"; do
@@ -106,6 +109,11 @@ grep -Fq 'Sinais simplificados e tecnologias' <<<"$prometheus_page"
 aws_page="$(curl -fsS "$BASE_URL/aws?collection=$COLLECTION")"
 grep -Fq 'AWS / Amazon EKS' <<<"$aws_page"
 grep -Fq 'Permissão ausente vira UNKNOWN' <<<"$aws_page"
+
+cloud_page="$(curl -fsS "$BASE_URL/cloud?collection=$COLLECTION")"
+grep -Fq 'Cloud Provider' <<<"$cloud_page"
+grep -Fq 'Payloads brutos, credenciais e identificadores de conta não são persistidos' <<<"$cloud_page"
+curl -fsS "$BASE_URL/export-cloud?collection=$COLLECTION" | jq -e '.readOnly == true and .safety.mutations == 0' >/dev/null
 
 cis_page="$(curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION")"
 grep -Fq 'CIS Security' <<<"$cis_page"

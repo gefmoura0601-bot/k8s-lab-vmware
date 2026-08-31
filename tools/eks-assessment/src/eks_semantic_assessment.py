@@ -970,7 +970,7 @@ class SemanticRules:
                         "Admission webhook reliability",
                         f"problems={','.join(problems) or 'none'}; failurePolicy={failure}; timeout={timeout}",
                         "Keep webhook endpoints redundant, fast, TLS-valid and fail according to documented risk.",
-                        workload=f"{kind}/{webhook_name}",
+                        workload=f"{kind}/{name}/{webhook_name}",
                         source=SOURCES["security"],
                     )
 
@@ -1292,7 +1292,7 @@ class SemanticRules:
             memory_percent = 100 * total_requested_memory / total_memory
             spread = 100 * (max(node_ratios) - min(node_ratios)) if len(node_ratios) > 1 else 0.0
             self.add(
-                "INFO" if max(cpu_percent, memory_percent) < 25 or spread > 50 else "PASS",
+                "INFO",
                 "k8s.cost.request-fragmentation",
                 "Cost",
                 "Requested-capacity distribution",
