@@ -217,7 +217,7 @@ def assess(raw: dict[str, Any], base: dict[str, Any], collection: dict[str, Any]
             if any("*" in (rule.get("verbs") or []) or "*" in (rule.get("resources") or []) for rule in role.get("rules") or []):
                 meta = role.get("metadata") or {}; offenders.append(f"{role.get('kind','Role')}/{meta.get('namespace','-')}/{meta.get('name','unknown')}")
         controls.append(control("cis.k8s.rbac.wildcards", "RBAC sem permissões wildcard", status="WARN" if offenders else "PASS",
-            evidence={"wildcardBindings": len(offenders), "resources": offenders[:50]}, recommendation="Substituir wildcards pelos verbos e resources estritamente necessários."))
+            evidence={"wildcardBindings": len(offenders), "resources": offenders[:50]}, recommendation="Remova wildcards e limite as permissões aos verbs e resources estritamente necessários."))
     else:
         controls.append(unavailable("cis.k8s.rbac.wildcards", "RBAC sem permissões wildcard", "KubernetesAPI", "Roles ou ClusterRoles indisponíveis"))
 
