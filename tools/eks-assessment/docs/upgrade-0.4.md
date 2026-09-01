@@ -6,6 +6,8 @@ Coleções anteriores à `0.4.0-rc.3` não possuem `cloud-provider-assessment.js
 
 Logs continuam desabilitados por padrão. Não habilite `ASSESSMENT_INCLUDE_LOGS=1` sem revisar targets, retenção e política de dados do ambiente.
 
+Na RC.6, use `src/provider_validation.py` somente após uma coleta `COMPLETED`. O argumento `--expected-provider` é obrigatório e `WARN` não promove a release. Consulte `docs/provider-validation.md` antes de definir os budgets do ambiente transacional.
+
 Após extrair o pacote, execute:
 
 ```bash

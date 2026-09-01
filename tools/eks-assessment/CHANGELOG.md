@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0-rc.6 — 2026-08-31
+
+- adiciona `Provider Validation Runner` offline com provider esperado obrigatório;
+- cruza detecção por Kubernetes evidence, Cloud Provider artifact e Operational Insights;
+- valida estado terminal, integridade, read-only, zero mutações, proteção de dados, aplicabilidade, quality gate, cobertura e performance;
+- aplica budgets configuráveis para duração, chamadas, retries, throttling, bytes e peak RSS;
+- mantém `releaseReady=false` para qualquer `WARN` ou `FAIL` e não trata Cloud Provider API parcial como aprovação;
+- adiciona matriz sanitizada de regressão para EKS, AKS, GKE e Kubernetes genérico;
+- documenta o fluxo de validação real sem presumir acesso aos ambientes cloud.
+
 ## 0.4.0-rc.5 — 2026-08-31
 
 - corrige a renderização do painel de indicadores em `Cloud Provider`, que exibia o placeholder literal `{facts}`;
