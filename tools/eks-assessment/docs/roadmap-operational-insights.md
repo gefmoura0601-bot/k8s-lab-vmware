@@ -17,6 +17,7 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 13. métricas de impacto por coleta e por componente;
 14. cancelamento/timeout com estado terminal preservado desde o preflight;
 15. smoke de logs sanitizados sem exposição de conteúdo no output de validação.
+16. `Provider Validation Runner` offline com provider esperado obrigatório e gates de release reproduzíveis.
 
 ## Guardrails
 
@@ -50,5 +51,9 @@ Esses gates são operacionais, não pendências de implementação local. Sem cr
 - `Node Health` validado no lab com três nodes e cobertura integral da Metrics API;
 - página `Cloud Provider` protegida por regressão contra placeholders de template não resolvidos.
 - inventário live da RC.5 medido no lab: 2.072 objetos, 156 chamadas Kubernetes API, zero retry/throttling, 16,832s de coleta, 34.405.187 bytes recebidos e peak RSS de 156.073.984 bytes.
+- matriz offline da RC.6 aprovada para EKS, AKS, GKE e Kubernetes genérico; mismatch, mutação, regra de outro provider e budget excedido são rejeitados;
+- coleta anterior do lab permanece `WARN` no runner por não possuir evidência de chamadas/bytes da API, evitando aprovação retroativa sem métricas.
+- coleta fresh da RC.6 concluída pelo menu com todos os coletores em código zero e artefatos válidos; o runner retornou `PASS` e `releaseReady=true` para Kubernetes genérico, com cobertura Kubernetes de 100%, 156 chamadas de API, zero retry/throttling, 37s de duração, 34.614.935 bytes recebidos e peak RSS de 154.189.824 bytes;
+- pacote portátil `0.4.0-rc.6` validado por checksum, compile, preflight e execução do runner a partir do diretório extraído.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.

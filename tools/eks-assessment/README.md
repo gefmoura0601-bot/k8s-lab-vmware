@@ -1,6 +1,6 @@
 # Assessment completo de EKS/Kubernetes
 
-O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina sete camadas:
+O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina oito camadas:
 
 1. `assess-eks.sh`: saúde e baseline pontual;
 2. `eks-cluster-discovery.sh`: inventário técnico baseado nas salvaguardas do projeto oficial `sample-eks-cluster-discovery-tool`;
@@ -8,7 +8,8 @@ O assessment é adaptativo, somente leitura e executável a partir de qualquer h
 4. `cloud_provider_assessment.py`: evidência normalizada EKS, AKS ou GKE, sem persistir payloads brutos nem identificadores de conta;
 5. `eks_semantic_assessment.py`: análise semântica de workloads, rede, storage/DR, RBAC/admission, autoscaling, operators e supply chain;
 6. `operational_insights.py`: Events, lifecycle, Manifest Quality, Container Tuning, Best Practices e logs opcionais;
-7. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas.
+7. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas;
+8. `provider_validation.py`: gates offline para provider, read-only, aplicabilidade, proteção de dados, cobertura, performance e integridade dos artefatos.
 
 Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso comprovadamente não aplicável é `N/A`; evidência ausente é `UNKNOWN`; coleta incompleta é `PARTIAL`. Falha de RBAC/API nunca é conformidade. Nenhum componente aplica, altera, reinicia, escala ou exclui recursos.
 
@@ -239,6 +240,7 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `aws-eks-assessment.json`: configuração gerenciada exposta pelas APIs AWS/EKS, node groups, add-ons, identidade, rede e cobertura das APIs; não contém inspeção direta do control plane;
 - `cloud-provider-assessment.json`: contrato normalizado EKS/AKS/GKE, lifecycle e Best Practices comprováveis, sem payload cloud bruto ou identificador de conta;
 - `operational-insights.json`: Events, Node Health, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
+- `provider-validation.json`: gate offline opcional para promover a release em um provider explicitamente esperado;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
 - `node-metrics.json`, `pod-metrics.json`: uso pontual sanitizado da Metrics API; quando indisponível, os arquivos ficam vazios e a cobertura é declarada incompleta;
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
@@ -249,6 +251,18 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `discovery/`: evidências do discovery oficial;
 
 Valores de tuning explicitamente permitidos (`JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, opções .NET e equivalentes) podem aparecer na evidência para análise. Tokens, senhas e demais variáveis permanecem redatados.
+
+## Provider Validation Runner
+
+Depois de uma coleta completa, valide o ambiente esperado sem executar novas chamadas ao cluster ou ao cloud provider:
+
+```bash
+python3 tools/eks-assessment/src/provider_validation.py \
+  --collection assessment/<coleta> \
+  --expected-provider eks
+```
+
+Providers aceitos: `eks`, `aks`, `gke` e `generic-kubernetes`. O runner exige estado `COMPLETED`, cruza três fontes de detecção e bloqueia mutações, evidência parcial, provider divergente, dados sensíveis, baixa cobertura e budgets excedidos. `WARN` mantém `releaseReady=false`. Contrato, thresholds e matriz real estão em [`docs/provider-validation.md`](docs/provider-validation.md).
 
 ## Versão e distribuição
 
