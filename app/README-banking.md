@@ -17,6 +17,20 @@ Os serviços executam no namespace `banking` e usam PostgreSQL no namespace
 `https://nginx.lab.local:31882/banking/` e a loja em
 `https://nginx.lab.local:31882/store/`.
 
+## Operational readiness
+
+Os cinco serviços que recebem tráfego mantêm duas réplicas, distribuição por `kubernetes.io/hostname`, `PodDisruptionBudget` e rollout sem indisponibilidade. `account-service` e `transaction-service` usam HPA com `minReplicas: 2`; o fixture E2E permanece singleton porque não atende tráfego e não faz parte da disponibilidade da aplicação.
+
+As Readiness Probes são dependency-aware quando existe persistência. `transaction-service` e `acquirer-service` consultam PostgreSQL com `SELECT 1`; liveness não depende do banco. Os initializers de schema repetem falhas transitórias com backoff exponencial limitado e falham de forma definitiva em configuração ou SQL inválidos. Isso evita restart loops quando o banco ainda está voltando após a inicialização de um node.
+
+O `account-service` limita o heap a 70% do memory limit para preservar headroom de metaspace, threads, buffers, JFR e agentes. O sidecar `dotnet-monitor` possui probe TCP própria. A policy de registries aprova explicitamente `registry.istio.io`, utilizado pelos sidecars injetados pelo Istio.
+
+Após um deploy, valide a postura operacional sem ler Secrets nem payloads:
+
+```bash
+bash scripts/validation/validate-banking-operational-readiness.sh
+```
+
 ## Cadastro e identidade por CPF
 
 Novos cadastros exigem `ownerName`, `cpf` e `password`. A interface aplica a

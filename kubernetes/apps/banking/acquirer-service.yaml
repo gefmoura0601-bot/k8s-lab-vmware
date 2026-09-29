@@ -5,7 +5,10 @@ metadata:
   namespace: banking
   labels: {app: acquirer-service, team: banking, environment: lab}
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   selector:
     matchLabels: {app: acquirer-service}
   strategy:
@@ -16,6 +19,13 @@ spec:
       labels: {app: acquirer-service, team: banking, environment: lab}
     spec:
       serviceAccountName: acquirer-service
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: acquirer-service}
       imagePullSecrets: [{name: ghcr-secret}]
       securityContext:
         seccompProfile: {type: RuntimeDefault}

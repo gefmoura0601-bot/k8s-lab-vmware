@@ -5,7 +5,10 @@ metadata:
   namespace: banking
   labels: {app: banking-web, team: banking, environment: lab}
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   selector:
     matchLabels: {app: banking-web}
   strategy:
@@ -22,6 +25,13 @@ spec:
         sidecar.istio.io/proxyMemoryLimit: 96Mi
     spec:
       serviceAccountName: banking-web
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: banking-web}
       imagePullSecrets: [{name: ghcr-secret}]
       securityContext:
         seccompProfile: {type: RuntimeDefault}

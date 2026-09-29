@@ -35,6 +35,7 @@ spec:
               - image: "registry.k8s.io/*"
               - image: "docker.io/*"
               - image: "mcr.microsoft.com/*"
+              - image: "registry.istio.io/*"
           - list: "request.object.spec.initContainers || `[]`"
             anyPattern:
               - image: "ghcr.io/gefmoura0601-bot/*"
@@ -42,3 +43,4 @@ spec:
               - image: "registry.k8s.io/*"
               - image: "docker.io/*"
               - image: "mcr.microsoft.com/*"
+              - image: "registry.istio.io/*"

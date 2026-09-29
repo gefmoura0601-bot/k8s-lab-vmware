@@ -8,7 +8,10 @@ metadata:
     team: banking
     environment: lab
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   selector:
     matchLabels:
       app: account-service
@@ -25,6 +28,14 @@ spec:
         environment: lab
     spec:
       serviceAccountName: account-service
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: account-service
       imagePullSecrets:
         - name: ghcr-secret
       securityContext:
@@ -37,6 +48,9 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: >-
+                -XX:MaxRAMPercentage=70.0
+                -XX:InitialRAMPercentage=25.0
+                -XX:+ExitOnOutOfMemoryError
                 -XX:NativeMemoryTracking=summary
                 -XX:+UnlockDiagnosticVMOptions
                 -XX:+DebugNonSafepoints
@@ -129,3 +143,14 @@ spec:
     - name: http
       port: 80
       targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: account-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: account-service

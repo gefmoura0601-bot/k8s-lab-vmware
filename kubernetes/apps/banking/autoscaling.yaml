@@ -12,11 +12,21 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: account-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 3
   behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
   metrics:
     - type: Resource
       resource:
@@ -39,11 +49,21 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: transaction-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 3
   behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
   metrics:
     - type: Resource
       resource:
