@@ -14,6 +14,10 @@
 | `dashboard` | Python 3.10+ | permanece em foreground; `Ctrl+C` encerra |
 | `release-gate` | Python e `jq` | `0` aprovado; `1` bloqueado; `2` input inválido |
 | `regression-gate` | Python e `jq` | `0` aprovado; `1` bloqueado; `2` input inválido |
+| `validate` | Python e schemas locais | `0` contratos válidos; `1` inválidos |
+| `bundle export/verify/import` | Python e filesystem local | `0` íntegro; `1` inválido |
+| `prune` | Python e filesystem local | dry-run por padrão; `--confirm` remove |
+| `verify-release` | Python; `cosign` apenas com Sigstore bundle | `0` íntegro; `1` inválido |
 
 `release-gate` e `regression-gate` são offline e não exigem `kubectl`, kubeconfig ou conectividade com o cluster.
 
@@ -39,6 +43,39 @@ O modo headless não descobre Prometheus por padrão. Isso evita que uma automa�
 
 Nunca inclua credenciais na URL. O preflight rejeita credentials, redirects e destinos proibidos.
 
+### Collector registry e retomada
+
+`data/collectors.json` define ID, dependências, timeout, obrigatoriedade e peso.
+Collectors obrigatórios não podem ser excluídos. Para limitar etapas opcionais:
+
+```bash
+bin/kubernetes-assessment collect --phase after --change-id release-42 \
+  --no-prometheus --exclude-collector node-evidence
+```
+
+Uma coleta parcial pode ser retomada sem repetir collectors em `PASS`:
+
+```bash
+bin/kubernetes-assessment collect --resume "$COLLECTION_ID"
+bin/kubernetes-assessment collect --resume "$COLLECTION_ID" --retry-failed
+```
+
+A retomada confirma o mesmo contexto Kubernetes e preserva `createdAt`, scope,
+tentativas e evidência anterior. `preflight` sempre é executado novamente.
+
+## Contratos, bundles e retenção
+
+```bash
+bin/kubernetes-assessment validate --root ./assessment --collection "$COLLECTION_ID"
+bin/kubernetes-assessment bundle export --root ./assessment --collection "$COLLECTION_ID" --output ./collection.tar.gz
+bin/kubernetes-assessment bundle verify --bundle ./collection.tar.gz
+bin/kubernetes-assessment bundle import --root ./imported --bundle ./collection.tar.gz
+bin/kubernetes-assessment prune --root ./assessment --older-than 30d
+bin/kubernetes-assessment prune --root ./assessment --older-than 30d --confirm
+```
+
+O primeiro `prune` apenas lista candidatos. Baselines são protegidos por padrão.
+
 ## Gates
 
 ```bash
@@ -57,9 +94,10 @@ bin/eks-assessment.sh regression-gate \
 O profile e o provider esperado são escolhas do operador; não são inferidos para promover uma release. As duas coletas do Regression Gate precisam ter o mesmo cluster e o mesmo `namespaceScope`; uma coleta cluster-wide não é comparável a uma coleta limitada a namespace. EKS, AKS e GKE permanecem `PREVIEW` até qualificação real.
 
 O workflow `EKS Assessment CI` executa os dois gates com fixtures sanitizadas do
-profile `generic-kubernetes` e publica `provider-validation.json`, JSON/JUnit/
-SARIF do Regression Gate e os logs resumidos como artifact. O mesmo workflow
-valida checksum, SBOM, paths e execução do pacote portátil.
+profile `generic-kubernetes` e publica JSON/JUnit/SARIF/Markdown do Release Gate,
+JSON/JUnit/SARIF do Regression Gate e logs resumidos como artifact. O mesmo
+workflow valida checksum, SBOM, provenance, paths, alias provider-neutral e
+execução do pacote portátil, além de gerar attestation no push.
 
 ## Segurança operacional
 

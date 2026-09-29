@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/cis-security-assessment-1.x.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "notice", "summary", "controls"],
+  "properties": {
+    "schemaVersion": {"type": "string", "pattern": "^1\\."},
+    "generatedAt": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "notice": {"type": "string", "minLength": 1},
+    "summary": {"type": "object", "required": ["controls"], "properties": {"controls": {"type": "integer", "minimum": 0}}, "additionalProperties": true},
+    "controls": {"type": "array", "items": {"type": "object", "required": ["controlId", "applicability", "status"], "properties": {"controlId": {"type": "string", "minLength": 1}, "applicability": {"type": "string"}, "status": {"type": "string"}}, "additionalProperties": true}}
+  },
+  "additionalProperties": true
+}

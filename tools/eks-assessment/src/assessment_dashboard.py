@@ -23,9 +23,10 @@ from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from assessment_process_supervisor import CollectionSupervisor
 from cis_security_assessment import compare_reports
+from collector_registry import build_plan as build_collector_plan, load_registry as load_collector_registry
 from eks_comprehensive_assessment import sanitize_snapshot_tree
 from localization_pt_br import localize_finding
-from provider_validation import PROVIDERS, evaluate as evaluate_provider
+from provider_validation import PROVIDERS, evaluate as evaluate_provider, write_outputs as write_provider_outputs
 from regression_validation import (
     DEFAULT_POLICY as DEFAULT_REGRESSION_POLICY,
     evaluate as evaluate_regression,
@@ -343,13 +344,13 @@ def write_provider_validation(collection: Path, expected_provider: str) -> dict[
     if expected_provider not in PROVIDERS:
         raise ValueError("provider esperado inválido")
     report = evaluate_provider(collection, expected_provider)
-    destination = collection / "provider-validation.json"
-    temporary = collection / ".provider-validation.json.tmp"
-    try:
-        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    write_provider_outputs(
+        report,
+        collection / "provider-validation.json",
+        collection / "provider-validation.junit.xml",
+        collection / "provider-validation.sarif.json",
+        collection / "provider-validation.md",
+    )
     return report
 
 
@@ -445,7 +446,7 @@ class Handler(BaseHTTPRequestHandler):
         groups = [
             ("VISÃO", [("overview", "/", "Visão geral"), ("search", "/search", "Busca global")]),
             ("ANÁLISE", [("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("best", "/best-practices", "Best Practices")]),
-            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
+            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("timeline", "/timeline", "Operational Timeline"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
             ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
             ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
             ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate"), ("regression-gate", "/regression-gate", "Regression Gate")]),
@@ -667,6 +668,22 @@ class Handler(BaseHTTPRequestHandler):
         pods = [{**x, "reasons": ", ".join(x.get("reasons") or [])} for x in value.get("podStates") or []]
         return self.layout("Events & Diagnostics", f'<h1>Events & Diagnostics</h1><p>Events deduplicados e correlacionados com estado de Pods. Mensagens livres não são persistidas.</p>{facts}<h2>Events</h2>{events}<h2>Pods com sinais operacionais</h2>{table(pods,[("namespace","Namespace"),("pod","Pod"),("phase","Phase"),("restarts","Restarts"),("reasons","Reasons"),("node","Node")])}', directory, "diagnostics")
 
+    def timeline(self, directory: Path | None) -> str:
+        if not directory: return self.overview(None)
+        value = (details(directory).get("operationalInsights") or {}).get("timeline") or {}
+        summary = value.get("summary") or {}
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Estado</small><b>{esc(value.get("state", "EVIDENCE_UNAVAILABLE"))}</b></div>'
+            f'<div><small>Itens</small><b>{summary.get("items", 0)}</b></div>'
+            f'<div><small>Warnings</small><b>{summary.get("warnings", 0)}</b></div>'
+            f'<div><small>Truncada</small><b>{"sim" if summary.get("truncated") else "não"}</b></div>'
+            '</div>'
+        )
+        columns = [("timestamp","Timestamp"),("severity","Severidade"),("type","Tipo"),("namespace","Namespace"),("resource","Recurso"),("reason","Reason"),("container","Container"),("count","Ocorrências"),("source","Evidence Source")]
+        body = f'<h1>Operational Timeline</h1><div class="message">{esc(value.get("notice", "Timeline indisponível nesta coleta."))}</div>{facts}{table(value.get("items") or [], columns)}'
+        return self.layout("Operational Timeline", body, directory, "timeline")
+
     def node_health(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         value = (details(directory).get("operationalInsights") or {}).get("nodeHealth") or {}
@@ -678,6 +695,7 @@ class Handler(BaseHTTPRequestHandler):
             f'<div><small>CRIT / WARN</small><b>{summary.get("critical", 0)} / {summary.get("warnings", 0)}</b></div>'
             f'<div><small>Metrics API</small><b>{summary.get("metricsNodes", 0)}/{summary.get("nodes", 0)}</b></div>'
             f'<div><small>Cobertura de uso</small><b>{summary.get("metricsCoveragePercent", 0):.0f}%</b></div>'
+            f'<div><small>Evidência avançada</small><b>{esc(summary.get("advancedEvidenceState", "EVIDENCE_UNAVAILABLE"))}</b></div>'
             '</div>'
         )
 
@@ -716,6 +734,19 @@ class Handler(BaseHTTPRequestHandler):
             requests = usage.get("requests") or {}
             reserve = item.get("nodeReserve") or {}
             evidence = item.get("evidence") or {}
+            advanced = usage.get("advancedAttribution") or {}
+            advanced_cpu = advanced.get("cpuCores") or {}
+            advanced_memory = advanced.get("memoryBytes") or {}
+            advanced_html = (
+                '<h3>Atribuição avançada via Prometheus</h3>'
+                f'<p><b>Estado:</b> {esc(advanced.get("state", "EVIDENCE_UNAVAILABLE"))} · '
+                f'<b>CPU:</b> containers {esc(human_cpu(finite_number(advanced_cpu.get("kubernetesContainers"))))}, '
+                f'kubelet/runtime {esc(human_cpu(finite_number(advanced_cpu.get("kubeletAndRuntime"))))}, '
+                f'OS residual {esc(human_cpu(finite_number(advanced_cpu.get("operatingSystemUnattributed"))))}. · '
+                f'<b>Memória:</b> containers {esc(human_bytes(finite_number(advanced_memory.get("kubernetesContainers"))))}, '
+                f'kubelet/runtime {esc(human_bytes(finite_number(advanced_memory.get("kubeletAndRuntime"))))}, '
+                f'OS residual {esc(human_bytes(finite_number(advanced_memory.get("operatingSystemUnattributed"))))}.</p>'
+            )
             diagnostics = "; ".join(str(x) for x in item.get("diagnosis") or [])
             pressure = ", ".join(item.get("pressureConditions") or []) or "nenhuma"
             cpu_request_percent = finite_number(requests.get("cpuPercent"))
@@ -727,7 +758,7 @@ class Handler(BaseHTTPRequestHandler):
                 f'<article class="node-health-card {css}"><header><div><small>NODE</small><h2>{esc(item.get("node"))}</h2></div><span class="metric-status {css}">{esc(state)}</span></header>'
                 f'<div class="node-health-facts"><span><small>Ready</small><b>{ready_label}</b></span><span><small>CPU em uso</small><b>{esc(human_cpu(finite_number(cpu.get("value"))))}</b>{percent_html(finite_number(cpu.get("percent")), 85, 95)}</span><span><small>Memória em uso</small><b>{esc(human_bytes(finite_number(memory.get("value"))))}</b>{percent_html(finite_number(memory.get("percent")), 80, 90)}</span><span><small>Pods</small><b>{pods.get("value", 0)}/{(item.get("allocatable") or {}).get("pods", "N/A")}</b>{percent_html(finite_number(pods.get("percent")), 80, 95)}</span></div>'
                 f'<h3>Decomposição observada de CPU</h3>{composition(item, "cpu")}<h3>Decomposição observada de memória</h3>{composition(item, "memory")}'
-                f'<details class="node-health-details"><summary>Capacidade, reserva e evidência</summary><p><b>Requests:</b> CPU {esc(human_cpu(finite_number(requests.get("cpuCores"))))} ({esc(cpu_request_label)}); memória {esc(human_bytes(finite_number(requests.get("memoryBytes"))))} ({esc(memory_request_label)}).</p><p><b>Reserva do node:</b> CPU {esc(human_cpu(finite_number(reserve.get("cpuCores"))))}; memória {esc(human_bytes(finite_number(reserve.get("memoryBytes"))))}. Reserva é capacity menos allocatable, não uso real.</p><p><b>Runtime:</b> {esc(item.get("runtime"))} · <b>OS:</b> {esc(item.get("os"))}</p><p><b>Pressão:</b> {esc(pressure)} · <b>Evidence Source:</b> KubernetesAPI + {esc(evidence.get("metrics"))} · <b>Pod metrics:</b> {evidence.get("runningPodsObserved", 0)}/{evidence.get("runningPodsExpected", 0)}.</p></details>'
+                f'<details class="node-health-details"><summary>Capacidade, reserva e evidência</summary><p><b>Requests:</b> CPU {esc(human_cpu(finite_number(requests.get("cpuCores"))))} ({esc(cpu_request_label)}); memória {esc(human_bytes(finite_number(requests.get("memoryBytes"))))} ({esc(memory_request_label)}).</p><p><b>Reserva do node:</b> CPU {esc(human_cpu(finite_number(reserve.get("cpuCores"))))}; memória {esc(human_bytes(finite_number(reserve.get("memoryBytes"))))}. Reserva é capacity menos allocatable, não uso real.</p><p><b>Runtime:</b> {esc(item.get("runtime"))} · <b>OS:</b> {esc(item.get("os"))}</p>{advanced_html}<p><b>Pressão:</b> {esc(pressure)} · <b>Evidence Source:</b> KubernetesAPI + {esc(evidence.get("metrics"))} + {esc(evidence.get("advancedAttribution"))} · <b>Pod metrics:</b> {evidence.get("runningPodsObserved", 0)}/{evidence.get("runningPodsExpected", 0)}.</p></details>'
                 f'<p class="node-diagnosis"><strong>Diagnóstico:</strong> {esc(diagnostics)}</p></article>'
             )
         content = "".join(cards) or '<div class="message">Node Health indisponível nesta coleta. Execute uma nova coleta com acesso read-only a nodes e metrics.k8s.io.</div>'
@@ -746,11 +777,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def manifest_quality(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
-        value = (details(directory).get("operationalInsights") or {}).get("manifestQuality") or {}
+        operational = details(directory).get("operationalInsights") or {}
+        value = operational.get("manifestQuality") or {}
+        schema = operational.get("manifestSchema") or jfile(directory / "manifest-schema-validation.json", {})
         summary = value.get("summary") or {}
         message = f'<div class="message">{esc(value.get("notice",""))} Recursos: {summary.get("resources",0)}; issues: {summary.get("issues",0)}.</div>'
         columns = [("severity","Severidade"),("category","Categoria"),("namespace","Namespace"),("resource","Recurso"),("container","Container"),("check","Check"),("evidence","Evidência"),("recommendation","Recomendação")]
-        return self.layout("Manifest Quality", f'<h1>Manifest Quality</h1>{message}<div class="cis-actions"><a class="button" href="/manifests?collection={esc(directory.name)}">Exportar manifests sanitizados</a></div>{table(value.get("findings") or [],columns)}', directory, "manifests")
+        schema_summary = schema.get("summary") or {}
+        schema_message = (
+            f'<div class="message {"bad" if schema.get("state") == "FAIL" else "warn" if schema.get("state") in {"WARN", "PARTIAL"} else "good"}">'
+            f'<b>Schema & Semantic Validation: {esc(schema.get("state", "EVIDENCE_UNAVAILABLE"))}</b> — '
+            f'{esc(schema.get("notice", "Execute uma nova coleta para gerar esta evidência."))} '
+            f'Manifests: {schema_summary.get("manifests", 0)}; critical: {schema_summary.get("critical", 0)}; warnings: {schema_summary.get("warnings", 0)}.</div>'
+        )
+        schema_columns = [("severity","Severidade"),("ruleId","Rule ID"),("namespace","Namespace"),("resource","Recurso"),("evidence","Evidência"),("recommendation","Recomendação")]
+        body = f'<h1>Manifest Quality</h1>{message}{schema_message}<div class="cis-actions"><a class="button" href="/manifests?collection={esc(directory.name)}">Exportar manifests sanitizados</a></div><h2>Schema & Semantic Validation</h2>{table(schema.get("findings") or [],schema_columns)}<h2>Best Practices dos manifests</h2>{table(value.get("findings") or [],columns)}'
+        return self.layout("Manifest Quality", body, directory, "manifests")
 
     def best_practices(self, directory: Path | None, query: dict[str, list[str]]) -> str:
         if not directory: return self.overview(None)
@@ -1262,7 +1304,7 @@ class Handler(BaseHTTPRequestHandler):
             f'<h1>Release Gate <small>{esc(selected_provider or "UNKNOWN")}</small></h1>'
             f'<div class="message {message_class}"><b>{esc(state)}</b> — {esc(gate_message)}</div>'
             f'{facts}{validation_form}{notice}'
-            f'<div class="cis-actions"><a class="button" href="/export-provider-validation?collection={quote_plus(directory.name)}">Exportar validação sanitizada</a></div>'
+            f'<div class="cis-actions"><a class="button" href="/export-provider-validation?collection={quote_plus(directory.name)}">Exportar validação sanitizada (JSON)</a><a class="button secondary" href="/export-provider-junit?collection={quote_plus(directory.name)}">Exportar JUnit</a><a class="button secondary" href="/export-provider-sarif?collection={quote_plus(directory.name)}">Exportar SARIF</a><a class="button secondary" href="/export-provider-markdown?collection={quote_plus(directory.name)}">Exportar Markdown</a></div>'
             f'<h2>Detecção independente do provider</h2>{table(sources, [("source","Fonte"),("provider","Provider detectado")])}'
             f'<h2>Gates</h2>{gates_html}'
             f'<h2>Policy e thresholds</h2>{table(policy_rows, [("threshold","Threshold"),("value","Valor")])}'
@@ -1738,7 +1780,7 @@ class Handler(BaseHTTPRequestHandler):
             '<div class="progress-track" role="progressbar" aria-label="Progresso da coleta" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>'
             '<p id="progress-detail">Validando o ambiente...</p></section>'
             '<button id="collection-submit">Iniciar assessment read-only</button></form>'
-            '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","artifact-validation":"Validando artefatos"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
+            '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","node-evidence":"Atribuindo uso dos nodes","inventory-services":"Inventariando Services","inventory-pvcs":"Inventariando PVCs","inventory-hpas":"Inventariando HPAs","artifact-validation":"Validando artefatos","contract-validation":"Validando JSON Schemas"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
         )
         return self.layout("Nova coleta", body)
     def do_GET(self):
@@ -1757,6 +1799,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/capacity": return self.send_html(self.capacity(directory))
         if path == "/diagnostics": return self.send_html(self.diagnostics(directory))
         if path == "/node-health": return self.send_html(self.node_health(directory))
+        if path == "/timeline": return self.send_html(self.timeline(directory))
         if path == "/versions": return self.send_html(self.versions(directory))
         if path == "/manifest-quality": return self.send_html(self.manifest_quality(directory))
         if path == "/best-practices": return self.send_html(self.best_practices(directory, query))
@@ -1795,6 +1838,15 @@ class Handler(BaseHTTPRequestHandler):
             report = jfile(directory / "provider-validation.json", {})
             if not report: return self.send_json({"error": "Release Gate ainda não executado para esta coleta"}, 404)
             return self.send_json(report, filename=f"{directory.name}-provider-validation.json")
+        if path == "/export-provider-junit":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "provider-validation.junit.xml", "application/xml; charset=utf-8", f"{directory.name}-provider-validation.junit.xml")
+        if path == "/export-provider-sarif":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "provider-validation.sarif.json", "application/sarif+json; charset=utf-8", f"{directory.name}-provider-validation.sarif.json")
+        if path == "/export-provider-markdown":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "provider-validation.md", "text/markdown; charset=utf-8", f"{directory.name}-provider-validation.md")
         if path == "/export-regression-validation":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             report = jfile(directory / "regression-validation.json", {})
@@ -1958,12 +2010,16 @@ class Handler(BaseHTTPRequestHandler):
             }
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"
-            planned_components = ["preflight", "assessment", "discovery", "inventory-services.json", "inventory-pvcs.json", "inventory-hpas.json"]
-            if prometheus_url:
-                planned_components.append("prometheus")
-            planned_components.extend(["comprehensive", "artifact-validation"])
+            collector_registry = load_collector_registry(self.repository / "data/collectors.json")
+            collector_plan = build_collector_plan(
+                collector_registry,
+                channel="web",
+                prometheus=bool(prometheus_url),
+            )
+            planned_components = [item["id"] for item in collector_plan]
+            component_weights = {item["id"]: item["weight"] for item in collector_plan}
             max_duration = int(profile_values["duration"])
-            SUPERVISOR.start(ident, max_duration, planned_components)
+            SUPERVISOR.start(ident, max_duration, planned_components, component_weights)
             collection_started = True
             preflight = SUPERVISOR.run(
                 "preflight",
@@ -2041,7 +2097,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pvcs.json": ["kubectl", "get", "pvc", *inventory_scope, "-o", "json"],
                 "hpas.json": ["kubectl", "get", "hpa", *inventory_scope, "-o", "json"],
             }.items():
-                result = SUPERVISOR.run(f"inventory-{filename}", args, timeout=120)
+                result = SUPERVISOR.run(f"inventory-{Path(filename).stem}", args, timeout=120)
                 try:
                     inventory_payload = json.loads(result.stdout) if result.returncode == 0 else {"items": []}
                 except json.JSONDecodeError:
@@ -2079,6 +2135,21 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                     encoding="utf-8",
                 )
+            if prometheus_url:
+                node_evidence = SUPERVISOR.run(
+                    "node-evidence",
+                    [
+                        sys.executable,
+                        str(self.repository / "src/node_process_evidence.py"),
+                        "--url", prometheus_url,
+                        "--nodes-file", str(output / "nodes.json"),
+                        "--output", str(output / "node-process-evidence.json"),
+                    ],
+                    cwd=self.repository,
+                    env=env,
+                    timeout=180,
+                )
+                (output / "node-process-evidence.log").write_text(node_evidence.stdout + node_evidence.stderr, encoding="utf-8")
             scanner_command = [
                 sys.executable,
                 str(self.repository / "src/eks_comprehensive_assessment.py"),
@@ -2132,6 +2203,16 @@ class Handler(BaseHTTPRequestHandler):
             (output / "artifact-smoke.log").write_text(validator.stdout + validator.stderr, encoding="utf-8")
             components.append("smoke")
             codes.append(validator.returncode)
+            contract_validator = SUPERVISOR.run(
+                "contract-validation",
+                [sys.executable, str(self.repository / "src/assessment_contracts.py"), "--collection", str(output)],
+                cwd=self.repository,
+                env=env,
+                timeout=120,
+            )
+            (output / "contract-validation.log").write_text(contract_validator.stdout + contract_validator.stderr, encoding="utf-8")
+            components.append("contract-validation")
+            codes.append(contract_validator.returncode)
             control = SUPERVISOR.status()
             final_status = control.get("stopKind") or ("FAILED" if any(codes) else "COMPLETED")
             value["collectorComponents"] = components
@@ -2141,6 +2222,29 @@ class Handler(BaseHTTPRequestHandler):
             value["cancelled"] = final_status == "CANCELLED"
             value["cancelReason"] = control.get("reason") or None
             value["finishedAt"] = utc_iso()
+            (output / "metadata.json").write_text(
+                json.dumps(value, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            if final_status == "COMPLETED":
+                final_contract = subprocess.run(
+                    [sys.executable, str(self.repository / "src/assessment_contracts.py"), "--collection", str(output)],
+                    cwd=self.repository,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                with (output / "contract-validation.log").open("a", encoding="utf-8") as handle:
+                    handle.write(final_contract.stdout + final_contract.stderr)
+                codes[-1] = final_contract.returncode
+                if final_contract.returncode:
+                    final_status = "FAILED"
+                    value["status"] = final_status
+                    value["completed"] = False
+                    value["cancelReason"] = "final JSON Schema validation failed"
+                value["collectorExitCodes"] = codes
             finished_control = SUPERVISOR.finish(final_status)
             comprehensive_value = jfile(output / "comprehensive-assessment.json", {})
             value["performance"] = {

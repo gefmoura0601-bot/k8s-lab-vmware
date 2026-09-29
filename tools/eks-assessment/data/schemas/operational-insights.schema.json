@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/operational-insights-1.x.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "platform", "nodeHealth", "manifestQuality"],
+  "properties": {
+    "schemaVersion": {"type": "string", "pattern": "^1\\."},
+    "generatedAt": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "platform": {"type": "string", "minLength": 1},
+    "nodeHealth": {"type": "object"},
+    "manifestQuality": {"type": "object"},
+    "timeline": {"type": "object"}
+  },
+  "additionalProperties": true
+}

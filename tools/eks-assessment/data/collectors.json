@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "collectors": [
+    {"id": "preflight", "label": "Validar ambiente", "weight": 5, "timeoutSeconds": 90, "required": true, "channels": ["cli", "web"], "dependencies": []},
+    {"id": "assessment", "label": "Coletar evidências Kubernetes", "weight": 15, "timeoutSeconds": 600, "required": true, "channels": ["cli", "web"], "dependencies": ["preflight"]},
+    {"id": "discovery", "label": "Executar discovery", "weight": 10, "timeoutSeconds": 900, "required": true, "channels": ["cli", "web"], "dependencies": ["preflight"]},
+    {"id": "inventory-services", "label": "Inventariar Services", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
+    {"id": "inventory-pvcs", "label": "Inventariar PVCs", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
+    {"id": "inventory-hpas", "label": "Inventariar HPAs", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
+    {"id": "prometheus", "label": "Coletar telemetria Prometheus", "weight": 14, "timeoutSeconds": 1200, "required": false, "conditional": "prometheus", "channels": ["cli", "web"], "dependencies": ["assessment"]},
+    {"id": "node-evidence", "label": "Coletar evidência avançada de nodes", "weight": 5, "timeoutSeconds": 180, "required": false, "conditional": "prometheus", "channels": ["cli", "web"], "dependencies": ["prometheus"]},
+    {"id": "comprehensive", "label": "Gerar análise abrangente", "weight": 30, "timeoutSeconds": 1800, "required": true, "channels": ["cli", "web"], "dependencies": ["assessment", "discovery"]},
+    {"id": "artifact-validation", "label": "Validar integridade dos artefatos", "weight": 10, "timeoutSeconds": 300, "required": true, "channels": ["cli", "web"], "dependencies": ["comprehensive"]},
+    {"id": "contract-validation", "label": "Validar JSON Schemas", "weight": 5, "timeoutSeconds": 120, "required": true, "channels": ["cli", "web"], "dependencies": ["artifact-validation"]}
+  ]
+}

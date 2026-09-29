@@ -59,6 +59,7 @@ paths=(
   "/technologies?collection=$COLLECTION"
   "/capacity?collection=$COLLECTION"
   "/node-health?collection=$COLLECTION"
+  "/timeline?collection=$COLLECTION"
   "/prometheus?collection=$COLLECTION"
   "/release-gate?collection=$COLLECTION"
   "/regression-gate?collection=$COLLECTION"
@@ -136,6 +137,7 @@ cis_page="$(curl -fsS "$BASE_URL/cis-security?collection=$COLLECTION")"
 grep -Fq 'CIS Security' <<<"$cis_page"
 curl -fsS "$BASE_URL/diagnostics?collection=$COLLECTION" | grep -Fq 'Events & Diagnostics'
 curl -fsS "$BASE_URL/node-health?collection=$COLLECTION" | grep -Fq 'Node Health'
+curl -fsS "$BASE_URL/timeline?collection=$COLLECTION" | grep -Fq 'Operational Timeline'
 curl -fsS "$BASE_URL/versions?collection=$COLLECTION" | grep -Fq 'Versions & Lifecycle'
 curl -fsS "$BASE_URL/manifest-quality?collection=$COLLECTION" | grep -Fq 'Manifest Quality'
 curl -fsS "$BASE_URL/best-practices?collection=$COLLECTION" | grep -Fq 'Best Practices'

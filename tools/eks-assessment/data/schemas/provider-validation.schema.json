@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/provider-validation-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "collection", "provider", "summary", "gates"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "readOnly": {"const": true},
+    "summary": {"type": "object", "required": ["state", "releaseReady"], "properties": {"state": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]}, "releaseReady": {"type": "boolean"}}, "additionalProperties": true},
+    "gates": {"type": "array", "items": {"type": "object", "required": ["gateId", "status"], "properties": {"gateId": {"type": "string"}, "status": {"type": "string"}}, "additionalProperties": true}}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/collector-state-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "collection", "plan", "collectors", "progressPercent"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "collection": {"type": "string", "minLength": 1},
+    "plan": {"type": "array", "items": {"type": "object", "required": ["id", "weight"], "properties": {"id": {"type": "string"}, "weight": {"type": "integer", "minimum": 1}}, "additionalProperties": true}},
+    "collectors": {"type": "object"},
+    "progressPercent": {"type": "integer", "minimum": 0, "maximum": 100}
+  },
+  "additionalProperties": true
+}

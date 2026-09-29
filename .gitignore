@@ -21,6 +21,9 @@ coverage.out
 **/node_modules/
 **/dist/
 **/coverage/
+!tools/eks-assessment/bin/
+tools/eks-assessment/bin/*
+!tools/eks-assessment/bin/kubernetes-assessment
 
 # local backups
 backups/

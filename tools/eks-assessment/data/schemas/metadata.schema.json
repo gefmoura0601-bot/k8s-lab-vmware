@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/metadata-1.0.json",
+  "type": "object",
+  "required": ["id", "createdAt", "status", "completed", "readOnly"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$"},
+    "createdAt": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["RUNNING", "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]},
+    "completed": {"type": "boolean"},
+    "readOnly": {"const": true},
+    "namespaceScope": {"type": "string"},
+    "collectorExitCodes": {"type": "array", "items": {"type": "integer"}}
+  },
+  "additionalProperties": true
+}

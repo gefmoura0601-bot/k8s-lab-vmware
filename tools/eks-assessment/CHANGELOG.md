@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0-rc.1 — 2026-09-29
+
+- adiciona JSON Schemas versionados e o comando `validate` para contratos de coleta;
+- adiciona lifecycle portátil de bundles sanitizados com `export`, `verify`, `import` e `prune` seguro;
+- introduz collector registry com dependências, include/exclude, retomada, retry de falhas e progresso ponderado;
+- valida manifests offline por estrutura, APIs servidas e regras semânticas, sem simular server-side dry-run;
+- adiciona evidência avançada opcional de nodes via Prometheus, separando containers, kubelet/runtime e residual do sistema operacional;
+- publica Operational Timeline sanitizada e integra a visualização ao dashboard;
+- amplia o Release Gate com JSON, JUnit, SARIF e Markdown;
+- verifica archive, checksum, SBOM e provenance e gera attestation assinada no GitHub Actions;
+- adiciona o alias provider-neutral `kubernetes-assessment`, preservando `eks-assessment.sh`;
+- mantém `generic-kubernetes` estável e EKS, AKS e GKE em `PREVIEW`, sem extrapolar qualificação cloud.
+
 ## 0.4.0 — 2026-09-29
 
 - promove o profile `generic-kubernetes` a estável após a matriz read-only,

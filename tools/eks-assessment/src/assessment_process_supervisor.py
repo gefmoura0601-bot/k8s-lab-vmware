@@ -62,7 +62,13 @@ class CollectionSupervisor:
             "cancelRequested": False,
         }
 
-    def start(self, collection_id: str, max_duration_seconds: int, planned_components: list[str] | None = None) -> None:
+    def start(
+        self,
+        collection_id: str,
+        max_duration_seconds: int,
+        planned_components: list[str] | None = None,
+        component_weights: dict[str, int] | None = None,
+    ) -> None:
         duration = max(60, min(int(max_duration_seconds), 7200))
         with self._lock:
             if self._state.get("active"):
@@ -83,6 +89,10 @@ class CollectionSupervisor:
                 "stopKind": "",
                 "reason": "",
                 "plannedComponents": list(planned_components or []),
+                "componentWeights": {
+                    str(key): max(1, int(value))
+                    for key, value in (component_weights or {}).items()
+                },
                 "completedComponents": [],
                 "componentDurationsSeconds": {},
                 "progressPercent": 0,
@@ -171,7 +181,10 @@ class CollectionSupervisor:
                     completed.append(component)
                 planned = self._state.get("plannedComponents") or []
                 if planned:
-                    self._state["progressPercent"] = min(99, round(len(completed) * 100 / len(planned)))
+                    weights = self._state.get("componentWeights") or {}
+                    total_weight = sum(max(1, int(weights.get(item, 1))) for item in planned)
+                    completed_weight = sum(max(1, int(weights.get(item, 1))) for item in completed if item in planned)
+                    self._state["progressPercent"] = min(99, round(completed_weight * 100 / total_weight))
                 durations = self._state.setdefault("componentDurationsSeconds", {})
                 durations[component] = round(time.monotonic() - component_started, 3)
 

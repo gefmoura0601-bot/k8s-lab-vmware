@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from lifecycle_catalog import assess as assess_lifecycle, catalog_metadata, load_catalog
+from manifest_schema_validation import evaluate_collection as evaluate_manifest_schema
 
 
 SYSTEM_NAMESPACES = {
@@ -137,6 +138,7 @@ def condition_map(node: dict[str, Any]) -> dict[str, str]:
 def node_health(
     nodes: list[dict[str, Any]], pods: list[dict[str, Any]],
     node_metrics: list[dict[str, Any]], pod_metrics: list[dict[str, Any]],
+    advanced_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build provider-neutral node health from Kubernetes and Metrics APIs."""
     metrics_by_node = {
@@ -154,6 +156,12 @@ def node_health(
         if node_name and phase not in {"Succeeded", "Failed"}:
             pods_by_node[node_name].append(pod)
 
+    advanced_evidence = advanced_evidence or {}
+    advanced_by_node = {
+        str(item.get("node")): item
+        for item in advanced_evidence.get("items") or []
+        if isinstance(item, dict) and item.get("node")
+    }
     rows = []
     for node in nodes:
         metadata, status = node.get("metadata") or {}, node.get("status") or {}
@@ -258,6 +266,7 @@ def node_health(
         state = "CRIT" if critical else "WARN" if warnings else "PARTIAL" if partial else "PASS"
         diagnosis = critical + warnings + partial or ["Node Ready, sem pressão e dentro dos thresholds avaliados"]
         info = status.get("nodeInfo") or {}
+        advanced = advanced_by_node.get(name)
         rows.append({
             "node": name, "state": state, "ready": ready, "pressureConditions": pressure,
             "diagnosis": diagnosis,
@@ -272,9 +281,17 @@ def node_health(
                 "pods": {"value": len(scheduled), "percent": pod_pct},
                 "requests": {**requests, "cpuPercent": cpu_request_pct, "memoryPercent": memory_request_pct},
                 "breakdown": {**categories, "nodeOverheadUnattributed": overhead, "headroom": headroom},
+                "advancedAttribution": advanced if advanced else {
+                    "node": name,
+                    "state": "EVIDENCE_UNAVAILABLE",
+                    "cpuCores": {},
+                    "memoryBytes": {},
+                    "source": "Prometheus",
+                },
             },
             "evidence": {
                 "node": "KubernetesAPI", "metrics": "MetricsAPI" if node_metric_available else "EVIDENCE_UNAVAILABLE",
+                "advancedAttribution": (advanced or {}).get("state", "EVIDENCE_UNAVAILABLE"),
                 "nodeMetricsTimestamp": metric.get("timestamp") if metric else None,
                 "window": metric.get("window") if metric else None,
                 "runningPodsExpected": expected_metrics, "runningPodsObserved": observed_metrics,
@@ -290,10 +307,12 @@ def node_health(
             "nodes": len(rows), "critical": counts["CRIT"], "warnings": counts["WARN"],
             "partial": counts["PARTIAL"], "passed": counts["PASS"],
             "metricsNodes": metrics_nodes, "metricsCoveragePercent": percent(float(metrics_nodes), float(len(rows))) if rows else 0.0,
+            "advancedEvidenceState": advanced_evidence.get("state", "EVIDENCE_UNAVAILABLE"),
+            "advancedEvidenceNodes": sum((item.get("state") in {"AVAILABLE", "PARTIAL"}) for item in advanced_by_node.values()),
         },
         "items": rows,
         "thresholds": {"cpuWarnPercent": 85, "cpuCriticalPercent": 95, "memoryWarnPercent": 80, "memoryCriticalPercent": 90, "requestsWarnPercent": 85, "requestsCriticalPercent": 100, "podsWarnPercent": 80, "podsCriticalPercent": 95},
-        "notice": "Uso observado vem da Metrics API. Node overhead / não atribuído é a diferença entre o uso total do node e os Pods observados; pode incluir sistema operacional, kubelet, container runtime e lacunas de métricas. Requests e reserva não representam consumo real.",
+        "notice": "Uso observado vem da Metrics API. A atribuição avançada é opcional e usa Prometheus para estimar Kubernetes containers, kubelet/container runtime e sistema operacional residual. Node overhead / não atribuído pode conter lacunas ou sobreposição; requests e reserva não representam consumo real.",
     }
 
 
@@ -326,6 +345,59 @@ def event_recommendation(reason: str) -> str:
     value = reason.lower()
     mapping = [("schedul", "Revisar requests, taints, affinity, quotas e capacidade dos nodes."), ("image", "Validar referência da imagem, registry, credenciais e conectividade."), ("mount", "Validar PVC, CSI, permissões e disponibilidade do storage."), ("probe", "Revisar probes, tempo de startup, dependências e recursos."), ("oom", "Revisar working set, limite de memória e comportamento do runtime."), ("policy", "Revisar a policy de admission e corrigir o controller de origem."), ("evict", "Revisar pressão do node, requests, prioridades e políticas de eviction.")]
     return next((text for token, text in mapping if token in value), "Correlacionar o Event com o controller, Pod, node e dependências.")
+
+
+def operational_timeline(
+    events: list[dict[str, Any]], pods: list[dict[str, Any]], nodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a sanitized chronology without persisting Event messages."""
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata") or {}
+        involved = event.get("regarding") or event.get("involvedObject") or {}
+        timestamp = event.get("eventTime") or event.get("lastTimestamp") or metadata.get("creationTimestamp")
+        if not timestamp:
+            continue
+        rows.append({
+            "timestamp": timestamp,
+            "type": "KubernetesEvent",
+            "severity": "WARN" if event.get("type") == "Warning" else "INFO",
+            "namespace": metadata.get("namespace") or involved.get("namespace") or "cluster",
+            "resource": f"{involved.get('kind') or 'Object'}/{involved.get('name') or '-'}",
+            "reason": event.get("reason") or "Unknown",
+            "count": int(event.get("count") or 1),
+            "source": "KubernetesAPI",
+        })
+    for pod in pods:
+        metadata, status = pod.get("metadata") or {}, pod.get("status") or {}
+        created = metadata.get("creationTimestamp")
+        resource = f"Pod/{metadata.get('name') or '-'}"
+        if created:
+            rows.append({"timestamp": created, "type": "PodLifecycle", "severity": "INFO", "namespace": metadata.get("namespace") or "default", "resource": resource, "reason": "Created", "count": 1, "source": "KubernetesAPI"})
+        for container in (status.get("containerStatuses") or []) + (status.get("initContainerStatuses") or []):
+            restarts = int(container.get("restartCount") or 0)
+            terminated = ((container.get("lastState") or {}).get("terminated") or {})
+            timestamp = terminated.get("finishedAt") or terminated.get("startedAt")
+            if restarts and timestamp:
+                rows.append({"timestamp": timestamp, "type": "ContainerRestart", "severity": "WARN", "namespace": metadata.get("namespace") or "default", "resource": resource, "reason": terminated.get("reason") or "Restarted", "container": container.get("name") or "-", "count": restarts, "source": "KubernetesAPI"})
+    for node in nodes:
+        metadata = node.get("metadata") or {}
+        for condition in (node.get("status") or {}).get("conditions") or []:
+            timestamp = condition.get("lastTransitionTime")
+            if not timestamp or condition.get("status") != "True":
+                continue
+            condition_type = str(condition.get("type") or "Unknown")
+            severity = "INFO" if condition_type == "Ready" else "WARN"
+            rows.append({"timestamp": timestamp, "type": "NodeCondition", "severity": severity, "namespace": "cluster", "resource": f"Node/{metadata.get('name') or '-'}", "reason": condition_type, "count": 1, "source": "KubernetesAPI"})
+    rows.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    rows = rows[:500]
+    counts = Counter(item["type"] for item in rows)
+    return {
+        "state": "AVAILABLE" if rows else "EVIDENCE_UNAVAILABLE",
+        "summary": {"items": len(rows), "warnings": sum(item["severity"] == "WARN" for item in rows), "types": dict(counts), "truncated": len(rows) == 500},
+        "items": rows,
+        "notice": "Timeline sanitizada por timestamps, reason e identidade do objeto. Event messages e payloads brutos não são persistidos.",
+    }
 
 
 def versions(directory: Path, nodes: list[dict[str, Any]], workloads: list[dict[str, Any]], technologies: list[dict[str, Any]], detected: str, cloud: dict[str, Any]) -> dict[str, Any]:
@@ -472,8 +544,10 @@ def generate(directory: Path, workloads: list[dict[str, Any]], findings: list[di
     events = items(load(directory / "events.json", {"items": []}))
     node_metrics = items(load(directory / "node-metrics.json", {"items": []}))
     pod_metrics = items(load(directory / "pod-metrics.json", {"items": []}))
+    advanced_node_evidence = load(directory / "node-process-evidence.json", {"state": "EVIDENCE_UNAVAILABLE", "items": []})
     cloud = cloud or load(directory / "cloud-provider-assessment.json", {})
     detected = str(cloud.get("provider") or platform(nodes, aws))
-    value = {"schemaVersion": "1.2", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True, "platform": detected, "diagnostics": diagnostics(events, pods), "nodeHealth": node_health(nodes, pods, node_metrics, pod_metrics), "versions": versions(directory, nodes, workloads, technologies, detected, cloud), "manifestQuality": manifest_quality(workloads, findings), "containerTuning": tuning(capacity), "bestPractices": best_practices(detected, findings, nodes, cloud), "logs": sanitized_logs(), "cloudProvider": {"provider": detected, "state": cloud.get("state", "N/A"), "summary": cloud.get("summary") or {}, "lifecycle": cloud.get("lifecycle") or {}}}
+    manifest_schema = evaluate_manifest_schema(directory)
+    value = {"schemaVersion": "1.3", "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True, "platform": detected, "diagnostics": diagnostics(events, pods), "timeline": operational_timeline(events, pods, nodes), "nodeHealth": node_health(nodes, pods, node_metrics, pod_metrics, advanced_node_evidence), "versions": versions(directory, nodes, workloads, technologies, detected, cloud), "manifestQuality": manifest_quality(workloads, findings), "manifestSchema": manifest_schema, "containerTuning": tuning(capacity), "bestPractices": best_practices(detected, findings, nodes, cloud), "logs": sanitized_logs(), "cloudProvider": {"provider": detected, "state": cloud.get("state", "N/A"), "summary": cloud.get("summary") or {}, "lifecycle": cloud.get("lifecycle") or {}}}
     (directory / "operational-insights.json").write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     return value
