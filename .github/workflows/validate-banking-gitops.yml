@@ -1,0 +1,122 @@
+name: Validate Banking GitOps
+
+on:
+  pull_request:
+    paths:
+      - ".gitops-smoke/validation.txt"
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Digite TEST-BANKING-GITOPS para criar e remover um PR smoke"
+        required: true
+        type: string
+
+concurrency:
+  group: validate-banking-gitops
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  observe:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm sanitized smoke pull request
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          [[ "$HEAD_BRANCH" == automation/banking-gitops-smoke-* ]]
+          test "$IS_DRAFT" = "true"
+          echo "PR smoke sanitizado observado pelo evento pull_request." >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: banking-gitops
+    timeout-minutes: 10
+    env:
+      SMOKE_BRANCH: automation/banking-gitops-smoke-${{ github.run_id }}
+    steps:
+      - name: Validate explicit confirmation
+        shell: bash
+        run: |
+          if [[ "${{ inputs.confirmation }}" != "TEST-BANKING-GITOPS" ]]; then
+            echo "Confirmação inválida; nenhuma branch ou PR foi criado." >&2
+            exit 2
+          fi
+
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare sanitized smoke change
+        shell: bash
+        run: |
+          mkdir -p .gitops-smoke
+          printf '%s\n' \
+            'Banking GitOps credential validation.' \
+            "run_id=${GITHUB_RUN_ID}" \
+            > .gitops-smoke/validation.txt
+
+      - name: Create smoke pull request
+        id: create
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ secrets.BANKING_GITOPS_TOKEN }}
+          commit-message: "test(gitops): validate Banking automation credential"
+          branch: ${{ env.SMOKE_BRANCH }}
+          delete-branch: false
+          draft: true
+          title: "test(gitops): validate Banking automation credential"
+          body: "Temporary smoke PR. The validation workflow closes and removes it automatically."
+          add-paths: .gitops-smoke/validation.txt
+
+      - name: Verify branch, pull request and CI event
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BANKING_GITOPS_TOKEN }}
+          PR_NUMBER: ${{ steps.create.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+          test "$(gh pr view "$PR_NUMBER" --json state,isDraft --jq '.state + ":" + (.isDraft|tostring)')" = "OPEN:true"
+          test "$(gh pr diff "$PR_NUMBER" --name-only)" = ".gitops-smoke/validation.txt"
+
+          run_id=""
+          for _ in {1..30}; do
+            run_id="$(gh run list --branch "$SMOKE_BRANCH" --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            [[ -n "$run_id" ]] && break
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || {
+            echo "O PR foi criado, mas nenhum evento pull_request foi observado." >&2
+            exit 1
+          }
+          echo "PR smoke #$PR_NUMBER e execução de CI $run_id confirmados." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Close smoke pull request and delete branch
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BANKING_GITOPS_TOKEN }}
+          PR_NUMBER: ${{ steps.create.outputs.pull-request-number }}
+        run: |
+          set +e
+          if [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            gh pr close "$PR_NUMBER" --delete-branch --comment \
+              "Smoke concluído; branch temporária removida automaticamente."
+          fi
+          gh api --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/git/refs/heads/${SMOKE_BRANCH}" \
+            >/dev/null 2>&1 || true

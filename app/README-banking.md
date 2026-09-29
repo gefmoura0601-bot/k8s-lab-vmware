@@ -244,13 +244,19 @@ publica somente essas imagens. Mudanças exclusivas em testes continuam sendo
 validadas pelo CI, mas não geram novo deploy. O `Banking Web CI` aplica a mesma
 regra para arquivos `*.test.ts`.
 
-Como a ruleset da `main` restringe criação de branches, a abertura automática
-do PR usa opcionalmente o Secret `BANKING_GITOPS_TOKEN`. Esse token deve possuir
-somente `Contents: write`, `Pull requests: write` e bypass explícito da ruleset
-necessária. Sem o Secret — ou se o PR não puder ser criado — o workflow termina
-com sucesso e publica por 14 dias um artifact portátil contendo patch,
-manifests e metadata para aplicação em uma branch autorizada. A ruleset não é
-enfraquecida.
+Como a ruleset restringe criação de branches, a abertura automática do PR usa o
+Secret `BANKING_GITOPS_TOKEN`, isolado no Environment `banking-gitops` e
+disponível somente para execuções da `main`. Prefira um GitHub App ou fine-grained
+PAT dedicado com apenas `Contents: write`, `Pull requests: write` e bypass
+explícito da ruleset necessária. Não use uma credencial pessoal administrativa.
+
+Sem o Secret — ou se o PR não puder ser criado — o workflow termina com sucesso
+e publica por 14 dias um artifact portátil contendo patch, manifests e metadata
+para aplicação em uma branch autorizada. A ruleset não é enfraquecida. O workflow
+manual `Validate Banking GitOps` cria um draft PR com um único arquivo
+sanitizado, confirma que o evento de CI foi emitido e remove PR e branch em
+seguida; execute-o com a confirmação `TEST-BANKING-GITOPS` após rotacionar a
+credencial.
 
 O `dotnet-monitor` do `transaction-service` escuta somente em
 `127.0.0.1:52323`, não possui `Service`/`Ingress` e não participa da prontidão

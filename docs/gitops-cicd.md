@@ -43,6 +43,13 @@ Alterações nos serviços disparam workflows específicos. Eles:
 O merge desse segundo PR é o ato de promoção para o laboratório. Workflows e
 manifests publicam e consomem somente tags imutáveis baseadas no SHA.
 
+Os workflows do Banking obtêm `BANKING_GITOPS_TOKEN` exclusivamente do
+Environment `banking-gitops`, limitado à `main`. Use um GitHub App ou
+fine-grained PAT dedicado com `Contents: write`, `Pull requests: write` e o
+bypass mínimo da ruleset. O workflow manual `Validate Banking GitOps`, mediante
+a confirmação `TEST-BANKING-GITOPS`, comprova criação de branch, draft PR e
+evento de CI sem construir imagens; ao final, remove o PR e a branch temporários.
+
 ## Reconciliação
 
 Verifique o root e os filhos:
