@@ -20,6 +20,7 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 16. `Provider Validation Runner` offline com provider esperado obrigatório e gates de release reproduzíveis.
 17. `Release Gate Console` no menu e dashboard, com execução offline, persistência atômica, busca e exportação sanitizada.
 18. `Regression Gate` provider-neutral com policy versionada, comparação offline e exportações JSON, JUnit e SARIF.
+19. CLI headless para coleta e gates reproduzíveis, com argumentos explícitos e exit codes para CI/CD.
 
 ## Guardrails
 
@@ -65,5 +66,10 @@ Esses gates são operacionais, não pendências de implementação local. Sem cr
 - comparação entre coletas reais antigas bloqueou corretamente promoção por integridade não comprovada, novos riscos e regressões operacionais, sem produzir `PASS` retroativo;
 - opção 8 do menu, página autenticada, busca e exportações JSON/JUnit/SARIF validadas por smoke com cópias temporárias de uma coleta real;
 - pacote portátil `0.4.0-rc.8` validado por checksum, SBOM, compile, sintaxe Bash, preflight com 18 `PASS`/0 `WARN`/0 `FAIL` e Regression Gate executado a partir do diretório extraído.
+- CLI headless da RC.9 validada por 94 testes, sintaxe Bash, `--help`, `--version` e listagem sem dependência de `kubectl`;
+- preflight headless limitado ao namespace `banking` concluído com 18 `PASS`, 0 `WARN` e 0 `FAIL`;
+- coleta real sem prompts concluída como `COMPLETED`, com 153 checks, seis workloads, sete containers e artefatos íntegros;
+- Release Gate genérico e Regression Gate idêntico executados pelos novos subcomandos com `releaseReady=true` e exports de CI/CD válidos.
+- pacote portátil `0.4.0-rc.9` validado por checksum, SBOM, compile, sintaxe Bash, versão e subcomando `list` a partir do diretório extraído.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.
