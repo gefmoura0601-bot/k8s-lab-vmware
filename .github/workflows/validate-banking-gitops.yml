@@ -23,7 +23,7 @@ permissions:
 jobs:
   observe:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Confirm sanitized smoke pull request
@@ -41,7 +41,7 @@ jobs:
 
   smoke:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: banking-gitops
     timeout-minutes: 10
     env:
