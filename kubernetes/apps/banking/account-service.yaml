@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: account-service
-          image: ghcr.io/gefmoura0601-bot/account-service-java:4176414
+          image: ghcr.io/gefmoura0601-bot/account-service-java:20e1223
           imagePullPolicy: IfNotPresent
           env:
             - name: JAVA_TOOL_OPTIONS

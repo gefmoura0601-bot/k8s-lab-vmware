@@ -31,7 +31,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: acquirer-service
-          image: ghcr.io/gefmoura0601-bot/acquirer-service-dotnet:4176414
+          image: ghcr.io/gefmoura0601-bot/acquirer-service-dotnet:20e1223
           imagePullPolicy: IfNotPresent
           env:
             - name: IssuerUrl

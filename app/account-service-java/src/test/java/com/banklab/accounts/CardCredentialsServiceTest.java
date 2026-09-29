@@ -33,17 +33,18 @@ class CardCredentialsServiceTest {
 
     @Test
     void derivesCvvAndLookupFingerprintWithoutPersistableCredentials() {
-        var cardId = UUID.randomUUID();
+        var cardId = UUID.fromString("63bd21aa-157e-45d3-84b7-5e51cfd09dd6");
         var pan = credentials.pan(cardId);
         var cvv = credentials.cvv(cardId);
+        var fingerprint = credentials.panFingerprint(pan);
 
         assertThat(cvv).matches("\\d{3}");
         assertThat(credentials.validCvv(cardId, cvv)).isTrue();
         assertThat(credentials.validCvv(cardId, "999".equals(cvv) ? "998" : "999")).isFalse();
-        assertThat(credentials.panFingerprint(pan))
-            .hasSize(64)
-            .doesNotContain(pan)
-            .doesNotContain(cvv);
+        assertThat(fingerprint)
+            .matches("[0-9a-f]{64}")
+            .isEqualTo(credentials.panFingerprint(pan))
+            .isNotEqualTo(pan);
     }
 
     @Test
