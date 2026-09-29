@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive read-only EKS/Kubernetes assessment operator menu.
+# Read-only Kubernetes assessment operator console and headless CLI.
 set -euo pipefail
 
 TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +22,20 @@ COLLECTION_CANCELLED=0
 COLLECTION_TIMED_OUT=0
 COLLECTION_STARTED_EPOCH=0
 DASHBOARD_FOREGROUND=0
+COMMAND="menu"
+NON_INTERACTIVE=0
+CLI_PHASE=""
+CLI_CHANGE_ID=""
+CLI_NAMESPACE="${ASSESSMENT_NAMESPACE:-}"
+CLI_PROMETHEUS_URL="${PROMETHEUS_URL:-}"
+CLI_PROMETHEUS_MODE="disabled"
+CLI_PROMETHEUS_WINDOW="${PROMETHEUS_WINDOW:-7d}"
+CLI_COLLECTION=""
+CLI_BEFORE=""
+CLI_AFTER=""
+CLI_PROVIDER=""
+CLI_PROFILE=""
+[[ -z "$CLI_PROMETHEUS_URL" ]] || CLI_PROMETHEUS_MODE="explicit"
 
 if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
@@ -33,22 +47,116 @@ fi
 
 usage(){
   cat <<'EOF'
-Uso: eks-assessment.sh [--help] [--version]
+Uso:
+  eks-assessment.sh
+  eks-assessment.sh preflight [--namespace NAMESPACE] [--prometheus-url URL]
+  eks-assessment.sh collect --phase before|after --change-id ID [opções]
+  eks-assessment.sh list [--root DIRETÓRIO]
+  eks-assessment.sh compare --before ID --after ID
+  eks-assessment.sh terminal --collection ID
+  eks-assessment.sh dashboard [--port PORTA] [--root DIRETÓRIO]
+  eks-assessment.sh release-gate --collection ID --provider generic-kubernetes
+  eks-assessment.sh regression-gate --before ID --after ID [--profile standard]
+  eks-assessment.sh --help | --version
 
-Menu interativo read-only para coleta, comparação, preflight e dashboard local.
+Opções de coleta:
+  --namespace NAMESPACE          limita a coleta a um namespace
+  --prometheus-url URL           consulta uma URL explícita, sem credenciais
+  --no-prometheus                desabilita Prometheus de forma determinística
+  --auto-detect-prometheus       permite somente a descoberta read-only existente
+  --prometheus-window JANELA     1d, 3d, 7d, 14d ou 30d (padrão: 7d)
+  --root DIRETÓRIO               diretório de coletas
+  --max-duration SEGUNDOS        orçamento total entre 60 e 7200 segundos
+
+Sem subcomando, abre o menu interativo. Os subcomandos nunca solicitam input.
 Variáveis principais: KUBECONFIG, ASSESSMENT_ROOT, ASSESSMENT_NAMESPACE,
 PROMETHEUS_URL, EKS_CLUSTER_NAME e ASSESSMENT_MAX_DURATION_SECONDS.
 EOF
 }
 
+require_cli_value(){
+  if (($# < 2)) || [[ -z "${2:-}" ]]; then
+    echo "ERRO: $1 exige um valor." >&2
+    exit 2
+  fi
+}
+
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   --version) tr -d '[:space:]' < "$TOOL_ROOT/VERSION"; printf '\n'; exit 0 ;;
+  menu) COMMAND="menu"; shift ;;
+  preflight|collect|list|compare|terminal|dashboard|release-gate|regression-gate)
+    COMMAND="$1"; NON_INTERACTIVE=1; shift ;;
   "") ;;
-  *) echo "Opção desconhecida: $1" >&2; usage >&2; exit 2 ;;
+  *) echo "Comando desconhecido: $1" >&2; usage >&2; exit 2 ;;
 esac
 
-[[ "$MAX_DURATION_SECONDS" =~ ^[0-9]+$ ]] || MAX_DURATION_SECONDS=1800
+while (($#)); do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --phase) require_cli_value "$@"; CLI_PHASE="$2"; shift 2 ;;
+    --change-id) require_cli_value "$@"; CLI_CHANGE_ID="$2"; shift 2 ;;
+    --namespace) require_cli_value "$@"; CLI_NAMESPACE="$2"; shift 2 ;;
+    --prometheus-url) require_cli_value "$@"; CLI_PROMETHEUS_URL="$2"; CLI_PROMETHEUS_MODE="explicit"; shift 2 ;;
+    --no-prometheus) CLI_PROMETHEUS_URL=""; CLI_PROMETHEUS_MODE="disabled"; shift ;;
+    --auto-detect-prometheus) CLI_PROMETHEUS_URL=""; CLI_PROMETHEUS_MODE="auto"; shift ;;
+    --prometheus-window) require_cli_value "$@"; CLI_PROMETHEUS_WINDOW="$2"; shift 2 ;;
+    --collection) require_cli_value "$@"; CLI_COLLECTION="$2"; shift 2 ;;
+    --before) require_cli_value "$@"; CLI_BEFORE="$2"; shift 2 ;;
+    --after) require_cli_value "$@"; CLI_AFTER="$2"; shift 2 ;;
+    --provider) require_cli_value "$@"; CLI_PROVIDER="$2"; shift 2 ;;
+    --profile) require_cli_value "$@"; CLI_PROFILE="$2"; shift 2 ;;
+    --root) require_cli_value "$@"; OUTROOT="$2"; shift 2 ;;
+    --port) require_cli_value "$@"; PORT="$2"; shift 2 ;;
+    --max-duration) require_cli_value "$@"; MAX_DURATION_SECONDS="$2"; shift 2 ;;
+    *) echo "Opção desconhecida para $COMMAND: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+valid_collection_id(){ [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != "." && "$1" != ".." ]]; }
+valid_namespace(){ [[ -z "$1" || "$1" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; }
+
+if ((NON_INTERACTIVE == 1)); then
+  case "$COMMAND" in
+    collect)
+      [[ "$CLI_PHASE" == before || "$CLI_PHASE" == after ]] || { echo "ERRO: collect exige --phase before|after." >&2; exit 2; }
+      if [[ -z "$CLI_CHANGE_ID" ]] || ! valid_collection_id "$CLI_CHANGE_ID"; then
+        echo "ERRO: collect exige --change-id com caracteres [A-Za-z0-9._-]." >&2
+        exit 2
+      fi
+      valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; }
+      [[ "$CLI_PROMETHEUS_WINDOW" =~ ^(1d|3d|7d|14d|30d)$ ]] || { echo "ERRO: janela Prometheus inválida." >&2; exit 2; }
+      ;;
+    preflight) valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; } ;;
+    compare|regression-gate)
+      if ! valid_collection_id "$CLI_BEFORE" || ! valid_collection_id "$CLI_AFTER"; then
+        echo "ERRO: $COMMAND exige --before e --after válidos." >&2
+        exit 2
+      fi
+      [[ "$CLI_BEFORE" != "$CLI_AFTER" ]] || { echo "ERRO: as coletas devem ser diferentes." >&2; exit 2; }
+      ;;
+    terminal) valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: terminal exige --collection válido." >&2; exit 2; } ;;
+    release-gate)
+      valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: release-gate exige --collection válido." >&2; exit 2; }
+      [[ "$CLI_PROVIDER" =~ ^(eks|aks|gke|generic-kubernetes)$ ]] || { echo "ERRO: provider inválido." >&2; exit 2; }
+      ;;
+    dashboard)
+      if [[ ! "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
+        echo "ERRO: porta inválida." >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
+
+if [[ ! "$MAX_DURATION_SECONDS" =~ ^[0-9]+$ ]]; then
+  ((NON_INTERACTIVE == 0)) || { echo "ERRO: --max-duration deve ser numérico." >&2; exit 2; }
+  MAX_DURATION_SECONDS=1800
+fi
+if ((NON_INTERACTIVE == 1 && (MAX_DURATION_SECONDS < 60 || MAX_DURATION_SECONDS > 7200))); then
+  echo "ERRO: --max-duration deve estar entre 60 e 7200 segundos." >&2
+  exit 2
+fi
 ((MAX_DURATION_SECONDS < 60)) && MAX_DURATION_SECONDS=60
 ((MAX_DURATION_SECONDS > 7200)) && MAX_DURATION_SECONDS=7200
 
@@ -220,21 +328,35 @@ collect(){
   local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason namespace
   local assess_rc=125 discovery_rc=125 telemetry_rc=125 scanner_rc=125 validator_rc=125 completed=false baseline=false codes code
   COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH=0
-  read -r -p "Identificador da mudança ($phase): " label
-  label="${label:-manual}"; label="${label//[^a-zA-Z0-9._-]/-}"
-  prom_url="${PROMETHEUS_URL:-}"; prom_window="${PROMETHEUS_WINDOW:-7d}"
-  if [[ -z "$prom_url" ]]; then
+  if ((NON_INTERACTIVE == 1)); then
+    label="$CLI_CHANGE_ID"
+    namespace="$CLI_NAMESPACE"
+    prom_url="$CLI_PROMETHEUS_URL"
+    prom_window="$CLI_PROMETHEUS_WINDOW"
+  else
+    read -r -p "Identificador da mudança ($phase): " label
+    label="${label:-manual}"
+    namespace="${ASSESSMENT_NAMESPACE:-}"
+    prom_url="${PROMETHEUS_URL:-}"
+    prom_window="${PROMETHEUS_WINDOW:-7d}"
+  fi
+  label="${label//[^a-zA-Z0-9._-]/-}"
+  if [[ -z "$prom_url" && ( "$NON_INTERACTIVE" == 0 || "$CLI_PROMETHEUS_MODE" == auto ) ]]; then
     prom_url="$(suggest_prometheus_url || true)"
     [[ -z "$prom_url" ]] || echo "Prometheus detectado como sugestão read-only: $prom_url"
   fi
-  namespace="${ASSESSMENT_NAMESPACE:-}"
-  read -r -p "Namespace (Enter = ${namespace:-cluster inteiro}): " answer
-  namespace="${answer:-$namespace}"
+  if ((NON_INTERACTIVE == 0)); then
+    read -r -p "Namespace (Enter = ${namespace:-cluster inteiro}): " answer
+    namespace="${answer:-$namespace}"
+  fi
   [[ -z "$namespace" || "$namespace" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] || { echo "Namespace inválido." >&2; return 1; }
-  read -r -p "URL explícita do Prometheus (Enter = ${prom_url:-DISABLED}): " answer
-  prom_url="${answer:-$prom_url}"
-  read -r -p "Janela Prometheus 1d/3d/7d/14d/30d [${prom_window}]: " answer
-  prom_window="${answer:-$prom_window}"; [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
+  if ((NON_INTERACTIVE == 0)); then
+    read -r -p "URL explícita do Prometheus (Enter = ${prom_url:-DISABLED}): " answer
+    prom_url="${answer:-$prom_url}"
+    read -r -p "Janela Prometheus 1d/3d/7d/14d/30d [${prom_window}]: " answer
+    prom_window="${answer:-$prom_window}"
+  fi
+  [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
 
   IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
   if ! run_preflight "$prom_url" "$eks_name" "$namespace"; then
@@ -284,29 +406,44 @@ collect(){
   COLLECTION_STARTED_EPOCH=0
   echo "Salvo em $out | status: $status"
   echo "Contexto: $cluster_context | códigos [assessment, discovery, Prometheus, scanner, smoke]: $codes"
+  if ((NON_INTERACTIVE == 1)); then
+    printf 'COLLECTION_ID=%s\nCOLLECTION_PATH=%s\nCOLLECTION_STATUS=%s\n' "$id" "$out" "$status"
+    case "$status" in
+      COMPLETED) return 0 ;;
+      TIMED_OUT) return 124 ;;
+      CANCELLED) return 130 ;;
+      *) return 1 ;;
+    esac
+  fi
   return 0
 }
 
 provider_gate(){
   local id dir expected rc latest
+  id="${1:-}"
+  expected="${2:-}"
   latest="$(collections | tail -1)"
   if [[ -z "$latest" ]]; then
-    echo "Nenhuma coleta disponível para validação."
+    echo "Nenhuma coleta disponível para validação." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
     return 0
   fi
-  collections | nl -ba
-  read -r -p "ID da coleta (Enter = $latest): " id
-  id="${id:-$latest}"
-  if [[ ! "$id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  if [[ -z "$id" ]]; then
+    collections | nl -ba
+    read -r -p "ID da coleta (Enter = $latest): " id
+    id="${id:-$latest}"
+  fi
+  if ! valid_collection_id "$id"; then
     echo "ID da coleta inválido."
     return 0
   fi
   dir="$OUTROOT/$id"
   if [[ ! -d "$dir" ]]; then
-    echo "Coleta não encontrada."
+    echo "Coleta não encontrada." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
     return 0
   fi
-  read -r -p 'Provider esperado [eks|aks|gke|generic-kubernetes]: ' expected
+  [[ -n "$expected" ]] || read -r -p 'Provider esperado [eks|aks|gke|generic-kubernetes]: ' expected
   case "$expected" in
     eks|aks|gke|generic-kubernetes) ;;
     *) echo "Provider esperado inválido; a expectativa deve ser explícita."; return 0 ;;
@@ -323,24 +460,29 @@ provider_gate(){
   else
     echo "ERRO: o Release Gate não pôde ser executado (exit code $rc)." >&2
   fi
+  ((NON_INTERACTIVE == 1)) && return "$rc"
   return 0
 }
 
 regression_gate(){
   local before_id after_id before after profile profiles default_profile rc latest previous
   local -a available=()
+  before_id="${1:-}"; after_id="${2:-}"; profile="${3:-}"
   mapfile -t available < <(collections)
   if ((${#available[@]} < 2)); then
-    echo "São necessárias ao menos duas coletas para o Regression Gate."
+    echo "São necessárias ao menos duas coletas para o Regression Gate." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
     return 0
   fi
   latest="${available[${#available[@]}-1]}"
   previous="${available[${#available[@]}-2]}"
-  collections | nl -ba
-  read -r -p "ID da coleta ANTERIOR (Enter = $previous): " before_id
-  read -r -p "ID da coleta ATUAL (Enter = $latest): " after_id
-  before_id="${before_id:-$previous}"; after_id="${after_id:-$latest}"
-  if [[ ! "$before_id" =~ ^[A-Za-z0-9._-]+$ || ! "$after_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  if [[ -z "$before_id" || -z "$after_id" ]]; then
+    collections | nl -ba
+    read -r -p "ID da coleta ANTERIOR (Enter = $previous): " before_id
+    read -r -p "ID da coleta ATUAL (Enter = $latest): " after_id
+    before_id="${before_id:-$previous}"; after_id="${after_id:-$latest}"
+  fi
+  if ! valid_collection_id "$before_id" || ! valid_collection_id "$after_id"; then
     echo "ID de coleta inválido."
     return 0
   fi
@@ -350,7 +492,8 @@ regression_gate(){
   fi
   before="$OUTROOT/$before_id"; after="$OUTROOT/$after_id"
   if [[ ! -d "$before" || ! -d "$after" ]]; then
-    echo "Coleta não encontrada."
+    echo "Coleta não encontrada." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
     return 0
   fi
   if [[ ! -r "$REGRESSION_POLICY" ]]; then
@@ -363,7 +506,9 @@ regression_gate(){
     echo "ERRO: policy do Regression Gate inválida." >&2
     return 0
   fi
-  read -r -p "Policy profile [$profiles] (Enter = $default_profile): " profile
+  if [[ -z "$profile" ]]; then
+    if ((NON_INTERACTIVE == 1)); then profile="$default_profile"; else read -r -p "Policy profile [$profiles] (Enter = $default_profile): " profile; fi
+  fi
   profile="${profile:-$default_profile}"
   if ! jq -e --arg profile "$profile" '.profiles[$profile] | type == "object"' "$REGRESSION_POLICY" >/dev/null 2>&1; then
     echo "Policy profile inválido."
@@ -383,16 +528,27 @@ regression_gate(){
   else
     echo "ERRO: o Regression Gate não pôde ser executado (exit code $rc)." >&2
   fi
+  ((NON_INTERACTIVE == 1)) && return "$rc"
   return 0
 }
 
 compare(){
-  local before after
-  collections | nl -ba
-  read -r -p 'ID ANTES: ' before; read -r -p 'ID DEPOIS: ' after
-  [[ "$before" =~ ^[A-Za-z0-9._-]+$ && "$after" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'IDs inválidos.'; return; }
+  local before="${1:-}" after="${2:-}"
+  if [[ -z "$before" || -z "$after" ]]; then
+    collections | nl -ba
+    read -r -p 'ID ANTES: ' before; read -r -p 'ID DEPOIS: ' after
+  fi
+  if ! valid_collection_id "$before" || ! valid_collection_id "$after"; then
+    echo 'IDs inválidos.' >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
   before="$OUTROOT/$before"; after="$OUTROOT/$after"
-  [[ -r "$before/comprehensive-assessment.json" && -r "$after/comprehensive-assessment.json" ]] || { echo 'Coletas abrangentes inválidas.'; return; }
+  if [[ ! -r "$before/comprehensive-assessment.json" || ! -r "$after/comprehensive-assessment.json" ]]; then
+    echo 'Coletas abrangentes inválidas.' >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
   jq -n --slurpfile before "$before/comprehensive-assessment.json" --slurpfile after "$after/comprehensive-assessment.json" '
     ($before[0].findings | map(select(.severity=="CRIT" or .severity=="WARN") | .id)) as $old |
     ($after[0].findings | map(select(.severity=="CRIT" or .severity=="WARN") | .id)) as $new |
@@ -403,11 +559,13 @@ compare(){
 }
 
 terminal(){
-  local id dir
-  collections | nl -ba; read -r -p 'ID da coleta: ' id
-  [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'ID inválido.'; return; }
-  dir="$OUTROOT/$id"; [[ -d "$dir" ]] || { echo 'Coleta não encontrada.'; return; }
-  clear; echo 'EKS ENVIRONMENT - DASHBOARD TERMINAL'
+  local id="${1:-}" dir
+  if [[ -z "$id" ]]; then collections | nl -ba; read -r -p 'ID da coleta: ' id; fi
+  if ! valid_collection_id "$id"; then echo 'ID inválido.' >&2; ((NON_INTERACTIVE == 0)) || return 2; return 0; fi
+  dir="$OUTROOT/$id"
+  if [[ ! -d "$dir" ]]; then echo 'Coleta não encontrada.' >&2; ((NON_INTERACTIVE == 0)) || return 2; return 0; fi
+  ((NON_INTERACTIVE == 1)) || clear
+  echo 'EKS ENVIRONMENT - DASHBOARD TERMINAL'
   jq -r '"Coleta: \(.id) | cluster: \(.clusterName) | \(.phase) | \(.createdAt)"' "$dir/metadata.json" 2>/dev/null || true
   jq -r '"Discovery: \(.succeeded)/\(.sections) | N/A: \(.not_applicable) | indisponíveis: \(.unavailable)"' "$dir/discovery/summary.json" 2>/dev/null || true
   echo; column -t -s $'\t' "$dir/findings.tsv" 2>/dev/null || cat "$dir/findings.tsv"
@@ -524,6 +682,10 @@ web(){
   public_host="$(dashboard_primary_host)"
   public_host="${public_host:-127.0.0.1}"
   while dashboard_port_in_use; do
+    if ((NON_INTERACTIVE == 1)); then
+      echo "ERRO: a porta $PORT já está em uso; informe outra com --port." >&2
+      return 1
+    fi
     pid="$(assessment_dashboard_pid || true)"
     echo "A porta $PORT já está em uso."
     if [[ -n "$pid" ]]; then
@@ -584,13 +746,57 @@ EOF
   echo "Dashboard encerrado."
 }
 
-need kubectl; need jq; need curl; need timeout; need setsid
-select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
-[[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
-[[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
-[[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
-[[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
-mkdir -p "$OUTROOT"
+prepare_runtime(){
+  case "$COMMAND" in
+    list) ;;
+    compare|terminal) need jq ;;
+    dashboard)
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      ;;
+    release-gate)
+      need jq
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
+      ;;
+    regression-gate)
+      need jq
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
+      [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
+      ;;
+    preflight)
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
+      ;;
+    menu|collect)
+      need kubectl; need jq; need curl; need timeout; need setsid
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
+      [[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
+      [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
+      [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
+      ;;
+  esac
+  mkdir -p "$OUTROOT"
+}
+
+prepare_runtime
+
+if ((NON_INTERACTIVE == 1)); then
+  case "$COMMAND" in
+    preflight) run_preflight "$CLI_PROMETHEUS_URL" "${EKS_CLUSTER_NAME:-}" "$CLI_NAMESPACE" ;;
+    collect) collect "$CLI_PHASE" ;;
+    list) collections ;;
+    compare) compare "$CLI_BEFORE" "$CLI_AFTER" ;;
+    terminal) terminal "$CLI_COLLECTION" ;;
+    dashboard) web ;;
+    release-gate) provider_gate "$CLI_COLLECTION" "$CLI_PROVIDER" ;;
+    regression-gate) regression_gate "$CLI_BEFORE" "$CLI_AFTER" "$CLI_PROFILE" ;;
+    menu) ;;
+  esac
+  exit $?
+fi
+
 while :; do
   render_menu
   read -r -p "${C_BOLD}${C_LIGHT}Selecione uma opção › ${C_RESET}" op

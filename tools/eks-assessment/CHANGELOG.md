@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0-rc.9 — 2026-09-28
+
+- adiciona CLI headless para `preflight`, `collect`, `list`, `compare`, `terminal`, `dashboard`, `release-gate` e `regression-gate`;
+- exige argumentos explícitos e retorna exit codes adequados para automação e CI/CD;
+- mantém o menu como comportamento padrão e preserva os mesmos contratos read-only, timeout e cancelamento;
+- desabilita autodetecção de Prometheus no modo headless por padrão, salvo opt-in explícito;
+- permite executar gates offline sem exigir `kubectl` ou conectividade com o cluster;
+- documenta execução reproduzível, outputs machine-friendly e exemplos limitados a Kubernetes genérico.
+
 ## 0.4.0-rc.8 — 2026-09-28
 
 - adiciona `Regression Gate` provider-neutral e offline entre duas coletas sanitizadas;

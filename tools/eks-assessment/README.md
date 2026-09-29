@@ -1,6 +1,6 @@
 # Assessment completo de EKS/Kubernetes
 
-O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina oito camadas:
+O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina nove camadas:
 
 1. `assess-eks.sh`: saúde e baseline pontual;
 2. `eks-cluster-discovery.sh`: inventário técnico baseado nas salvaguardas do projeto oficial `sample-eks-cluster-discovery-tool`;
@@ -9,7 +9,8 @@ O assessment é adaptativo, somente leitura e executável a partir de qualquer h
 5. `eks_semantic_assessment.py`: análise semântica de workloads, rede, storage/DR, RBAC/admission, autoscaling, operators e supply chain;
 6. `operational_insights.py`: Events, lifecycle, Manifest Quality, Container Tuning, Best Practices e logs opcionais;
 7. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas;
-8. `provider_validation.py`: gates offline para provider, read-only, aplicabilidade, proteção de dados, cobertura, performance e integridade dos artefatos.
+8. `provider_validation.py`: gates offline para provider, read-only, aplicabilidade, proteção de dados, cobertura, performance e integridade dos artefatos;
+9. `regression_validation.py`: comparação offline por policy entre uma coleta anterior e uma atual, com outputs JSON, JUnit e SARIF.
 
 Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso comprovadamente não aplicável é `N/A`; evidência ausente é `UNKNOWN`; coleta incompleta é `PARTIAL`. Falha de RBAC/API nunca é conformidade. Nenhum componente aplica, altera, reinicia, escala ou exclui recursos.
 
@@ -51,6 +52,33 @@ O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
 ```
+
+## Automação headless
+
+Os mesmos fluxos possuem subcomandos sem prompts, adequados a terminal remoto e CI/CD. Uma coleta reproduzível do namespace `banking`, sem Prometheus, pode ser executada assim:
+
+```bash
+bash tools/eks-assessment/bin/eks-assessment.sh collect \
+  --phase after \
+  --change-id banking-release-42 \
+  --namespace banking \
+  --no-prometheus \
+  --root /var/lib/kubernetes-assessment
+```
+
+O final da saída inclui `COLLECTION_ID`, `COLLECTION_PATH` e `COLLECTION_STATUS`. Uma coleta `FAILED`, `TIMED_OUT` ou `CANCELLED` retorna exit code não zero. Prometheus não é autodetectado no modo headless: use `--prometheus-url` ou faça opt-in com `--auto-detect-prometheus`.
+
+Exemplos offline, que não exigem `kubectl` nem novas chamadas às APIs:
+
+```bash
+bash tools/eks-assessment/bin/eks-assessment.sh list --root assessment
+bash tools/eks-assessment/bin/eks-assessment.sh release-gate \
+  --root assessment --collection "$COLLECTION_ID" --provider generic-kubernetes
+bash tools/eks-assessment/bin/eks-assessment.sh regression-gate \
+  --root assessment --before "$BEFORE_ID" --after "$COLLECTION_ID" --profile standard
+```
+
+Argumentos, exit codes e requisitos por subcomando estão em [`docs/headless-cli.md`](docs/headless-cli.md).
 
 Para iniciar somente a web:
 

@@ -108,6 +108,11 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("--before \"$before\" --after \"$after\"", menu)
         self.assertIn("regression-validation.junit.xml", menu)
         self.assertIn("regression-validation.sarif.json", menu)
+        self.assertIn('collect --phase before|after --change-id ID', menu)
+        self.assertIn('NON_INTERACTIVE=0', menu)
+        self.assertIn('COLLECTION_STATUS=%s', menu)
+        self.assertIn('release-gate) provider_gate "$CLI_COLLECTION" "$CLI_PROVIDER"', menu)
+        self.assertIn('regression-gate) regression_gate "$CLI_BEFORE" "$CLI_AFTER" "$CLI_PROFILE"', menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

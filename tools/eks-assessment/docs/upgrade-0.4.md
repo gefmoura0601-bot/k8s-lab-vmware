@@ -12,6 +12,8 @@ Na RC.7, o mesmo gate está disponível na opção 7 do menu e em **Governança 
 
 Na RC.8, a opção 8 e **Governança → Regression Gate** comparam duas coletas offline. O profile `standard` bloqueia regressões novas; `strict` também bloqueia riscos e lacunas nos findings atuais. A policy está em `data/assessment-policy.json` e gera JSON, JUnit e SARIF na coleta atual. Coleções antigas sem os contratos obrigatórios permanecem visíveis, mas não são aprovadas sem evidência.
 
+Na RC.9, `bin/eks-assessment.sh` também funciona como CLI headless. Pipelines devem informar `--phase`, `--change-id` e as opções de escopo explicitamente. Sem `--prometheus-url` ou `--auto-detect-prometheus`, Prometheus permanece desabilitado. Scripts existentes sem argumentos continuam abrindo o menu normalmente.
+
 Após extrair o pacote, execute:
 
 ```bash
