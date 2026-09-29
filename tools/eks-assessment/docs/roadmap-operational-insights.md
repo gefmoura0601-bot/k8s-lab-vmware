@@ -21,6 +21,15 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 17. `Release Gate Console` no menu e dashboard, com execução offline, persistência atômica, busca e exportação sanitizada.
 18. `Regression Gate` provider-neutral com policy versionada, comparação offline e exportações JSON, JUnit e SARIF.
 19. CLI headless para coleta e gates reproduzíveis, com argumentos explícitos e exit codes para CI/CD.
+20. JSON Schemas versionados e validação offline dos contratos da coleta.
+21. bundle portátil com manifest, hashes, export, verify, import e prune dry-run.
+22. collector registry com dependências, filtros, retry, resume e progresso ponderado.
+23. Schema & Semantic Validation offline para manifests sanitizados.
+24. Node Evidence opcional via Prometheus, sem SSH ou acesso ao filesystem.
+25. Operational Timeline sanitizada no dashboard.
+26. Release Gate em JSON, JUnit, SARIF e Markdown.
+27. verificação de package/SBOM/provenance e attestation no GitHub Actions.
+28. alias provider-neutral `kubernetes-assessment`, mantendo compatibilidade.
 
 ## Guardrails
 
@@ -76,6 +85,20 @@ validado.
 - pacote portátil `0.4.0-rc.9` validado por checksum, SBOM, compile, sintaxe Bash, versão e subcomando `list` a partir do diretório extraído.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.
+
+## Evidência local `0.5.0-rc.1`
+
+- coleta headless fresh no namespace `banking` concluída com oito exit codes zero;
+- 166 checks, seis workloads, sete containers e artifact validation sem erro;
+- collector registry persistido com progresso ponderado em 100%;
+- 27 manifests avaliados; zero issue estrutural, com estado `PARTIAL` porque OpenAPI/server-side dry-run não foi executado;
+- Operational Timeline gerada com condições de nodes e restart sanitizado;
+- Node Health com três nodes e 100% de cobertura da Metrics API; Node Evidence avançada ficou explicitamente `EVIDENCE_UNAVAILABLE` na coleta sem Prometheus;
+- contract validation terminal `PASS` e bundle real exportado/verificado por SHA-256;
+- Release Gate genérico com 9 `PASS`, 0 `WARN`, 0 `FAIL`, 1 `N/A` e quatro formatos de saída;
+- package `0.5.0-rc.1` validado por archive safety, checksum, inventário SPDX, provenance e alias provider-neutral;
+- 104 testes Python e sintaxe Bash aprovados no master do lab; `shellcheck` é
+  executado pelo CI porque não está instalado na VM do lab.
 
 ## Evidência de qualificação `0.4.0` generic-kubernetes
 

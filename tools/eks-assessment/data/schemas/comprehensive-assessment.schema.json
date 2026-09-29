@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/comprehensive-assessment-4.x.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "safety", "summary", "findings"],
+  "properties": {
+    "schemaVersion": {"type": "string", "pattern": "^4\\."},
+    "generatedAt": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "safety": {"type": "object", "required": ["mutations"], "properties": {"mutations": {"const": 0}}, "additionalProperties": true},
+    "summary": {"type": "object", "required": ["checks", "workloads", "containers"], "properties": {"checks": {"type": "integer", "minimum": 0}, "workloads": {"type": "integer", "minimum": 0}, "containers": {"type": "integer", "minimum": 0}}, "additionalProperties": true},
+    "findings": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}

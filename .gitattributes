@@ -1,6 +1,7 @@
 * text=auto
 *.sh text eol=lf
 Vagrantfile text eol=lf
+tools/eks-assessment/bin/kubernetes-assessment text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf

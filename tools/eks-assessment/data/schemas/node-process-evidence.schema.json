@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/node-process-evidence-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "summary", "items", "notice"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "readOnly": {"const": true},
+    "state": {"type": "string", "enum": ["AVAILABLE", "PARTIAL", "EVIDENCE_UNAVAILABLE"]},
+    "summary": {"type": "object"},
+    "items": {"type": "array", "items": {"type": "object"}},
+    "notice": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": true
+}

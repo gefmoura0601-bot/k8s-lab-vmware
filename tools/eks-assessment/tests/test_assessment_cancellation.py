@@ -113,6 +113,9 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn('COLLECTION_STATUS=%s', menu)
         self.assertIn('release-gate) provider_gate "$CLI_COLLECTION" "$CLI_PROVIDER"', menu)
         self.assertIn('regression-gate) regression_gate "$CLI_BEFORE" "$CLI_AFTER" "$CLI_PROFILE"', menu)
+        self.assertIn('validate) validate_collection_contracts "$CLI_COLLECTION"', menu)
+        self.assertIn('bundle) bundle_command', menu)
+        self.assertIn('collector-state.json', menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

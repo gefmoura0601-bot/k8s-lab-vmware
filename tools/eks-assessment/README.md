@@ -1,6 +1,6 @@
-# Assessment completo de EKS/Kubernetes
+# Assessment completo de Kubernetes
 
-O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina nove camadas:
+O assessment é adaptativo, somente leitura e executável a partir de qualquer host Linux com acesso autorizado às APIs necessárias. Ele não depende de acesso SSH aos nodes nem precisa ser instalado em um node `master` ou no control plane. Ele combina camadas independentes e versionadas:
 
 1. `assess-eks.sh`: saúde e baseline pontual;
 2. `eks-cluster-discovery.sh`: inventário técnico baseado nas salvaguardas do projeto oficial `sample-eks-cluster-discovery-tool`;
@@ -11,6 +11,11 @@ O assessment é adaptativo, somente leitura e executável a partir de qualquer h
 7. `eks_comprehensive_assessment.py`: correlação, fingerprints estáveis, recomendações e evidências sanitizadas;
 8. `provider_validation.py`: gates offline para provider, read-only, aplicabilidade, proteção de dados, cobertura, performance e integridade dos artefatos;
 9. `regression_validation.py`: comparação offline por policy entre uma coleta anterior e uma atual, com outputs JSON, JUnit e SARIF.
+10. `assessment_contracts.py`: JSON Schemas versionados para os contratos persistidos;
+11. `collector_registry.py`: plano de coleta com dependências, pesos, retomada e retry;
+12. `manifest_schema_validation.py`: validação estrutural e semântica offline de manifests sanitizados;
+13. `collection_bundle.py`: exportação, verificação, importação e retenção segura de coletas;
+14. `release_verification.py`: verificação de package, checksum, SBOM, provenance e assinatura opcional.
 
 Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso comprovadamente não aplicável é `N/A`; evidência ausente é `UNKNOWN`; coleta incompleta é `PARTIAL`. Falha de RBAC/API nunca é conformidade. Nenhum componente aplica, altera, reinicia, escala ou exclui recursos.
 
@@ -84,6 +89,13 @@ bash tools/eks-assessment/bin/eks-assessment.sh regression-gate \
 
 Argumentos, exit codes e requisitos por subcomando estão em [`docs/headless-cli.md`](docs/headless-cli.md).
 
+O alias provider-neutral abaixo executa exatamente a mesma CLI. O nome legado é
+mantido para compatibilidade:
+
+```bash
+bin/kubernetes-assessment --version
+```
+
 Para iniciar somente a web:
 
 ```bash
@@ -110,12 +122,13 @@ O dashboard usa o ícone oficial do Kubernetes e a cor primária `#326CE5`, mant
 
 ### Operational Insights
 
-A série `0.4.0-rc` adiciona áreas baseadas no mesmo artefato sanitizado:
+A série `0.5.0-rc` amplia as áreas baseadas no mesmo artefato sanitizado:
 
 - **Events & Diagnostics:** Events deduplicados, estado de Pods e troubleshooting, sem persistir mensagens livres;
+- **Operational Timeline:** cronologia sanitizada de Events, restarts e mudanças de condição dos nodes;
 - **Node Health:** uso total, requests, reserva, densidade de Pods, condições de pressão e decomposição entre Kubernetes/System Pods, DaemonSets, workloads e `Node overhead / não atribuído`, usando Kubernetes API e Metrics API;
 - **Versions & Lifecycle:** Kubernetes, kubelet, runtime, sistema operacional, kernel, imagens e tecnologias, com catálogo oficial versionado; `UNKNOWN` indica estado indeterminado e `EVIDENCE_UNAVAILABLE` indica componente detectado sem fonte confiável de lifecycle;
-- **Manifest Quality:** segurança, reliability, scheduling, storage, network e supply chain avaliados sobre objetos da Kubernetes API;
+- **Manifest Quality:** segurança, reliability, scheduling, storage, network e supply chain, mais validação estrutural/semântica offline; sem OpenAPI ou server-side dry-run o estado máximo dessa camada é `PARTIAL`;
 - **Container Tuning:** evolução das propostas de requests/limits, sempre sem alteração automática;
 - **Best Practices:** regras genéricas e pacotes EKS, AKS e GKE com aplicabilidade e responsabilidade explícitas.
 
@@ -141,7 +154,7 @@ Ao iniciar **Nova coleta** ou **Novo baseline**, o dashboard mantém a página a
 - quantidade de etapas concluídas e total planejado para aquela coleta;
 - limite máximo de tempo restante.
 
-O total planejado é adaptativo: a etapa Prometheus, por exemplo, só participa do cálculo quando uma URL foi configurada. Uma etapa encerrada com erro conta como processada, mas apenas uma coleta com estado final `COMPLETED` chega a 100%. Falhas, cancelamento e timeout preservam o estado final `FAILED`, `CANCELLED` ou `TIMED_OUT` e nunca são apresentados como conclusão bem-sucedida.
+O total planejado é adaptativo e ponderado pelo custo de cada collector: Prometheus e Node Evidence, por exemplo, só participam quando uma URL foi configurada. O plano e o estado de cada collector ficam em `collector-state.json`. Uma etapa encerrada com erro conta como processada, mas apenas uma coleta com estado final `COMPLETED` chega a 100%. Falhas, cancelamento e timeout preservam o estado final `FAILED`, `CANCELLED` ou `TIMED_OUT` e nunca são apresentados como conclusão bem-sucedida.
 
 A interface consulta `GET /api/collection-status` a cada 750 ms enquanto envia `POST /collect` de forma assíncrona. Se JavaScript estiver indisponível, o envio HTML tradicional continua funcionando como fallback, sem a atualização visual em tempo real. O botão fica desabilitado durante a execução para evitar submissões duplicadas; ao concluir, o navegador abre automaticamente a coleta gerada.
 
@@ -272,7 +285,12 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `aws-eks-assessment.json`: configuração gerenciada exposta pelas APIs AWS/EKS, node groups, add-ons, identidade, rede e cobertura das APIs; não contém inspeção direta do control plane;
 - `cloud-provider-assessment.json`: contrato normalizado EKS/AKS/GKE, lifecycle e Best Practices comprováveis, sem payload cloud bruto ou identificador de conta;
 - `operational-insights.json`: Events, Node Health, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
+- `manifest-schema-validation.json`: validação offline estrutural, API servida e semântica básica dos manifests;
+- `node-process-evidence.json`: atribuição avançada opcional de CPU/memória via Prometheus, sem SSH;
+- `collector-state.json`: plano, tentativas, estados e progresso ponderado dos collectors;
+- `contract-validation.json`: resultado da validação por JSON Schemas versionados;
 - `provider-validation.json`: gate offline opcional para promover a release em um provider explicitamente esperado;
+- `provider-validation.junit.xml`, `provider-validation.sarif.json` e `provider-validation.md`: formatos adicionais do Release Gate;
 - `regression-validation.json`: comparação offline orientada pela policy entre baseline e coleta atual;
 - `regression-validation.junit.xml` e `regression-validation.sarif.json`: resultados bloqueantes para CI/CD;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
@@ -298,7 +316,27 @@ python3 tools/eks-assessment/src/provider_validation.py \
 
 Providers aceitos: `eks`, `aks`, `gke` e `generic-kubernetes`. O runner exige estado `COMPLETED`, cruza três fontes de detecção e bloqueia mutações, evidência parcial, provider divergente, dados sensíveis, baixa cobertura e budgets excedidos. `WARN` mantém `releaseReady=false`. Contrato, thresholds e matriz real estão em [`docs/provider-validation.md`](docs/provider-validation.md).
 
-No menu, use a opção 7, selecione a coleta e informe o provider esperado. No dashboard, abra **Governança → Release Gate**, escolha explicitamente o provider e execute a validação offline. A página apresenta cada gate e sua evidência sanitizada, permite busca global e exporta o mesmo contrato por `GET /export-provider-validation`. A execução web exige autenticação e action token, compartilha o lock da coleta e substitui o relatório por operação atômica. Os thresholds configuráveis permanecem disponíveis pelo CLI.
+No menu, use a opção 7, selecione a coleta e informe o provider esperado. No dashboard, abra **Governança → Release Gate**, escolha explicitamente o provider e execute a validação offline. A página apresenta cada gate e sua evidência sanitizada, permite busca global e exporta JSON, JUnit, SARIF e Markdown. A execução web exige autenticação e action token, compartilha o lock da coleta e substitui os relatórios por operação atômica. Os thresholds configuráveis permanecem disponíveis pelo CLI.
+
+## Contratos e bundles portáteis
+
+Valide uma coleta, exporte somente arquivos sanitizados, verifique o bundle e
+importe-o em outro host:
+
+```bash
+bin/kubernetes-assessment validate --root ./assessment --collection "$COLLECTION_ID"
+bin/kubernetes-assessment bundle export --root ./assessment \
+  --collection "$COLLECTION_ID" --output "./${COLLECTION_ID}.tar.gz"
+bin/kubernetes-assessment bundle verify --bundle "./${COLLECTION_ID}.tar.gz"
+bin/kubernetes-assessment bundle import --root ./assessment-importado \
+  --bundle "./${COLLECTION_ID}.tar.gz"
+```
+
+O bundle rejeita path traversal, links, arquivos extras, checksum divergente e
+coleção inválida. Logs não são exportados. `prune --older-than 30d` é dry-run;
+somente `--confirm` remove diretórios e baselines continuam protegidos, salvo
+`--include-baselines`. Detalhes estão em
+[`docs/portable-collections.md`](docs/portable-collections.md).
 
 ## Regression Gate
 
@@ -319,7 +357,7 @@ O fluxo também está na opção 8 do menu e em **Governança → Regression Gat
 
 A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `data/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
 
-A versão `0.4.0` é estável para o profile `generic-kubernetes`. As integrações
+A versão `0.5.0-rc.1` mantém estável o profile `generic-kubernetes`. As integrações
 EKS, AKS e GKE permanecem `PREVIEW` até qualificação read-only em clusters reais;
 fixtures offline validam contratos, mas não equivalem a suporte operacional. O
 estado versionado de cada profile está em `data/release-qualification.json`.
@@ -331,8 +369,19 @@ Gere o pacote portátil, o checksum e o SBOM SPDX com:
 (cd ./dist && sha256sum -c eks-assessment-*.tar.gz.sha256)
 ```
 
-O diretório de saída contém o tarball portátil, o checksum relativo e o SBOM
-SPDX independente. O mesmo `SBOM.spdx` permanece dentro do pacote para validação
-offline do conteúdo extraído.
+O diretório de saída contém tarball, checksum relativo, SBOM SPDX e provenance
+externa. O mesmo `SBOM.spdx` permanece no pacote. Verifique todos os vínculos:
+
+```bash
+bin/kubernetes-assessment verify-release \
+  --archive dist/eks-assessment-0.5.0-rc.1.tar.gz \
+  --checksum dist/eks-assessment-0.5.0-rc.1.tar.gz.sha256 \
+  --sbom dist/eks-assessment-0.5.0-rc.1.spdx \
+  --provenance dist/eks-assessment-0.5.0-rc.1.provenance.json
+```
+
+No GitHub Actions, o tarball também recebe uma attestation Sigstore/SLSA. Uma
+assinatura local opcional pode ser produzida com `COSIGN_KEY` e verificada por
+`--sigstore-bundle`; `--require-signature` torna sua ausência bloqueante.
 
 Extraia o arquivo em qualquer diretório gravável e execute `bin/eks-assessment.sh`. O processo não pressupõe checkout Git nem caminhos como `/workspace`; dependências e permissões são verificadas pelo preflight.

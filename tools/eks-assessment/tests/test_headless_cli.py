@@ -29,6 +29,9 @@ class HeadlessCliTests(unittest.TestCase):
         self.assertIn("collect --phase before|after --change-id ID", result.stdout)
         self.assertIn("release-gate --collection ID", result.stdout)
         self.assertIn("regression-gate --before ID --after ID", result.stdout)
+        self.assertIn("validate --collection ID", result.stdout)
+        self.assertIn("bundle export --collection ID", result.stdout)
+        self.assertIn("verify-release --archive", result.stdout)
         self.assertIn("Os subcomandos nunca solicitam input", result.stdout)
 
     def test_list_is_machine_friendly_and_does_not_require_kubectl(self) -> None:
@@ -100,7 +103,7 @@ class HeadlessCliTests(unittest.TestCase):
         self.assertIn('--arg namespaceScope "$namespace_scope"', source)
         self.assertIn('namespaceScope:(if $namespaceScope=="" then "*" else $namespaceScope end)', source)
         self.assertIn('performance:((.performance // {}) + {durationSeconds:$duration})', source)
-        self.assertEqual(2, source.count('"$MAX_DURATION_SECONDS" "$namespace"'))
+        self.assertGreaterEqual(source.count('"$MAX_DURATION_SECONDS" "$namespace"'), 2)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@
 
 - `KubernetesAPI`: capacity, allocatable, Pods agendados, requests, `Ready`, condições de pressão, sistema operacional e container runtime;
 - `MetricsAPI`: uso pontual total do node e uso por container/Pod;
+- `Prometheus`: evidência avançada opcional de host, containers e processos do kubelet/container runtime;
 - `EVIDENCE_UNAVAILABLE`: Metrics API ausente, RBAC insuficiente ou série incompleta.
 
 Uma avaliação sem uso total do node não recebe `PASS`. Nesse caso, condições e requests continuam visíveis, mas o estado mínimo é `PARTIAL`.
@@ -20,7 +21,14 @@ O uso observado de CPU e memória é classificado em categorias mutuamente exclu
 4. `Node overhead / não atribuído`: uso total do node menos os Pod metrics observados;
 5. `Headroom`: allocatable menos o uso total do node.
 
-`Node overhead / não atribuído` pode incluir sistema operacional, kernel, kubelet, container runtime/containerd e Pods sem métrica. A Metrics API não fornece atribuição por processo; portanto, o assessment não apresenta esses componentes como valores independentes nem presume precisão que a evidência não oferece.
+`Node overhead / não atribuído` pode incluir sistema operacional, kernel, kubelet, container runtime/containerd e Pods sem métrica. A Metrics API não fornece atribuição por processo.
+
+Quando uma URL Prometheus explícita é fornecida, `node_process_evidence.py`
+consulta métricas de node_exporter, cAdvisor e processos, quando disponíveis, e
+expõe uma segunda decomposição: `kubernetesContainers`, `kubeletAndRuntime` e
+`operatingSystemUnattributed`. O último campo é residual estimado e pode conter
+lacunas ou sobreposição; ele não é profiling de processos. Ausência dessas séries
+fica `EVIDENCE_UNAVAILABLE` e não reduz a avaliação comprovada pela Metrics API.
 
 `Reserva do node` é calculada como `capacity - allocatable`. Ela representa espaço reservado pelo modelo do node e thresholds de eviction; não é consumo real. Requests representam reserva de scheduling, também não consumo.
 

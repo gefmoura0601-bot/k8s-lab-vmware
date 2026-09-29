@@ -28,6 +28,9 @@ jobs:
       - name: Validate Python and tests
         run: |
           python3 -m compileall -q tools/eks-assessment/src tools/eks-assessment/tests
+          for document in tools/eks-assessment/data/*.json tools/eks-assessment/data/schemas/*.json; do
+            python3 -m json.tool "$document" >/dev/null
+          done
           cd tools/eks-assessment
           for test_file in tests/test_*.py; do
             if ! PYTHONPATH=src python3 "$test_file"; then
@@ -74,7 +77,7 @@ jobs:
           jq -e '.summary.state == "PASS" and .summary.releaseReady == true' \
             "$after/regression-validation.json" >/dev/null
           jq -e \
-            '.toolVersion == "0.4.0" and
+            '.toolVersion == "0.5.0-rc.1" and
              .profiles["generic-kubernetes"].status == "STABLE" and
              ([.profiles.eks.status, .profiles.aks.status, .profiles.gke.status] | all(. == "PREVIEW"))' \
             tools/eks-assessment/data/release-qualification.json >/dev/null
@@ -82,6 +85,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gate-results"
           cp \
             "$after/provider-validation.json" \
+            "$after/provider-validation.junit.xml" \
+            "$after/provider-validation.sarif.json" \
+            "$after/provider-validation.md" \
             "$after/regression-validation.json" \
             "$after/regression-validation.junit.xml" \
             "$after/regression-validation.sarif.json" \
@@ -89,7 +95,7 @@ jobs:
             "$RUNNER_TEMP/regression-gate.log" \
             "$RUNNER_TEMP/gate-results/"
           {
-            echo '### Assessment 0.4.0 — generic-kubernetes'
+            echo '### Assessment 0.5.0-rc.1 — generic-kubernetes'
             echo '- Release Gate: PASS'
             echo '- Regression Gate: PASS'
             echo '- EKS, AKS e GKE: PREVIEW'
@@ -105,10 +111,15 @@ jobs:
           retention-days: 14
 
   package:
-    name: Package generic stable release
+    name: Package generic release candidate
     needs: [validate, offline-gates]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -118,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < tools/eks-assessment/VERSION)"
-          test "$version" = "0.4.0"
+          test "$version" = "0.5.0-rc.1"
           dist="$RUNNER_TEMP/dist"
           bash tools/eks-assessment/bin/package-release.sh "$dist"
           archive="$dist/eks-assessment-${version}.tar.gz"
@@ -128,6 +139,7 @@ jobs:
             sha256sum --check "$(basename "$archive.sha256")"
           )
           test -s "$sbom_asset"
+          test -s "$dist/eks-assessment-${version}.provenance.json"
           if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
             echo 'O pacote contém caminho absoluto ou traversal.' >&2
             exit 1
@@ -155,11 +167,23 @@ jobs:
           for script in "${scripts[@]}"; do bash -n "$script"; done
           ASSESSMENT_ROOT="$RUNNER_TEMP/empty" \
             bash "$package_root/bin/eks-assessment.sh" list
+          python3 "$package_root/src/release_verification.py" \
+            --archive "$archive" \
+            --checksum "$archive.sha256" \
+            --sbom "$sbom_asset" \
+            --provenance "$dist/eks-assessment-${version}.provenance.json"
+          test "$(bash "$package_root/bin/kubernetes-assessment" --version)" = "$version"
+
+      - name: Attest portable package
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dist/*.tar.gz
 
       - name: Upload portable package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: eks-assessment-0.4.0
+          name: kubernetes-assessment-0.5.0-rc.1
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
           retention-days: 30

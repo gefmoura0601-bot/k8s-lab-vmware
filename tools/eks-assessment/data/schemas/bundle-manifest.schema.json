@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/bundle-manifest-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "createdAt", "collectionId", "toolVersion", "readOnly", "sanitized", "summary", "files"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "collectionId": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "toolVersion": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "sanitized": {"const": true},
+    "summary": {"type": "object", "required": ["files", "bytes"], "properties": {"files": {"type": "integer", "minimum": 0}, "bytes": {"type": "integer", "minimum": 0}}, "additionalProperties": true},
+    "files": {"type": "array", "items": {"type": "object", "required": ["path", "size", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "size": {"type": "integer", "minimum": 0}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}, "additionalProperties": false}}
+  },
+  "additionalProperties": true
+}

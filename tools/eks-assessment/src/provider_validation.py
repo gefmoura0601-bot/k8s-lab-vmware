@@ -9,6 +9,7 @@ import json
 import math
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -530,11 +531,96 @@ def percentage(value: str) -> float:
     return number
 
 
+def junit_xml(report: dict[str, Any]) -> str:
+    gates = report.get("gates") or []
+    blocking = [item for item in gates if item.get("mandatory") and item.get("status") != "PASS"]
+    suite = ET.Element("testsuite", {
+        "name": "Kubernetes Assessment Release Gate",
+        "tests": str(len(gates)),
+        "failures": str(len(blocking)),
+        "errors": "0",
+        "skipped": str(sum(item.get("status") == "N/A" for item in gates)),
+    })
+    for item in gates:
+        case = ET.SubElement(suite, "testcase", {
+            "classname": str(item.get("category") or "Release"),
+            "name": str(item.get("gateId") or "unknown"),
+        })
+        if item.get("status") == "N/A":
+            ET.SubElement(case, "skipped", {"message": str(item.get("summary") or "Not applicable")})
+        elif item.get("mandatory") and item.get("status") != "PASS":
+            failure = ET.SubElement(case, "failure", {
+                "type": str(item.get("status") or "UNKNOWN"),
+                "message": str(item.get("summary") or "Gate bloqueado"),
+            })
+            failure.text = json.dumps(item.get("evidence") or {}, ensure_ascii=False, sort_keys=True)
+    return ET.tostring(suite, encoding="unicode", xml_declaration=True) + "\n"
+
+
+def sarif(report: dict[str, Any]) -> dict[str, Any]:
+    rules, results = [], []
+    for item in report.get("gates") or []:
+        rule_id = str(item.get("gateId") or "release.unknown")
+        rules.append({"id": rule_id, "shortDescription": {"text": str(item.get("summary") or rule_id)}})
+        if item.get("mandatory") and item.get("status") != "PASS":
+            results.append({
+                "ruleId": rule_id,
+                "level": "error" if item.get("status") == "FAIL" else "warning",
+                "message": {"text": str(item.get("summary") or "Release Gate bloqueado")},
+                "properties": {"status": item.get("status"), "evidence": item.get("evidence") or {}},
+            })
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{"tool": {"driver": {"name": "Kubernetes Assessment Release Gate", "rules": rules}}, "results": results}],
+    }
+
+
+def markdown(report: dict[str, Any]) -> str:
+    summary = report.get("summary") or {}
+    provider = report.get("provider") or {}
+    lines = [
+        "# Kubernetes Assessment — Release Gate",
+        "",
+        f"- Estado: **{summary.get('state', 'UNKNOWN')}**",
+        f"- Release Ready: **{'SIM' if summary.get('releaseReady') else 'NÃO'}**",
+        f"- Provider esperado: `{provider.get('expected', 'UNKNOWN')}`",
+        f"- Coleta: `{(report.get('collection') or {}).get('reference', 'UNKNOWN')}`",
+        "",
+        "| Gate | Categoria | Estado | Obrigatório | Resumo |",
+        "|---|---|---:|:---:|---|",
+    ]
+    for item in report.get("gates") or []:
+        clean = str(item.get("summary") or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| `{item.get('gateId', 'unknown')}` | {item.get('category', '-')} | **{item.get('status', 'UNKNOWN')}** | {'sim' if item.get('mandatory') else 'não'} | {clean} |")
+    lines.extend(["", "> Gate offline baseado em artefatos sanitizados; não representa certificação.", ""])
+    return "\n".join(lines)
+
+
+def atomic_write(path: Path, content: str) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_outputs(report: dict[str, Any], json_path: Path, junit_path: Path, sarif_path: Path, markdown_path: Path) -> None:
+    atomic_write(json_path, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    atomic_write(junit_path, junit_xml(report))
+    atomic_write(sarif_path, json.dumps(sarif(report), ensure_ascii=False, indent=2) + "\n")
+    atomic_write(markdown_path, markdown(report))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Offline release gates for a sanitized provider assessment")
     parser.add_argument("--collection", required=True, type=Path)
     parser.add_argument("--expected-provider", required=True, choices=PROVIDERS)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--junit-output", type=Path)
+    parser.add_argument("--sarif-output", type=Path)
+    parser.add_argument("--markdown-output", type=Path)
     parser.add_argument("--max-duration-seconds", type=positive_float, default=1800.0)
     parser.add_argument("--max-api-requests", type=int, default=1000)
     parser.add_argument("--max-cloud-api-requests", type=int, default=100)
@@ -551,8 +637,12 @@ def main() -> int:
     if not collection.is_dir():
         parser.error("collection directory not found")
     output = args.output.resolve() if args.output else collection / "provider-validation.json"
-    if not output.parent.is_dir():
-        parser.error("output parent directory not found")
+    junit_output = args.junit_output.resolve() if args.junit_output else collection / "provider-validation.junit.xml"
+    sarif_output = args.sarif_output.resolve() if args.sarif_output else collection / "provider-validation.sarif.json"
+    markdown_output = args.markdown_output.resolve() if args.markdown_output else collection / "provider-validation.md"
+    for path in (output, junit_output, sarif_output, markdown_output):
+        if not path.parent.is_dir():
+            parser.error(f"output parent directory not found: {path.parent}")
     thresholds = Thresholds(
         max_duration_seconds=args.max_duration_seconds,
         max_api_requests=args.max_api_requests,
@@ -565,13 +655,16 @@ def main() -> int:
         min_cloud_coverage_percent=args.min_cloud_coverage_percent,
     )
     report = evaluate(collection, args.expected_provider, thresholds)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_outputs(report, output, junit_output, sarif_output, markdown_output)
     print(json.dumps({
         "state": report["summary"]["state"],
         "releaseReady": report["summary"]["releaseReady"],
         "provider": report["provider"]["expected"],
         "gates": report["summary"]["gates"],
         "output": output.name,
+        "junit": junit_output.name,
+        "sarif": sarif_output.name,
+        "markdown": markdown_output.name,
     }, ensure_ascii=False))
     return 0 if report["summary"]["releaseReady"] else 1
 

@@ -149,6 +149,8 @@ def main() -> int:
             errors.append("CIS posture, evidence coverage or domain scores missing")
     operational = documents.get("operational-insights.json", {})
     required_domains = {"diagnostics", "nodeHealth", "versions", "manifestQuality", "containerTuning", "bestPractices", "logs"}
+    if str(operational.get("schemaVersion", "1.0")) >= "1.3":
+        required_domains.update({"timeline", "manifestSchema"})
     if operational.get("readOnly") is not True or not required_domains.issubset(operational):
         errors.append("operational insights domains or read-only invariant missing")
     node_health = operational.get("nodeHealth") or {}
@@ -158,6 +160,11 @@ def main() -> int:
         evidence = item.get("evidence") or {}
         if item.get("state") == "PASS" and (not item.get("ready") or evidence.get("metrics") != "MetricsAPI"):
             errors.append("Node Health passed without Ready and Metrics API evidence")
+    manifest_schema = operational.get("manifestSchema") or {}
+    if manifest_schema and manifest_schema.get("state") not in {"PASS", "WARN", "FAIL", "PARTIAL", "EVIDENCE_UNAVAILABLE"}:
+        errors.append("invalid manifest schema validation state")
+    if str(operational.get("schemaVersion", "1.0")) >= "1.3" and not (root / "manifest-schema-validation.json").is_file():
+        errors.append("manifest schema validation artifact missing")
     log_evidence = operational.get("logs") or {}
     if log_evidence.get("state") == "COLLECTED" and not log_evidence.get("redaction"):
         errors.append("collected logs lack redaction metadata")

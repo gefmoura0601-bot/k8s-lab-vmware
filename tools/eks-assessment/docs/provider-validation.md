@@ -12,14 +12,14 @@ python3 src/provider_validation.py \
   --expected-provider eks
 ```
 
-Use `aks`, `gke` ou `generic-kubernetes` nos demais ambientes. O relatório padrão é gravado como `provider-validation.json` dentro da coleta. `--output` aceita outro arquivo quando o diretório pai já existe.
+Use `aks`, `gke` ou `generic-kubernetes` nos demais ambientes. Por padrão são gravados `provider-validation.json`, `provider-validation.junit.xml`, `provider-validation.sarif.json` e `provider-validation.md`. Os argumentos `--output`, `--junit-output`, `--sarif-output` e `--markdown-output` aceitam destinos explícitos quando os diretórios pai já existem.
 
 ### Menu e dashboard
 
 - no menu terminal, use a opção 7, selecione uma coleta e informe explicitamente `eks`, `aks`, `gke` ou `generic-kubernetes`;
 - no dashboard, abra **Governança → Release Gate**, selecione o provider esperado e execute a validação offline;
 - a página mostra as fontes independentes, cada gate, policy, thresholds e inventário sanitizado;
-- `GET /export-provider-validation?collection=<id>` exporta o mesmo contrato JSON.
+- o dashboard exporta JSON, JUnit, SARIF e Markdown por rotas autenticadas.
 
 A execução pelo dashboard usa autenticação, action token, allowlist de providers, validação estrita do ID da coleta e o mesmo lock da coleta. O arquivo é substituído atomicamente. Nenhum desses fluxos executa uma nova chamada ao Kubernetes ou ao Cloud Provider. Para alterar thresholds, use o CLI e registre a policy aplicada no próprio relatório.
 

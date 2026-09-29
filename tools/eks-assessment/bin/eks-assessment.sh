@@ -9,6 +9,12 @@ DISCOVERY="$TOOL_ROOT/src/eks-cluster-discovery.sh"
 TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
 SCANNER="$TOOL_ROOT/src/eks_comprehensive_assessment.py"
 VALIDATOR="$TOOL_ROOT/src/validate_assessment_artifacts.py"
+CONTRACT_VALIDATOR="$TOOL_ROOT/src/assessment_contracts.py"
+COLLECTOR_MANAGER="$TOOL_ROOT/src/collector_registry.py"
+COLLECTOR_REGISTRY="$TOOL_ROOT/data/collectors.json"
+BUNDLE_MANAGER="$TOOL_ROOT/src/collection_bundle.py"
+NODE_EVIDENCE="$TOOL_ROOT/src/node_process_evidence.py"
+RELEASE_VERIFIER="$TOOL_ROOT/src/release_verification.py"
 PROVIDER_VALIDATOR="$TOOL_ROOT/src/provider_validation.py"
 REGRESSION_VALIDATOR="$TOOL_ROOT/src/regression_validation.py"
 REGRESSION_POLICY="${ASSESSMENT_POLICY_FILE:-$TOOL_ROOT/data/assessment-policy.json}"
@@ -35,6 +41,23 @@ CLI_BEFORE=""
 CLI_AFTER=""
 CLI_PROVIDER=""
 CLI_PROFILE=""
+CLI_ACTION=""
+CLI_OUTPUT=""
+CLI_BUNDLE=""
+CLI_OLDER_THAN=""
+CLI_CONFIRM=0
+CLI_INCLUDE_BASELINES=0
+CLI_RESUME=""
+CLI_RETRY_FAILED=0
+CLI_CHECKSUM=""
+CLI_SBOM=""
+CLI_PROVENANCE=""
+CLI_SIGSTORE_BUNDLE=""
+CLI_CERTIFICATE_IDENTITY=""
+CLI_OIDC_ISSUER=""
+CLI_REQUIRE_SIGNATURE=0
+declare -a CLI_INCLUDE_COLLECTORS=()
+declare -a CLI_EXCLUDE_COLLECTORS=()
 [[ -z "$CLI_PROMETHEUS_URL" ]] || CLI_PROMETHEUS_MODE="explicit"
 
 if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
@@ -57,6 +80,12 @@ Uso:
   eks-assessment.sh dashboard [--port PORTA] [--root DIRETÓRIO]
   eks-assessment.sh release-gate --collection ID --provider generic-kubernetes
   eks-assessment.sh regression-gate --before ID --after ID [--profile standard]
+  eks-assessment.sh validate --collection ID
+  eks-assessment.sh bundle export --collection ID --output ARQUIVO.tar.gz
+  eks-assessment.sh bundle verify --bundle ARQUIVO.tar.gz
+  eks-assessment.sh bundle import --bundle ARQUIVO.tar.gz [--root DIRETÓRIO]
+  eks-assessment.sh prune --older-than 30d [--confirm] [--include-baselines]
+  eks-assessment.sh verify-release --archive PACOTE --checksum SHA256 [opções]
   eks-assessment.sh --help | --version
 
 Opções de coleta:
@@ -67,6 +96,10 @@ Opções de coleta:
   --prometheus-window JANELA     1d, 3d, 7d, 14d ou 30d (padrão: 7d)
   --root DIRETÓRIO               diretório de coletas
   --max-duration SEGUNDOS        orçamento total entre 60 e 7200 segundos
+  --include-collector ID[,ID]    executa required collectors e os IDs informados
+  --exclude-collector ID[,ID]    omite collector opcional
+  --resume ID                    retoma uma coleta parcial existente
+  --retry-failed                 repete collectors que terminaram em FAIL
 
 Sem subcomando, abre o menu interativo. Os subcomandos nunca solicitam input.
 Variáveis principais: KUBECONFIG, ASSESSMENT_ROOT, ASSESSMENT_NAMESPACE,
@@ -85,8 +118,12 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   --version) tr -d '[:space:]' < "$TOOL_ROOT/VERSION"; printf '\n'; exit 0 ;;
   menu) COMMAND="menu"; shift ;;
-  preflight|collect|list|compare|terminal|dashboard|release-gate|regression-gate)
+  preflight|collect|list|compare|terminal|dashboard|release-gate|regression-gate|validate|prune|verify-release)
     COMMAND="$1"; NON_INTERACTIVE=1; shift ;;
+  bundle)
+    COMMAND="bundle"; NON_INTERACTIVE=1; shift
+    CLI_ACTION="${1:-}"; [[ -z "$CLI_ACTION" ]] || shift
+    ;;
   "") ;;
   *) echo "Comando desconhecido: $1" >&2; usage >&2; exit 2 ;;
 esac
@@ -106,6 +143,22 @@ while (($#)); do
     --after) require_cli_value "$@"; CLI_AFTER="$2"; shift 2 ;;
     --provider) require_cli_value "$@"; CLI_PROVIDER="$2"; shift 2 ;;
     --profile) require_cli_value "$@"; CLI_PROFILE="$2"; shift 2 ;;
+    --output) require_cli_value "$@"; CLI_OUTPUT="$2"; shift 2 ;;
+    --bundle|--archive) require_cli_value "$@"; CLI_BUNDLE="$2"; shift 2 ;;
+    --older-than) require_cli_value "$@"; CLI_OLDER_THAN="$2"; shift 2 ;;
+    --confirm) CLI_CONFIRM=1; shift ;;
+    --include-baselines) CLI_INCLUDE_BASELINES=1; shift ;;
+    --include-collector) require_cli_value "$@"; CLI_INCLUDE_COLLECTORS+=("$2"); shift 2 ;;
+    --exclude-collector) require_cli_value "$@"; CLI_EXCLUDE_COLLECTORS+=("$2"); shift 2 ;;
+    --resume) require_cli_value "$@"; CLI_RESUME="$2"; shift 2 ;;
+    --retry-failed) CLI_RETRY_FAILED=1; shift ;;
+    --checksum) require_cli_value "$@"; CLI_CHECKSUM="$2"; shift 2 ;;
+    --sbom) require_cli_value "$@"; CLI_SBOM="$2"; shift 2 ;;
+    --provenance) require_cli_value "$@"; CLI_PROVENANCE="$2"; shift 2 ;;
+    --sigstore-bundle) require_cli_value "$@"; CLI_SIGSTORE_BUNDLE="$2"; shift 2 ;;
+    --certificate-identity) require_cli_value "$@"; CLI_CERTIFICATE_IDENTITY="$2"; shift 2 ;;
+    --oidc-issuer) require_cli_value "$@"; CLI_OIDC_ISSUER="$2"; shift 2 ;;
+    --require-signature) CLI_REQUIRE_SIGNATURE=1; shift ;;
     --root) require_cli_value "$@"; OUTROOT="$2"; shift 2 ;;
     --port) require_cli_value "$@"; PORT="$2"; shift 2 ;;
     --max-duration) require_cli_value "$@"; MAX_DURATION_SECONDS="$2"; shift 2 ;;
@@ -119,10 +172,14 @@ valid_namespace(){ [[ -z "$1" || "$1" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; }
 if ((NON_INTERACTIVE == 1)); then
   case "$COMMAND" in
     collect)
-      [[ "$CLI_PHASE" == before || "$CLI_PHASE" == after ]] || { echo "ERRO: collect exige --phase before|after." >&2; exit 2; }
-      if [[ -z "$CLI_CHANGE_ID" ]] || ! valid_collection_id "$CLI_CHANGE_ID"; then
-        echo "ERRO: collect exige --change-id com caracteres [A-Za-z0-9._-]." >&2
-        exit 2
+      if [[ -n "$CLI_RESUME" ]]; then
+        valid_collection_id "$CLI_RESUME" || { echo "ERRO: --resume exige um ID de coleta válido." >&2; exit 2; }
+      else
+        [[ "$CLI_PHASE" == before || "$CLI_PHASE" == after ]] || { echo "ERRO: collect exige --phase before|after." >&2; exit 2; }
+        if [[ -z "$CLI_CHANGE_ID" ]] || ! valid_collection_id "$CLI_CHANGE_ID"; then
+          echo "ERRO: collect exige --change-id com caracteres [A-Za-z0-9._-]." >&2
+          exit 2
+        fi
       fi
       valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; }
       [[ "$CLI_PROMETHEUS_WINDOW" =~ ^(1d|3d|7d|14d|30d)$ ]] || { echo "ERRO: janela Prometheus inválida." >&2; exit 2; }
@@ -139,6 +196,24 @@ if ((NON_INTERACTIVE == 1)); then
     release-gate)
       valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: release-gate exige --collection válido." >&2; exit 2; }
       [[ "$CLI_PROVIDER" =~ ^(eks|aks|gke|generic-kubernetes)$ ]] || { echo "ERRO: provider inválido." >&2; exit 2; }
+      ;;
+    validate)
+      valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: validate exige --collection válido." >&2; exit 2; }
+      ;;
+    bundle)
+      [[ "$CLI_ACTION" =~ ^(export|verify|import)$ ]] || { echo "ERRO: bundle exige export, verify ou import." >&2; exit 2; }
+      if [[ "$CLI_ACTION" == export ]]; then
+        valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: bundle export exige --collection válido." >&2; exit 2; }
+        [[ -n "$CLI_OUTPUT" ]] || { echo "ERRO: bundle export exige --output." >&2; exit 2; }
+      else
+        [[ -n "$CLI_BUNDLE" ]] || { echo "ERRO: bundle $CLI_ACTION exige --bundle." >&2; exit 2; }
+      fi
+      ;;
+    prune)
+      [[ "$CLI_OLDER_THAN" =~ ^[1-9][0-9]*[hd]$ ]] || { echo "ERRO: prune exige --older-than Nd|Nh." >&2; exit 2; }
+      ;;
+    verify-release)
+      [[ -n "$CLI_BUNDLE" && -n "$CLI_CHECKSUM" ]] || { echo "ERRO: verify-release exige --archive e --checksum." >&2; exit 2; }
       ;;
     dashboard)
       if [[ ! "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
@@ -298,6 +373,7 @@ render_menu(){
   menu_row "$C_RESET" ""
   menu_row "$C_LIGHT$C_BOLD" "GOVERNANÇA & RELEASE"
   menu_row "$C_CYAN" "[7] Release Gate por provider   [8] Regression Gate entre coletas"
+  menu_row "$C_CYAN" "[9] Validar contratos JSON       [10] Exportar bundle portátil"
   menu_row "$C_RED" "[0] Sair"
   printf '%s╰──────────────────────────────────────────────────────────────────────╯%s\n' "$C_BLUE" "$C_RESET"
 }
@@ -326,14 +402,149 @@ write_metadata(){
     '. + {id:$id,phase:$phase,createdAt:$created,finishedAt:(if $status=="RUNNING" then null else $finished end),clusterName:$cluster,context:$context,namespaceScope:(if $namespaceScope=="" then "*" else $namespaceScope end),baseline:$baseline,status:$status,completed:$completed,cancelled:($status=="CANCELLED"),cancelReason:(if $reason=="" then null else $reason end),maxDurationSeconds:$maxDuration,readOnly:true,collectorExitCodes:$codes,performance:((.performance // {}) + {durationSeconds:$duration})}' \
     "$out/metadata.json" > "$metadata_tmp"
   mv "$metadata_tmp" "$out/metadata.json"
+  if [[ -r "$out/collector-state.json" ]]; then
+    jq --slurpfile state "$out/collector-state.json" \
+      '. + {collectorProgress:{progressPercent:($state[0].progressPercent // 0),plan:($state[0].plan // []),collectors:($state[0].collectors // {})}}' \
+      "$out/metadata.json" > "$metadata_tmp"
+    mv "$metadata_tmp" "$out/metadata.json"
+  fi
   cp "$out/metadata.json" "$out/menu-metadata.json"
+}
+
+collector_init(){
+  local out="$1" prometheus_state="$2" resume_flag="$3" argument
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" init --collection "$out" --channel cli --prometheus "$prometheus_state")
+  for argument in "${CLI_INCLUDE_COLLECTORS[@]}"; do args+=(--include "$argument"); done
+  for argument in "${CLI_EXCLUDE_COLLECTORS[@]}"; do args+=(--exclude "$argument"); done
+  [[ "$resume_flag" == true ]] && args+=(--resume)
+  ((CLI_RETRY_FAILED == 1)) && args+=(--retry-failed)
+  "${args[@]}" >/dev/null
+}
+
+collector_validate_plan(){
+  local prometheus_state="$1" argument
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" plan --channel cli --prometheus "$prometheus_state")
+  for argument in "${CLI_INCLUDE_COLLECTORS[@]}"; do args+=(--include "$argument"); done
+  for argument in "${CLI_EXCLUDE_COLLECTORS[@]}"; do args+=(--exclude "$argument"); done
+  "${args[@]}" >/dev/null
+}
+
+collector_enabled(){
+  local out="$1" collector="$2"
+  jq -e --arg id "$collector" '.plan | any(.id == $id)' "$out/collector-state.json" >/dev/null
+}
+
+collector_should_run(){
+  local out="$1" collector="$2"; shift 2
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" should-run --collection "$out" --collector "$collector")
+  ((CLI_RETRY_FAILED == 1)) && args+=(--retry-failed)
+  "${args[@]}" >/dev/null 2>&1
+}
+
+collector_mark(){
+  local out="$1" collector="$2" state="$3" exit_code="${4:-}" detail="${5:-}"
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" mark --collection "$out" --collector "$collector" --state "$state")
+  [[ -z "$exit_code" ]] || args+=(--exit-code "$exit_code")
+  [[ -z "$detail" ]] || args+=(--detail "$detail")
+  "${args[@]}" >/dev/null
+}
+
+collector_finish(){
+  local out="$1" collector="$2" rc="$3" state=PASS
+  if ((COLLECTION_CANCELLED == 1)); then state=CANCELLED
+  elif ((COLLECTION_TIMED_OUT == 1)); then state=TIMED_OUT
+  elif ((rc != 0)); then state=FAIL
+  fi
+  collector_mark "$out" "$collector" "$state" "$rc"
+}
+
+collector_existing_rc(){
+  local out="$1" collector="$2"
+  jq -r --arg id "$collector" '.collectors[$id].exitCode // 0' "$out/collector-state.json"
+}
+
+validate_collection_contracts(){
+  local id="$1" directory="$OUTROOT/$1"
+  valid_collection_id "$id" || { echo 'ID de coleta inválido.' >&2; return 2; }
+  [[ -d "$directory" ]] || { echo 'Coleta não encontrada.' >&2; return 2; }
+  "$PYTHON_BIN" "$CONTRACT_VALIDATOR" --collection "$directory"
+}
+
+bundle_command(){
+  local version directory
+  version="$(tr -d '[:space:]' < "$TOOL_ROOT/VERSION")"
+  case "$CLI_ACTION" in
+    export)
+      directory="$OUTROOT/$CLI_COLLECTION"
+      [[ -d "$directory" ]] || { echo 'Coleta não encontrada.' >&2; return 2; }
+      "$PYTHON_BIN" "$BUNDLE_MANAGER" export --collection "$directory" --output "$CLI_OUTPUT" --tool-version "$version"
+      ;;
+    verify) "$PYTHON_BIN" "$BUNDLE_MANAGER" verify --bundle "$CLI_BUNDLE" ;;
+    import) "$PYTHON_BIN" "$BUNDLE_MANAGER" import --bundle "$CLI_BUNDLE" --root "$OUTROOT" ;;
+  esac
+}
+
+prune_collections(){
+  local -a args=("$PYTHON_BIN" "$BUNDLE_MANAGER" prune --root "$OUTROOT" --older-than "$CLI_OLDER_THAN")
+  ((CLI_CONFIRM == 1)) && args+=(--confirm)
+  ((CLI_INCLUDE_BASELINES == 1)) && args+=(--include-baselines)
+  "${args[@]}"
+}
+
+verify_release(){
+  local -a args=("$PYTHON_BIN" "$RELEASE_VERIFIER" --archive "$CLI_BUNDLE" --checksum "$CLI_CHECKSUM")
+  [[ -z "$CLI_SBOM" ]] || args+=(--sbom "$CLI_SBOM")
+  [[ -z "$CLI_PROVENANCE" ]] || args+=(--provenance "$CLI_PROVENANCE")
+  [[ -z "$CLI_SIGSTORE_BUNDLE" ]] || args+=(--sigstore-bundle "$CLI_SIGSTORE_BUNDLE")
+  [[ -z "$CLI_CERTIFICATE_IDENTITY" ]] || args+=(--certificate-identity "$CLI_CERTIFICATE_IDENTITY")
+  [[ -z "$CLI_OIDC_ISSUER" ]] || args+=(--oidc-issuer "$CLI_OIDC_ISSUER")
+  ((CLI_REQUIRE_SIGNATURE == 1)) && args+=(--require-signature)
+  "${args[@]}"
+}
+
+interactive_validate(){
+  local latest id
+  latest="$(collections | tail -1)"
+  [[ -n "$latest" ]] || { echo 'Nenhuma coleta disponível.'; return 0; }
+  collections | nl -ba
+  read -r -p "ID da coleta (Enter = $latest): " id
+  validate_collection_contracts "${id:-$latest}"
+}
+
+interactive_bundle(){
+  local latest id output version
+  latest="$(collections | tail -1)"
+  [[ -n "$latest" ]] || { echo 'Nenhuma coleta disponível.'; return 0; }
+  collections | nl -ba
+  read -r -p "ID da coleta (Enter = $latest): " id
+  id="${id:-$latest}"
+  valid_collection_id "$id" || { echo 'ID de coleta inválido.' >&2; return 1; }
+  output="$OUTROOT/${id}.bundle.tar.gz"
+  version="$(tr -d '[:space:]' < "$TOOL_ROOT/VERSION")"
+  "$PYTHON_BIN" "$BUNDLE_MANAGER" export --collection "$OUTROOT/$id" --output "$output" --tool-version "$version"
 }
 
 collect(){
   local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason namespace
-  local assess_rc=125 discovery_rc=125 telemetry_rc=125 scanner_rc=125 validator_rc=125 completed=false baseline=false codes code
+  local existing_context required_failures resume=false prometheus_state=disabled
+  local preflight_rc=0 assess_rc=0 discovery_rc=0 telemetry_rc=0 node_rc=0 scanner_rc=0 validator_rc=0 contract_rc=0 completed=false baseline=false codes
+  local -a discovery_args scanner_args
   COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH=0
-  if ((NON_INTERACTIVE == 1)); then
+  if ((NON_INTERACTIVE == 1)) && [[ -n "$CLI_RESUME" ]]; then
+    resume=true
+    id="$CLI_RESUME"
+    out="$OUTROOT/$id"
+    [[ -d "$out" && -r "$out/metadata.json" ]] || { echo "ERRO: coleta para retomada não encontrada: $id" >&2; return 2; }
+    [[ "$(jq -r '.status // "UNKNOWN"' "$out/metadata.json")" != COMPLETED ]] || { echo "ERRO: a coleta $id já está concluída." >&2; return 2; }
+    phase="$(jq -r '.phase // "manual"' "$out/metadata.json")"
+    label="resume"
+    namespace="$CLI_NAMESPACE"
+    if [[ -z "$namespace" ]]; then namespace="$(jq -r '.namespaceScope // "*"' "$out/metadata.json")"; fi
+    [[ "$namespace" == '*' ]] && namespace=""
+    baseline="$(jq -r '.baseline // false' "$out/metadata.json")"
+    prom_url="$CLI_PROMETHEUS_URL"
+    prom_window="$CLI_PROMETHEUS_WINDOW"
+  elif ((NON_INTERACTIVE == 1)); then
     label="$CLI_CHANGE_ID"
     namespace="$CLI_NAMESPACE"
     prom_url="$CLI_PROMETHEUS_URL"
@@ -362,55 +573,129 @@ collect(){
     prom_window="${answer:-$prom_window}"
   fi
   [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
+  [[ -z "$prom_url" ]] || prometheus_state=enabled
+  collector_validate_plan "$prometheus_state" || return $?
 
   IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
+  if [[ "$resume" == true ]]; then
+    existing_context="$(jq -r '.context // empty' "$out/metadata.json")"
+    if [[ -n "$existing_context" && "$existing_context" != "$cluster_context" ]]; then
+      echo "ERRO: a coleta pertence ao contexto $existing_context, mas o contexto atual é $cluster_context." >&2
+      return 2
+    fi
+  fi
   if ! run_preflight "$prom_url" "$eks_name" "$namespace"; then
     echo "Coleta não iniciada: corrija os itens FAIL do preflight." >&2
     return 1
   fi
   COLLECTION_STARTED_EPOCH="$(date +%s)"
-  mkdir -p "$OUTROOT"
-  out="$(mktemp -d "$OUTROOT/eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}.XXXXXXXX")"
-  id="$(basename "$out")"
-  [[ "$phase" == before ]] && baseline=true
+  if [[ "$resume" != true ]]; then
+    mkdir -p "$OUTROOT"
+    out="$(mktemp -d "$OUTROOT/eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}.XXXXXXXX")"
+    id="$(basename "$out")"
+    [[ "$phase" == before ]] && baseline=true
+  fi
   write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS" "$namespace"
-  echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s =="
+  collector_init "$out" "$prometheus_state" "$resume"
+  collector_mark "$out" preflight PASS 0
+  echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s$( [[ "$resume" == true ]] && printf ' | RETOMADA' ) =="
   echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
 
-  if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" PYTHON_BIN="$PYTHON_BIN" ASSESSMENT_NAMESPACE="$namespace" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
-  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+  if collector_enabled "$out" assessment; then
+    if collector_should_run "$out" assessment; then
+      collector_mark "$out" assessment RUNNING
+      if run_bounded assessment 600 "$out/assessment.log" env OUTPUT_DIR="$out" EKS_CLUSTER_NAME="$eks_name" PYTHON_BIN="$PYTHON_BIN" ASSESSMENT_NAMESPACE="$namespace" ASSESSMENT_MAX_DURATION_SECONDS="$MAX_DURATION_SECONDS" bash "$ASSESS"; then assess_rc=0; else assess_rc=$?; fi
+      collector_finish "$out" assessment "$assess_rc"
+    else
+      assess_rc="$(collector_existing_rc "$out" assessment)"; echo "Reutilizando collector assessment (exit code $assess_rc)."
+    fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" discovery; then
+    if collector_should_run "$out" discovery; then
+      collector_mark "$out" discovery RUNNING
     discovery_args=(--output-dir "$out/discovery" --combined-report)
     [[ -n "$namespace" ]] && discovery_args+=(--namespace "$namespace")
     if run_bounded discovery 900 "$out/discovery.log" bash "$DISCOVERY" "${discovery_args[@]}"; then discovery_rc=0; else discovery_rc=$?; fi
-  fi
-  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
-    if [[ -n "$prom_url" ]]; then
-      if run_bounded_capture prometheus 1200 "$out/prometheus-telemetry.json" "$out/prometheus-telemetry.log" "$PYTHON_BIN" "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json"; then telemetry_rc=0; else telemetry_rc=$?; fi
+      collector_finish "$out" discovery "$discovery_rc"
     else
-      printf '%s\n' '{"state":"DISABLED","reason":"PROMETHEUS_URL not explicitly configured","workloads":[]}' > "$out/prometheus-telemetry.json"
-      telemetry_rc=0
+      discovery_rc="$(collector_existing_rc "$out" discovery)"; echo "Reutilizando collector discovery (exit code $discovery_rc)."
     fi
   fi
-  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" prometheus; then
+    if collector_should_run "$out" prometheus; then
+      collector_mark "$out" prometheus RUNNING
+      if run_bounded_capture prometheus 1200 "$out/prometheus-telemetry.json" "$out/prometheus-telemetry.log" "$PYTHON_BIN" "$TELEMETRY" --url "$prom_url" --window "$prom_window" --workloads-file "$out/workloads.json"; then telemetry_rc=0; else telemetry_rc=$?; fi
+      collector_finish "$out" prometheus "$telemetry_rc"
+    else
+      telemetry_rc="$(collector_existing_rc "$out" prometheus)"; echo "Reutilizando collector prometheus (exit code $telemetry_rc)."
+    fi
+  elif [[ ! -r "$out/prometheus-telemetry.json" ]]; then
+    printf '%s\n' '{"state":"DISABLED","reason":"PROMETHEUS_URL not explicitly configured","workloads":[]}' > "$out/prometheus-telemetry.json"
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" node-evidence; then
+    if collector_should_run "$out" node-evidence; then
+      collector_mark "$out" node-evidence RUNNING
+      if run_bounded node-evidence 180 "$out/node-process-evidence.log" "$PYTHON_BIN" "$NODE_EVIDENCE" --url "$prom_url" --nodes-file "$out/nodes.json" --output "$out/node-process-evidence.json"; then node_rc=0; else node_rc=$?; fi
+      collector_finish "$out" node-evidence "$node_rc"
+    else
+      node_rc="$(collector_existing_rc "$out" node-evidence)"; echo "Reutilizando collector node-evidence (exit code $node_rc)."
+    fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" comprehensive; then
+    if collector_should_run "$out" comprehensive; then
+      collector_mark "$out" comprehensive RUNNING
     scanner_args=(--snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}")
     [[ -n "$namespace" ]] && scanner_args+=(--namespace "$namespace")
+    [[ "$resume" == true ]] && scanner_args+=(--resume)
     if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" "$PYTHON_BIN" "$SCANNER" "${scanner_args[@]}"; then scanner_rc=0; else scanner_rc=$?; fi
+      collector_finish "$out" comprehensive "$scanner_rc"
+    else
+      scanner_rc="$(collector_existing_rc "$out" comprehensive)"; echo "Reutilizando collector comprehensive (exit code $scanner_rc)."
+    fi
   fi
-  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)); then
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" artifact-validation; then
+    if collector_should_run "$out" artifact-validation; then
+      collector_mark "$out" artifact-validation RUNNING
     if run_bounded artifact-validation 300 "$out/artifact-smoke.log" "$PYTHON_BIN" "$VALIDATOR" "$out"; then validator_rc=0; else validator_rc=$?; fi
+      collector_finish "$out" artifact-validation "$validator_rc"
+    else
+      validator_rc="$(collector_existing_rc "$out" artifact-validation)"; echo "Reutilizando collector artifact-validation (exit code $validator_rc)."
+    fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" contract-validation; then
+    if collector_should_run "$out" contract-validation; then
+      collector_mark "$out" contract-validation RUNNING
+      if run_bounded contract-validation 120 "$out/contract-validation.log" "$PYTHON_BIN" "$CONTRACT_VALIDATOR" --collection "$out"; then contract_rc=0; else contract_rc=$?; fi
+      collector_finish "$out" contract-validation "$contract_rc"
+    else
+      contract_rc="$(collector_existing_rc "$out" contract-validation)"; echo "Reutilizando collector contract-validation (exit code $contract_rc)."
+    fi
   fi
 
-  codes="$(jq -nc --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" '[$a,$d,$t,$s,$v]')"
+  codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$t,$n,$s,$v,$c]')"
   status=COMPLETED; reason=''; completed=true
   if ((COLLECTION_CANCELLED == 1)); then status=CANCELLED; reason='operator requested cancellation'; completed=false
   elif ((COLLECTION_TIMED_OUT == 1)); then status=TIMED_OUT; reason="collection exceeded ${MAX_DURATION_SECONDS}s"; completed=false
   else
-    for code in "$assess_rc" "$discovery_rc" "$telemetry_rc" "$scanner_rc" "$validator_rc"; do ((code == 0)) || { status=FAILED; completed=false; }; done
+    required_failures="$(jq -r '. as $root | [$root.plan[] | select(.required) | select(($root.collectors[.id].state // "PENDING") != "PASS")] | length' "$out/collector-state.json")"
+    if ((required_failures > 0)); then status=FAILED; completed=false; reason="$required_failures required collector(s) did not pass"; fi
   fi
   write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS" "$namespace"
+  if [[ "$status" == COMPLETED ]] && collector_enabled "$out" contract-validation; then
+    if "$PYTHON_BIN" "$CONTRACT_VALIDATOR" --collection "$out" >> "$out/contract-validation.log" 2>&1; then
+      contract_rc=0
+      collector_mark "$out" contract-validation PASS 0 'final terminal metadata validated'
+    else
+      contract_rc=$?
+      collector_mark "$out" contract-validation FAIL "$contract_rc" 'final terminal metadata failed validation'
+      status=FAILED; completed=false; reason='final JSON Schema validation failed'
+    fi
+    codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$t,$n,$s,$v,$c]')"
+    write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS" "$namespace"
+  fi
   COLLECTION_STARTED_EPOCH=0
   echo "Salvo em $out | status: $status"
-  echo "Contexto: $cluster_context | códigos [assessment, discovery, Prometheus, scanner, smoke]: $codes"
+  echo "Contexto: $cluster_context | códigos [preflight, assessment, discovery, Prometheus, node evidence, scanner, artifacts, contracts]: $codes"
   if ((NON_INTERACTIVE == 1)); then
     printf 'COLLECTION_ID=%s\nCOLLECTION_PATH=%s\nCOLLECTION_STATUS=%s\n' "$id" "$out" "$status"
     case "$status" in
@@ -461,7 +746,10 @@ provider_gate(){
   fi
   if ((rc == 0 || rc == 1)) && [[ -r "$dir/provider-validation.json" ]]; then
     jq -r '"Estado: \(.summary.state) | Release Ready: \(.summary.releaseReady) | Gates: \(.summary.gates) | PASS: \(.summary.status.PASS // 0) | WARN: \(.summary.status.WARN // 0) | FAIL: \(.summary.status.FAIL // 0) | N/A: \(.summary.status["N/A"] // 0)"' "$dir/provider-validation.json"
-    echo "Relatório: $dir/provider-validation.json"
+    echo "JSON: $dir/provider-validation.json"
+    echo "JUnit: $dir/provider-validation.junit.xml"
+    echo "SARIF: $dir/provider-validation.sarif.json"
+    echo "Markdown: $dir/provider-validation.md"
   else
     echo "ERRO: o Release Gate não pôde ser executado (exit code $rc)." >&2
   fi
@@ -769,6 +1057,10 @@ prepare_runtime(){
       [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
       ;;
+    validate|bundle|prune|verify-release)
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$CONTRACT_VALIDATOR" && -r "$BUNDLE_MANAGER" && -r "$RELEASE_VERIFIER" ]] || { echo "ERRO: módulos de portabilidade ausentes." >&2; exit 1; }
+      ;;
     preflight)
       select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
       [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
@@ -780,6 +1072,7 @@ prepare_runtime(){
       [[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
+      [[ -r "$COLLECTOR_MANAGER" && -r "$COLLECTOR_REGISTRY" && -r "$CONTRACT_VALIDATOR" && -r "$NODE_EVIDENCE" ]] || { echo "ERRO: módulos do collector registry ausentes." >&2; exit 1; }
       ;;
   esac
   mkdir -p "$OUTROOT"
@@ -797,6 +1090,10 @@ if ((NON_INTERACTIVE == 1)); then
     dashboard) web ;;
     release-gate) provider_gate "$CLI_COLLECTION" "$CLI_PROVIDER" ;;
     regression-gate) regression_gate "$CLI_BEFORE" "$CLI_AFTER" "$CLI_PROFILE" ;;
+    validate) validate_collection_contracts "$CLI_COLLECTION" ;;
+    bundle) bundle_command ;;
+    prune) prune_collections ;;
+    verify-release) verify_release ;;
     menu) ;;
   esac
   exit $?
@@ -808,6 +1105,7 @@ while :; do
   case "$op" in
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
     5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";; 7) provider_gate;; 8) regression_gate;;
+    9) interactive_validate;; 10) interactive_bundle;;
     0) printf '%sSessão encerrada.%s\n' "$C_DIM" "$C_RESET"; exit 0;; *) printf '%sOpção inválida.%s\n' "$C_RED" "$C_RESET";;
   esac
   [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _
