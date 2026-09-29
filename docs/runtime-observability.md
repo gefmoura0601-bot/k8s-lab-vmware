@@ -44,6 +44,10 @@ The runtime metrics collector listens to runtime events at its default,
 low-overhead capture level. IPC and profiler diagnostics remain enabled.
 `dotnet-monitor` runs as a non-root sidecar, binds only to pod-localhost, has no
 Service or Ingress and shares only the diagnostic socket.
+It intentionally has no kubelet network probe: Istio rewrites these probes and
+cannot reach the loopback-only listener. Application readiness remains owned by
+the `transaction-service` container, while Kubernetes restarts the diagnostics
+sidecar if its process exits.
 
 Collect a bounded CPU/EventPipe trace and a GC dump:
 

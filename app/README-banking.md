@@ -232,11 +232,18 @@ kubectl -n banking logs deploy/account-service -c account-service --tail=100
 kubectl -n banking logs deploy/transaction-service -c transaction-service --tail=100
 kubectl -n banking logs deploy/acquirer-service -c acquirer-service --tail=100
 kubectl -n banking logs deploy/store-service -c store-service --tail=100
+bash scripts/validation/validate-banking-operational-readiness.sh
 ```
 
 Os manifests ficam em `kubernetes/apps/banking`. Alterações no código disparam
 os workflows de imagens bancárias, que publicam imagens imutáveis no GHCR e
 abrem um PR atualizando as referências GitOps.
+
+O `dotnet-monitor` do `transaction-service` escuta somente em
+`127.0.0.1:52323`, não possui `Service`/`Ingress` e não participa da prontidão
+da aplicação. Probes de rede do kubelet não devem ser usados nesse sidecar:
+com Istio, eles são reescritos e não alcançam o listener em loopback. O
+container continua sendo reiniciado pelo Kubernetes caso o processo termine.
 
 Para métricas, profiling e coleta de JFR/EventPipe, consulte
 [`docs/runtime-observability.md`](../docs/runtime-observability.md).
