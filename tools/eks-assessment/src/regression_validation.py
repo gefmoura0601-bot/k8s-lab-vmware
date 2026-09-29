@@ -170,10 +170,33 @@ def scope_evidence(before: dict[str, Any], after: dict[str, Any]) -> dict[str, A
         old_value, new_value = str(old.get(key) or "").strip(), str(new.get(key) or "").strip()
         if old_value and new_value:
             signals[key] = "MATCH" if old_value == new_value else "MISMATCH"
+    old_namespace = str(
+        old.get("namespaceScope")
+        or nested(before, "comprehensive", "collection", "namespaceScope")
+        or ""
+    ).strip()
+    new_namespace = str(
+        new.get("namespaceScope")
+        or nested(after, "comprehensive", "collection", "namespaceScope")
+        or ""
+    ).strip()
+    normalized_old = "*" if old_namespace in {"*", "all"} else old_namespace
+    normalized_new = "*" if new_namespace in {"*", "all"} else new_namespace
+    namespace_available = bool(normalized_old and normalized_new)
+    signals["namespaceScope"] = (
+        "MATCH" if namespace_available and normalized_old == normalized_new
+        else "MISMATCH" if namespace_available
+        else "UNAVAILABLE"
+    )
+    cluster_signals = [signals[key] for key in ("clusterName", "context") if key in signals]
+    same_cluster = bool(cluster_signals) and all(value == "MATCH" for value in cluster_signals)
+    same_scope = same_cluster and signals["namespaceScope"] == "MATCH"
     return {
         "signals": signals,
-        "available": bool(signals),
-        "sameCluster": bool(signals) and all(value == "MATCH" for value in signals.values()),
+        "available": bool(cluster_signals) and namespace_available,
+        "sameCluster": same_cluster,
+        "sameNamespaceScope": signals["namespaceScope"] == "MATCH",
+        "sameCollectionScope": same_scope,
     }
 
 
@@ -450,6 +473,32 @@ def performance_gate(before: dict[str, Any], after: dict[str, Any], policy: dict
     )
 
 
+def scope_blocked_gates() -> list[dict[str, Any]]:
+    reason = {"reason": "COLLECTION_SCOPE_MISMATCH"}
+    definitions = (
+        ("findings.new-risk", "Findings"),
+        ("findings.severity-regression", "Findings"),
+        ("evidence.loss", "Evidence"),
+        ("findings.current-risk", "Findings"),
+        ("cis.regression", "CIS"),
+        ("node-health.regression", "Node Health"),
+        ("operational.regression", "Operational"),
+        ("quality.regression", "Quality"),
+        ("performance.regression", "Performance"),
+    )
+    return [
+        gate(
+            gate_id,
+            category,
+            "N/A",
+            "Não avaliado porque cluster ou namespace scope divergem.",
+            reason,
+            mandatory=False,
+        )
+        for gate_id, category in definitions
+    ]
+
+
 def evaluate(before_path: Path, after_path: Path, *, policy_path: Path = DEFAULT_POLICY,
              profile: str | None = None, validate_artifacts: bool = True) -> dict[str, Any]:
     before_path, after_path = before_path.resolve(), after_path.resolve()
@@ -461,12 +510,12 @@ def evaluate(before_path: Path, after_path: Path, *, policy_path: Path = DEFAULT
     thresholds = selected_policy["thresholds"]
     before, after = collection(before_path), collection(after_path)
     scope = scope_evidence(before, after)
-    scope_status = "PASS" if scope["sameCluster"] else "FAIL" if thresholds["requireSameCluster"] else "WARN"
+    scope_status = "PASS" if scope["sameCollectionScope"] else "FAIL" if thresholds["requireSameCluster"] else "WARN"
     terminal_ok = completed(before) and completed(after)
     gates = [
         gate(
             "comparison.scope", "Comparison", scope_status,
-            "As coletas pertencem ao mesmo cluster." if scope["sameCluster"] else "Não foi possível comprovar que as coletas pertencem ao mesmo cluster.",
+            "As coletas pertencem ao mesmo cluster e namespace scope." if scope["sameCollectionScope"] else "Não foi possível comprovar o mesmo cluster e namespace scope nas duas coletas.",
             scope, mandatory=thresholds["requireSameCluster"],
         ),
         gate(
@@ -488,16 +537,27 @@ def evaluate(before_path: Path, after_path: Path, *, policy_path: Path = DEFAULT
              "beforeErrors": len(old_artifacts.get("errors") or []), "afterErrors": len(new_artifacts.get("errors") or [])},
             mandatory=thresholds["requireArtifactIntegrity"],
         ))
-    finding_delta = findings_delta(before, after)
-    gates.extend(finding_gates(finding_delta, selected_policy))
-    cis_result, cis_delta = cis_gate(before, after, selected_policy)
-    gates.extend([
-        cis_result,
-        node_gate(before, after, selected_policy),
-        operational_gate(before, after, selected_policy),
-        quality_gate(before, after, selected_policy),
-        performance_gate(before, after, selected_policy),
-    ])
+    if scope["sameCollectionScope"]:
+        finding_delta = findings_delta(before, after)
+        gates.extend(finding_gates(finding_delta, selected_policy))
+        cis_result, cis_delta = cis_gate(before, after, selected_policy)
+        gates.extend([
+            cis_result,
+            node_gate(before, after, selected_policy),
+            operational_gate(before, after, selected_policy),
+            quality_gate(before, after, selected_policy),
+            performance_gate(before, after, selected_policy),
+        ])
+    else:
+        finding_delta = {
+            "newRisks": [],
+            "severityRegressions": [],
+            "evidenceLoss": [],
+            "resolvedRisks": [],
+            "currentStatus": {},
+        }
+        cis_delta = {}
+        gates.extend(scope_blocked_gates())
     mandatory = [item for item in gates if item.get("mandatory")]
     release_ready = all(item.get("status") == "PASS" for item in mandatory)
     state = "FAIL" if any(item.get("status") == "FAIL" for item in mandatory) else "WARN" if any(item.get("status") == "WARN" for item in mandatory) else "PASS"

@@ -44,13 +44,14 @@ class RegressionValidationTests(unittest.TestCase):
             "applicability": "APPLICABLE",
         }
 
-    def collection(self, root: Path, *, cluster: str = "sensitive-lab", findings: list[dict] | None = None) -> Path:
+    def collection(self, root: Path, *, cluster: str = "sensitive-lab", namespace: str = "*", findings: list[dict] | None = None) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         findings = findings or []
         counts = {state: sum(item["severity"] == state for item in findings) for state in ("CRIT", "WARN", "UNKNOWN", "PARTIAL", "PASS")}
         metadata = {
             "status": "COMPLETED", "completed": True, "clusterName": cluster,
-            "context": f"operator@{cluster}", "performance": {"durationSeconds": 100.0},
+            "context": f"operator@{cluster}", "namespaceScope": namespace,
+            "performance": {"durationSeconds": 100.0},
         }
         nodes = {"items": [{
             "metadata": {"name": "node-1"},
@@ -211,7 +212,26 @@ class RegressionValidationTests(unittest.TestCase):
             states = {item["gateId"]: item["status"] for item in report["gates"]}
             self.assertEqual("FAIL", states["comparison.scope"])
             self.assertEqual("FAIL", states["collections.terminal-state"])
-            self.assertEqual("FAIL", states["node-health.regression"])
+            self.assertEqual("N/A", states["node-health.regression"])
+            self.assertEqual([], report["changes"])
+
+    def test_different_namespace_scope_is_rejected_before_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            before = self.collection(root / "eks-before", namespace="*")
+            after = self.collection(root / "eks-after", namespace="banking")
+            report = validation.evaluate(before, after)
+            scope = next(item for item in report["gates"] if item["gateId"] == "comparison.scope")
+            self.assertEqual("FAIL", scope["status"])
+            self.assertEqual("MISMATCH", scope["evidence"]["signals"]["namespaceScope"])
+            self.assertFalse(report["summary"]["releaseReady"])
+            self.assertEqual(0, report["summary"]["severityRegressions"])
+            self.assertEqual([], report["changes"])
+            self.assertTrue(all(
+                item["status"] == "N/A"
+                for item in report["gates"]
+                if item["gateId"].endswith(".regression") and item["gateId"] != "comparison.scope"
+            ))
 
     def test_strict_profile_blocks_legacy_risk_that_standard_allows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

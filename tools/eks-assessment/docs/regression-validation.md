@@ -1,6 +1,13 @@
 # Regression Gate offline
 
-O `Regression Gate` compara duas coletas sanitizadas do mesmo cluster sem executar novas chamadas ao Kubernetes ou ao Cloud Provider. O objetivo é impedir que uma mudança introduza regressões invisíveis entre um baseline e a coleta atual.
+O `Regression Gate` compara duas coletas sanitizadas do mesmo cluster e do mesmo
+namespace scope sem executar novas chamadas ao Kubernetes ou ao Cloud Provider.
+O objetivo é impedir que uma mudança introduza regressões invisíveis entre um
+baseline e a coleta atual. Uma coleta cluster-wide nunca é comparada a uma
+coleta limitada a namespace, pois a ausência intencional de recursos produziria
+falsas regressões ou falsas melhorias.
+Quando o scope diverge, os gates comparativos ficam `N/A`; somente o gate de
+scope bloqueia a promoção, sem publicar deltas enganosos.
 
 Ele não substitui testes funcionais, validação de carga, change review ou certificação de segurança.
 
@@ -36,7 +43,7 @@ Os thresholds controlam riscos novos, regressões de severidade, Evidence Loss, 
 
 O relatório avalia:
 
-1. mesmo cluster, usando um sinal disponível sem persistir seu valor;
+1. mesmo cluster e namespace scope, usando evidência sanitizada;
 2. estado terminal `COMPLETED` das duas coletas;
 3. integridade e sanitização dos artefatos;
 4. novos `CRIT`/`WARN`, piora de severidade e perda de evidência por fingerprint estável;
@@ -60,4 +67,7 @@ O JSON contém no máximo 500 mudanças detalhadas e registra quando houve trunc
 
 ## Escopo atual
 
-A implementação da `0.4.0-rc.8` é provider-neutral e está validada no caminho Kubernetes genérico. EKS, AKS e GKE continuam suportados pelos contratos existentes, mas a qualificação real nesses providers permanece adiada e não é inferida por este gate.
+A implementação da `0.4.0` é provider-neutral e está validada no profile
+`generic-kubernetes`. EKS, AKS e GKE continuam disponíveis como `PREVIEW`, mas a
+qualificação real nesses providers permanece adiada e não é inferida por este
+gate.

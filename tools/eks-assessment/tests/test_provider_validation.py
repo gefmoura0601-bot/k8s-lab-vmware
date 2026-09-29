@@ -43,6 +43,7 @@ class ProviderValidationTests(unittest.TestCase):
             "completed": True,
             "clusterName": "sensitive-cluster-name",
             "context": contexts[provider],
+            "namespaceScope": "*",
             "performance": {"durationSeconds": 120.0},
         }
         nodes = {"items": [{

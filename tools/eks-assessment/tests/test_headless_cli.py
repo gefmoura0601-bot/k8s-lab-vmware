@@ -95,6 +95,13 @@ class HeadlessCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("collection válido", result.stderr)
 
+    def test_collection_metadata_preserves_namespace_scope_and_existing_performance(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('--arg namespaceScope "$namespace_scope"', source)
+        self.assertIn('namespaceScope:(if $namespaceScope=="" then "*" else $namespaceScope end)', source)
+        self.assertIn('performance:((.performance // {}) + {durationSeconds:$duration})', source)
+        self.assertEqual(2, source.count('"$MAX_DURATION_SECONDS" "$namespace"'))
+
 
 if __name__ == "__main__":
     unittest.main()

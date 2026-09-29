@@ -14,6 +14,11 @@ Na RC.8, a opção 8 e **Governança → Regression Gate** comparam duas coletas
 
 Na RC.9, `bin/eks-assessment.sh` também funciona como CLI headless. Pipelines devem informar `--phase`, `--change-id` e as opções de escopo explicitamente. Sem `--prometheus-url` ou `--auto-detect-prometheus`, Prometheus permanece desabilitado. Scripts existentes sem argumentos continuam abrindo o menu normalmente.
 
+Na versão `0.4.0`, o profile `generic-kubernetes` passa a estável. Os profiles
+EKS, AKS e GKE permanecem `PREVIEW`; não interprete a matriz offline como
+qualificação de um cloud provider. Consulte `data/release-qualification.json`
+antes de automatizar uma promoção.
+
 Após extrair o pacote, execute:
 
 ```bash
