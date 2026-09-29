@@ -39,9 +39,29 @@ for workload in account-service transaction-service; do
 done
 
 transaction="$(kubectl -n "$NAMESPACE" get deployment transaction-service -o json)"
-jq -e '.spec.template.spec.containers[] | select(.name == "dotnet-monitor") | .readinessProbe.tcpSocket.port == "diagnostics"' \
-  >/dev/null <<<"$transaction" || fail "dotnet-monitor não possui Readiness Probe TCP"
-pass "dotnet-monitor possui Readiness Probe TCP"
+jq -e '
+  .spec.template.spec.containers[]
+  | select(.name == "dotnet-monitor") as $monitor
+  | (($monitor.args // []) | index("http://127.0.0.1:52323") != null)
+    and ($monitor.startupProbe == null)
+    and ($monitor.readinessProbe == null)
+    and ($monitor.livenessProbe == null)
+' >/dev/null <<<"$transaction" \
+  || fail "dotnet-monitor deve permanecer em loopback e fora dos probes de rede do kubelet"
+
+transaction_service="$(kubectl -n "$NAMESPACE" get service transaction-service -o json)"
+jq -e '
+  [.spec.ports[]
+    | select(
+        .name == "diagnostics"
+        or .port == 52323
+        or .targetPort == "diagnostics"
+        or .targetPort == 52323
+      )]
+  | length == 0
+' >/dev/null <<<"$transaction_service" \
+  || fail "Service/transaction-service expõe indevidamente o endpoint do dotnet-monitor"
+pass "dotnet-monitor permanece restrito ao pod e não bloqueia a prontidão da aplicação"
 
 policy="$(kubectl get clusterpolicy allow-approved-registries -o json)"
 jq -e '[.spec.rules[].validate.foreach[]?.anyPattern[]?.image] | index("registry.istio.io/*") != null' \
