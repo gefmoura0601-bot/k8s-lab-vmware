@@ -46,7 +46,7 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 O menu terminal usa um tema Kubernetes em azul, mostra versão, contexto, porta do dashboard e quantidade de coletas. Cores ANSI são habilitadas somente em terminal interativo. Para desabilitá-las, use `NO_COLOR=1`; para impedir a limpeza de tela, use `ASSESSMENT_MENU_CLEAR=0`.
 
-O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard web preso à sessão e execução offline do Release Gate pela opção 7:
+O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard web preso à sessão, Release Gate pela opção 7 e Regression Gate entre duas coletas pela opção 8:
 
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
@@ -241,6 +241,8 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `cloud-provider-assessment.json`: contrato normalizado EKS/AKS/GKE, lifecycle e Best Practices comprováveis, sem payload cloud bruto ou identificador de conta;
 - `operational-insights.json`: Events, Node Health, Versions & Lifecycle, Manifest Quality, Best Practices, Container Tuning e logs opcionais sanitizados;
 - `provider-validation.json`: gate offline opcional para promover a release em um provider explicitamente esperado;
+- `regression-validation.json`: comparação offline orientada pela policy entre baseline e coleta atual;
+- `regression-validation.junit.xml` e `regression-validation.sarif.json`: resultados bloqueantes para CI/CD;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
 - `node-metrics.json`, `pod-metrics.json`: uso pontual sanitizado da Metrics API; quando indisponível, os arquivos ficam vazios e a cobertura é declarada incompleta;
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
@@ -265,6 +267,21 @@ python3 tools/eks-assessment/src/provider_validation.py \
 Providers aceitos: `eks`, `aks`, `gke` e `generic-kubernetes`. O runner exige estado `COMPLETED`, cruza três fontes de detecção e bloqueia mutações, evidência parcial, provider divergente, dados sensíveis, baixa cobertura e budgets excedidos. `WARN` mantém `releaseReady=false`. Contrato, thresholds e matriz real estão em [`docs/provider-validation.md`](docs/provider-validation.md).
 
 No menu, use a opção 7, selecione a coleta e informe o provider esperado. No dashboard, abra **Governança → Release Gate**, escolha explicitamente o provider e execute a validação offline. A página apresenta cada gate e sua evidência sanitizada, permite busca global e exporta o mesmo contrato por `GET /export-provider-validation`. A execução web exige autenticação e action token, compartilha o lock da coleta e substitui o relatório por operação atômica. Os thresholds configuráveis permanecem disponíveis pelo CLI.
+
+## Regression Gate
+
+Para comparar duas coletas do mesmo cluster sem consultar novamente nenhuma API:
+
+```bash
+python3 tools/eks-assessment/src/regression_validation.py \
+  --before assessment/<coleta-anterior> \
+  --after assessment/<coleta-atual> \
+  --profile standard
+```
+
+O profile `standard` bloqueia regressões novas sem exigir a eliminação imediata de riscos legados. O profile `strict` também exige ausência de `CRIT`, `WARN`, `UNKNOWN` e `PARTIAL` nos findings atuais. A policy versionada fica em `data/assessment-policy.json`; uma policy alternativa pode ser informada por `--policy` ou `ASSESSMENT_POLICY_FILE`.
+
+O fluxo também está na opção 8 do menu e em **Governança → Regression Gate**. Ele cruza fingerprints de findings, CIS, Node Health, Manifest Quality, lifecycle, quality gate e impacto da coleta. Identidade divergente, coleta incompleta, artefato inválido ou evidência obrigatória ausente nunca produz `PASS`. Os resultados são exportados como JSON, JUnit e SARIF. Contrato, thresholds e limitações estão em [`docs/regression-validation.md`](docs/regression-validation.md).
 
 ## Versão e distribuição
 

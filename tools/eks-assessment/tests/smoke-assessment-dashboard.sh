@@ -60,6 +60,8 @@ paths=(
   "/capacity?collection=$COLLECTION"
   "/node-health?collection=$COLLECTION"
   "/prometheus?collection=$COLLECTION"
+  "/release-gate?collection=$COLLECTION"
+  "/regression-gate?collection=$COLLECTION"
   "/cloud?collection=$COLLECTION"
   "/aws?collection=$COLLECTION"
   "/cis-security?collection=$COLLECTION"
@@ -182,6 +184,11 @@ fi
 
 curl -fsS "$BASE_URL/export?collection=$COLLECTION" | jq -e '.summary.workloads > 0' >/dev/null
 curl -fsS "$BASE_URL/manifests?collection=$COLLECTION" | jq -e '.items | type == "array"' >/dev/null
+if [[ -f "$DIR/regression-validation.json" ]]; then
+  curl -fsS "$BASE_URL/export-regression-validation?collection=$COLLECTION" | jq -e '.schemaVersion == "1.0" and .readOnly == true' >/dev/null
+  curl -fsS "$BASE_URL/export-regression-junit?collection=$COLLECTION" | grep -Fq '<testsuite'
+  curl -fsS "$BASE_URL/export-regression-sarif?collection=$COLLECTION" | jq -e '.version == "2.1.0"' >/dev/null
+fi
 
 jq -n --arg collection "$COLLECTION" --arg baseUrl "$BASE_URL" \
   --arg node "$first_node" --arg deployment "$first_deployment" \

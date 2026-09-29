@@ -10,6 +10,8 @@ TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
 SCANNER="$TOOL_ROOT/src/eks_comprehensive_assessment.py"
 VALIDATOR="$TOOL_ROOT/src/validate_assessment_artifacts.py"
 PROVIDER_VALIDATOR="$TOOL_ROOT/src/provider_validation.py"
+REGRESSION_VALIDATOR="$TOOL_ROOT/src/regression_validation.py"
+REGRESSION_POLICY="${ASSESSMENT_POLICY_FILE:-$TOOL_ROOT/data/assessment-policy.json}"
 PREFLIGHT="$TOOL_ROOT/src/assessment-preflight.sh"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PORT="${DASHBOARD_PORT:-8765}"
@@ -187,7 +189,7 @@ render_menu(){
   menu_row "$C_CYAN" "[5] Abrir dashboard web nesta sessão (porta $PORT)"
   menu_row "$C_RESET" ""
   menu_row "$C_LIGHT$C_BOLD" "GOVERNANÇA & RELEASE"
-  menu_row "$C_CYAN" "[7] Executar Release Gate offline por provider"
+  menu_row "$C_CYAN" "[7] Release Gate por provider   [8] Regression Gate entre coletas"
   menu_row "$C_RED" "[0] Sair"
   printf '%s╰──────────────────────────────────────────────────────────────────────╯%s\n' "$C_BLUE" "$C_RESET"
 }
@@ -320,6 +322,66 @@ provider_gate(){
     echo "Relatório: $dir/provider-validation.json"
   else
     echo "ERRO: o Release Gate não pôde ser executado (exit code $rc)." >&2
+  fi
+  return 0
+}
+
+regression_gate(){
+  local before_id after_id before after profile profiles default_profile rc latest previous
+  local -a available=()
+  mapfile -t available < <(collections)
+  if ((${#available[@]} < 2)); then
+    echo "São necessárias ao menos duas coletas para o Regression Gate."
+    return 0
+  fi
+  latest="${available[${#available[@]}-1]}"
+  previous="${available[${#available[@]}-2]}"
+  collections | nl -ba
+  read -r -p "ID da coleta ANTERIOR (Enter = $previous): " before_id
+  read -r -p "ID da coleta ATUAL (Enter = $latest): " after_id
+  before_id="${before_id:-$previous}"; after_id="${after_id:-$latest}"
+  if [[ ! "$before_id" =~ ^[A-Za-z0-9._-]+$ || ! "$after_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "ID de coleta inválido."
+    return 0
+  fi
+  if [[ "$before_id" == "$after_id" ]]; then
+    echo "As coletas anterior e atual devem ser diferentes."
+    return 0
+  fi
+  before="$OUTROOT/$before_id"; after="$OUTROOT/$after_id"
+  if [[ ! -d "$before" || ! -d "$after" ]]; then
+    echo "Coleta não encontrada."
+    return 0
+  fi
+  if [[ ! -r "$REGRESSION_POLICY" ]]; then
+    echo "ERRO: policy do Regression Gate não encontrada em $REGRESSION_POLICY" >&2
+    return 0
+  fi
+  profiles="$(jq -r '.profiles | keys | join("|")' "$REGRESSION_POLICY" 2>/dev/null || true)"
+  default_profile="$(jq -r '.defaultProfile // empty' "$REGRESSION_POLICY" 2>/dev/null || true)"
+  if [[ -z "$profiles" || -z "$default_profile" ]]; then
+    echo "ERRO: policy do Regression Gate inválida." >&2
+    return 0
+  fi
+  read -r -p "Policy profile [$profiles] (Enter = $default_profile): " profile
+  profile="${profile:-$default_profile}"
+  if ! jq -e --arg profile "$profile" '.profiles[$profile] | type == "object"' "$REGRESSION_POLICY" >/dev/null 2>&1; then
+    echo "Policy profile inválido."
+    return 0
+  fi
+  echo "Executando Regression Gate offline; nenhuma API do cluster ou do provider será consultada."
+  if "$PYTHON_BIN" "$REGRESSION_VALIDATOR" --before "$before" --after "$after" --policy "$REGRESSION_POLICY" --profile "$profile"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if ((rc == 0 || rc == 1)) && [[ -r "$after/regression-validation.json" ]]; then
+    jq -r '"Estado: \(.summary.state) | Release Ready: \(.summary.releaseReady) | Profile: \(.policy.profile) | Novos riscos: \(.summary.newRisks) | Regressões: \(.summary.severityRegressions) | Evidence Loss: \(.summary.evidenceLoss)"' "$after/regression-validation.json"
+    echo "JSON: $after/regression-validation.json"
+    echo "JUnit: $after/regression-validation.junit.xml"
+    echo "SARIF: $after/regression-validation.sarif.json"
+  else
+    echo "ERRO: o Regression Gate não pôde ser executado (exit code $rc)." >&2
   fi
   return 0
 }
@@ -526,13 +588,15 @@ need kubectl; need jq; need curl; need timeout; need setsid
 select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
 [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
 [[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
+[[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
+[[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
 mkdir -p "$OUTROOT"
 while :; do
   render_menu
   read -r -p "${C_BOLD}${C_LIGHT}Selecione uma opção › ${C_RESET}" op
   case "$op" in
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
-    5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";; 7) provider_gate;;
+    5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";; 7) provider_gate;; 8) regression_gate;;
     0) printf '%sSessão encerrada.%s\n' "$C_DIM" "$C_RESET"; exit 0;; *) printf '%sOpção inválida.%s\n' "$C_RED" "$C_RESET";;
   esac
   [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _

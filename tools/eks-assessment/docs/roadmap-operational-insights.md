@@ -19,6 +19,7 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 15. smoke de logs sanitizados sem exposição de conteúdo no output de validação.
 16. `Provider Validation Runner` offline com provider esperado obrigatório e gates de release reproduzíveis.
 17. `Release Gate Console` no menu e dashboard, com execução offline, persistência atômica, busca e exportação sanitizada.
+18. `Regression Gate` provider-neutral com policy versionada, comparação offline e exportações JSON, JUnit e SARIF.
 
 ## Guardrails
 
@@ -60,5 +61,9 @@ Esses gates são operacionais, não pendências de implementação local. Sem cr
 - página e exportação do `Release Gate` validadas por smoke HTTP autenticado, sem novas chamadas às APIs;
 - pacote portátil `0.4.0-rc.7` validado por checksum, compile, sintaxe Bash, preflight com 18 `PASS`/0 `WARN`/0 `FAIL` e runner executado a partir do diretório extraído;
 - lab completo validado com `k8s-master`, `k8s-worker-01` e `k8s-worker-02` em estado `Ready`, incluindo resposta da Metrics API para os três nodes.
+- `Regression Gate` da RC.8 validado com matriz automatizada de 88 testes, incluindo profiles, fingerprints, CIS, Node Health, manifests, lifecycle, quality gate, performance, autenticação e outputs de CI/CD;
+- comparação entre coletas reais antigas bloqueou corretamente promoção por integridade não comprovada, novos riscos e regressões operacionais, sem produzir `PASS` retroativo;
+- opção 8 do menu, página autenticada, busca e exportações JSON/JUnit/SARIF validadas por smoke com cópias temporárias de uma coleta real;
+- pacote portátil `0.4.0-rc.8` validado por checksum, SBOM, compile, sintaxe Bash, preflight com 18 `PASS`/0 `WARN`/0 `FAIL` e Regression Gate executado a partir do diretório extraído.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.

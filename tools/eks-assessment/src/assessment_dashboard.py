@@ -26,10 +26,17 @@ from cis_security_assessment import compare_reports
 from eks_comprehensive_assessment import sanitize_snapshot_tree
 from localization_pt_br import localize_finding
 from provider_validation import PROVIDERS, evaluate as evaluate_provider
+from regression_validation import (
+    DEFAULT_POLICY as DEFAULT_REGRESSION_POLICY,
+    evaluate as evaluate_regression,
+    profile_names as regression_profile_names,
+    write_outputs as write_regression_outputs,
+)
 
 LOCK = threading.Lock()
 SUPERVISOR = CollectionSupervisor()
 ACTION_TOKEN = secrets.token_urlsafe(32)
+REGRESSION_POLICY = Path(os.environ.get("ASSESSMENT_POLICY_FILE", str(DEFAULT_REGRESSION_POLICY))).resolve()
 PLACEHOLDERS = {"", "cluster", "not-detected", "eks-production"}
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Rollout", "Job", "CronJob"}
 SEVERITY_ORDER = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
@@ -346,6 +353,20 @@ def write_provider_validation(collection: Path, expected_provider: str) -> dict[
     return report
 
 
+def write_regression_validation(before: Path, after: Path, profile: str) -> dict[str, Any]:
+    """Evaluate two existing collections and atomically persist all CI artifacts."""
+    if profile not in regression_profile_names(REGRESSION_POLICY):
+        raise ValueError("profile de policy inválido")
+    report = evaluate_regression(before, after, policy_path=REGRESSION_POLICY, profile=profile)
+    write_regression_outputs(
+        report,
+        after / "regression-validation.json",
+        after / "regression-validation.junit.xml",
+        after / "regression-validation.sarif.json",
+    )
+    return report
+
+
 class Handler(BaseHTTPRequestHandler):
     root: Path
     static: Path
@@ -408,6 +429,15 @@ class Handler(BaseHTTPRequestHandler):
         if filename: self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers(); self.wfile.write(data)
 
+    def send_file(self, path: Path, content_type: str, filename: str):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return self.send_json({"error": "Artefato não disponível"}, 404)
+        self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.security_headers()
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers(); self.wfile.write(data)
+
     def layout(self, title: str, body: str, directory: Path | None = None, active: str = "overview") -> str:
         value = metadata(directory) if directory else {"clusterName": cluster()[1]}
         ident = directory.name if directory else ""
@@ -418,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
             ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
             ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
-            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate")]),
+            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate"), ("regression-gate", "/regression-gate", "Regression Gate")]),
             ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
         ]
         nav = []
@@ -481,7 +511,7 @@ class Handler(BaseHTTPRequestHandler):
         term = query.get("q", [""])[0].strip()
         form = f'<form class="filters global-results" action="/search"><input type="hidden" name="collection" value="{esc(directory.name)}"><input name="q" minlength="2" value="{esc(term)}" placeholder="Recurso, namespace, Rule ID, Event, versão ou recomendação"><button>Pesquisar</button></form>'
         if len(term) < 2:
-            return self.layout("Busca global", f'<h1>Busca global</h1><p>Pesquise em findings, inventário, CIS Security, Events, Versions, Manifest Quality e Best Practices.</p>{form}<div class="message">Informe ao menos dois caracteres.</div>', directory, "search")
+            return self.layout("Busca global", f'<h1>Busca global</h1><p>Pesquise em findings, inventário, CIS Security, Events, Versions, Manifest Quality, Best Practices e gates de governança.</p>{form}<div class="message">Informe ao menos dois caracteres.</div>', directory, "search")
         value = details(directory)
         needle = term.lower()
         collection = quote_plus(directory.name)
@@ -526,6 +556,11 @@ class Handler(BaseHTTPRequestHandler):
         provider_validation = jfile(directory / "provider-validation.json", {})
         for item in provider_validation.get("gates") or []:
             add("Release Gate", item.get("gateId"), item.get("status"), item.get("summary"), f'/release-gate?collection={collection}', item)
+        regression_validation = jfile(directory / "regression-validation.json", {})
+        for item in regression_validation.get("gates") or []:
+            add("Regression Gate", item.get("gateId"), item.get("status"), item.get("summary"), f'/regression-gate?collection={collection}', item)
+        for item in regression_validation.get("changes") or []:
+            add("Regression Gate", item.get("ruleId"), item.get("afterStatus"), item.get("detail"), f'/regression-gate?collection={collection}', item)
         message = f'<div class="message good">{len(rows)} resultado(s) para <b>{esc(term)}</b>. Limite: 500; conteúdo de logs não é indexado.</div>' if rows else f'<div class="message">Nenhum resultado para <b>{esc(term)}</b>.</div>'
         body = f'<h1>Busca global</h1>{form}{message}{table(rows, [("source","Origem"),("title","Item"),("status","Estado"),("detail","Detalhe"),("open","Ação")], raw={"open"})}'
         return self.layout("Busca global", body, directory, "search")
@@ -1235,6 +1270,122 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.layout("Release Gate", body, directory, "release-gate")
 
+    def regression_gate(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        try:
+            profiles = regression_profile_names(REGRESSION_POLICY)
+        except ValueError as error:
+            return self.layout(
+                "Regression Gate",
+                f'<h1>Regression Gate</h1><div class="message bad">Policy inválida: {esc(error)}</div>',
+                directory,
+                "regression-gate",
+            )
+        report = jfile(directory / "regression-validation.json", {})
+        comparison = report.get("comparison") or {}
+        policy = report.get("policy") or {}
+        summary = report.get("summary") or {}
+        before_id = str(comparison.get("before") or "")
+        selected_profile = str(policy.get("profile") or ("standard" if "standard" in profiles else profiles[0]))
+        before_options = "".join(
+            f'<option value="{esc(item.name)}" {"selected" if item.name == before_id else ""}>{esc(item.name)}</option>'
+            for item in self.directories()
+            if item != directory and (item / "comprehensive-assessment.json").is_file()
+        )
+        profile_options = "".join(
+            f'<option value="{esc(item)}" {"selected" if item == selected_profile else ""}>{esc(item)}</option>'
+            for item in profiles
+        )
+        validation_form = (
+            '<form class="compare" method="post" action="/validate-regression">'
+            f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
+            f'<input type="hidden" name="after" value="{esc(directory.name)}">'
+            f'<label>Coleta anterior<select name="before" required><option value="">Selecionar explicitamente</option>{before_options}</select></label>'
+            f'<label>Policy profile<select name="profile" required>{profile_options}</select></label>'
+            '<button type="submit">Executar Regression Gate</button></form>'
+        )
+        notice = (
+            '<div class="message">A comparação usa somente artefatos sanitizados já coletados. '
+            'Ela não realiza chamadas ao Kubernetes ou ao Cloud Provider. O profile <b>standard</b> bloqueia regressões novas; '
+            'o profile <b>strict</b> também exige ausência de riscos e lacunas nos findings atuais.</div>'
+        )
+        if not report:
+            body = (
+                '<h1>Regression Gate</h1>'
+                '<div class="message warn"><b>Não executado.</b> Selecione explicitamente a coleta anterior e o policy profile.</div>'
+                f'{validation_form}{notice}'
+            )
+            return self.layout("Regression Gate", body, directory, "regression-gate")
+
+        state = str(summary.get("state") or "UNKNOWN")
+        release_ready = summary.get("releaseReady") is True
+        message_class = "good" if release_ready else "bad" if state == "FAIL" else "warn"
+        status_counts = summary.get("status") or {}
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Estado</small><b>{esc(state)}</b></div>'
+            f'<div><small>Release Ready</small><b>{"SIM" if release_ready else "NÃO"}</b></div>'
+            f'<div><small>Policy profile</small><b>{esc(selected_profile)}</b></div>'
+            f'<div><small>Mesmo cluster</small><b>{"SIM" if comparison.get("sameCluster") is True else "NÃO"}</b></div>'
+            f'<div><small>Novos riscos</small><b>{esc(summary.get("newRisks", 0))}</b></div>'
+            f'<div><small>Regressões de severidade</small><b>{esc(summary.get("severityRegressions", 0))}</b></div>'
+            f'<div><small>Evidence Loss</small><b>{esc(summary.get("evidenceLoss", 0))}</b></div>'
+            f'<div><small>Resolvidos</small><b>{esc(summary.get("resolvedRisks", 0))}</b></div>'
+            f'<div><small>PASS / WARN / FAIL</small><b>{esc(status_counts.get("PASS", 0))} / {esc(status_counts.get("WARN", 0))} / {esc(status_counts.get("FAIL", 0))}</b></div>'
+            '</div>'
+        )
+        gate_cards = []
+        for item in report.get("gates") or []:
+            gate_state = str(item.get("status") or "UNKNOWN")
+            evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, indent=2, sort_keys=True)
+            gate_cards.append(
+                f'<details class="cis-control {esc(gate_state)}"><summary>'
+                f'<span><b>{esc(item.get("gateId"))}</b> — {esc(item.get("summary"))}</span>'
+                f'<span class="metric-status {esc(gate_state.lower())}">{esc(gate_state)}</span></summary>'
+                f'<div class="cis-meta"><span>Categoria: <b>{esc(item.get("category"))}</b></span>'
+                f'<span>Obrigatório: <b>{"sim" if item.get("mandatory") else "não"}</b></span></div>'
+                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre></details>'
+            )
+        thresholds = [
+            {"threshold": key, "value": value}
+            for key, value in sorted((policy.get("thresholds") or {}).items())
+        ]
+        provenance = [
+            {"artifact": "Coleta anterior", "sha256": comparison.get("beforeSha256")},
+            {"artifact": "Coleta atual", "sha256": comparison.get("afterSha256")},
+            {"artifact": "Policy", "sha256": policy.get("sha256")},
+        ]
+        provenance = [item for item in provenance if item.get("sha256")]
+        gate_message = (
+            "Nenhuma regressão excedeu a policy; a coleta atual está pronta para promoção."
+            if release_ready
+            else "A promoção está bloqueada enquanto existir WARN ou FAIL em gate obrigatório."
+        )
+        gates_html = "".join(gate_cards) or '<div class="message">Nenhum gate disponível.</div>'
+        exports = (
+            '<div class="cis-actions">'
+            f'<a class="button" href="/export-regression-validation?collection={quote_plus(directory.name)}">Exportar JSON</a>'
+            f'<a class="button" href="/export-regression-junit?collection={quote_plus(directory.name)}">Exportar JUnit</a>'
+            f'<a class="button" href="/export-regression-sarif?collection={quote_plus(directory.name)}">Exportar SARIF</a>'
+            '</div>'
+        )
+        changes = report.get("changes") or []
+        cis_changes = report.get("cisChanges") or []
+        body = (
+            f'<h1>Regression Gate <small>{esc(before_id)} → {esc(directory.name)}</small></h1>'
+            f'<div class="message {message_class}"><b>{esc(state)}</b> — {esc(gate_message)}</div>'
+            f'{facts}{validation_form}{notice}{exports}'
+            f'<h2>Gates</h2>{gates_html}'
+            f'<h2>Mudanças nos findings <small>{len(changes)} item(ns)</small></h2>'
+            f'{table(changes, [("change","Mudança"),("afterStatus","Estado atual"),("ruleId","Rule ID"),("category","Categoria"),("namespace","Namespace"),("resource","Recurso"),("check","Check"),("detail","Evidência")])}'
+            f'<h2>Mudanças CIS <small>{len(cis_changes)} item(ns)</small></h2>'
+            f'{table(cis_changes, [("change","Mudança"),("controlId","Control ID"),("domain","Domínio"),("beforeStatus","Antes"),("afterStatus","Depois"),("beforeApplicability","Aplicabilidade anterior"),("afterApplicability","Aplicabilidade atual")])}'
+            f'<h2>Provenance SHA-256</h2>{table(provenance, [("artifact","Artefato"),("sha256","SHA-256")])}'
+            f'<h2>Policy e thresholds</h2>{table(thresholds, [("threshold","Threshold"),("value","Valor")])}'
+        )
+        return self.layout("Regression Gate", body, directory, "regression-gate")
+
     def cloud_provider(self, directory: Path | None) -> str:
         if not directory:
             return self.overview(None)
@@ -1612,6 +1763,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logs": return self.send_html(self.logs(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/release-gate": return self.send_html(self.release_gate(directory))
+        if path == "/regression-gate": return self.send_html(self.regression_gate(directory))
         if path == "/cloud": return self.send_html(self.cloud_provider(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
@@ -1643,6 +1795,17 @@ class Handler(BaseHTTPRequestHandler):
             report = jfile(directory / "provider-validation.json", {})
             if not report: return self.send_json({"error": "Release Gate ainda não executado para esta coleta"}, 404)
             return self.send_json(report, filename=f"{directory.name}-provider-validation.json")
+        if path == "/export-regression-validation":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = jfile(directory / "regression-validation.json", {})
+            if not report: return self.send_json({"error": "Regression Gate ainda não executado para esta coleta"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-regression-validation.json")
+        if path == "/export-regression-junit":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "regression-validation.junit.xml", "application/xml; charset=utf-8", f"{directory.name}-regression-validation.junit.xml")
+        if path == "/export-regression-sarif":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "regression-validation.sarif.json", "application/sarif+json; charset=utf-8", f"{directory.name}-regression-validation.sarif.json")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
@@ -1663,7 +1826,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authenticated(): return
         path = urlparse(self.path).path
-        if path not in {"/collect", "/cancel", "/validate-provider"}:
+        if path not in {"/collect", "/cancel", "/validate-provider", "/validate-regression"}:
             return self.send_json({"error": "Rota não encontrada"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1712,6 +1875,43 @@ class Handler(BaseHTTPRequestHandler):
                 LOCK.release()
             self.send_response(303)
             self.send_header("Location", f"/release-gate?{urlencode({'collection': ident})}")
+            self.end_headers()
+            return
+        if path == "/validate-regression":
+            before_id = form.get("before", [""])[0]
+            after_id = form.get("after", [""])[0]
+            profile = form.get("profile", [""])[0]
+            if not all(re.fullmatch(r"[A-Za-z0-9._-]+", ident) for ident in (before_id, after_id)):
+                return self.send_json({"error": "ID de coleta inválido"}, 400)
+            if before_id == after_id:
+                return self.send_json({"error": "As coletas devem ser diferentes"}, 400)
+            before, after = self.root / before_id, self.root / after_id
+            if not before.is_dir() or not after.is_dir():
+                return self.send_json({"error": "Coleta não encontrada"}, 404)
+            try:
+                profiles = regression_profile_names(REGRESSION_POLICY)
+            except ValueError:
+                return self.send_json({"error": "Policy do Regression Gate inválida"}, 500)
+            if profile not in profiles:
+                return self.send_json({"error": "Policy profile inválido"}, 400)
+            if not LOCK.acquire(blocking=False):
+                return self.send_json({"error": "Já existe uma coleta ou validação em execução"}, 409)
+            try:
+                write_regression_validation(before, after, profile)
+            except Exception:
+                return self.send_html(
+                    self.layout(
+                        "Regression Gate",
+                        '<div class="message bad">Não foi possível comparar as coletas. Verifique a integridade dos artefatos e a policy.</div>',
+                        after,
+                        "regression-gate",
+                    ),
+                    500,
+                )
+            finally:
+                LOCK.release()
+            self.send_response(303)
+            self.send_header("Location", f"/regression-gate?{urlencode({'collection': after_id})}")
             self.end_headers()
             return
         if not LOCK.acquire(blocking=False):

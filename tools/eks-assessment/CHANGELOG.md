@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0-rc.8 — 2026-09-28
+
+- adiciona `Regression Gate` provider-neutral e offline entre duas coletas sanitizadas;
+- publica `assessment-policy.json` versionado com profiles `standard` e `strict` e validação fail-closed do schema;
+- compara findings por fingerprint estável, CIS, Node Health, Manifest Quality, lifecycle, quality gate e impacto medido;
+- impede `PASS` quando identidade do cluster, estado terminal, integridade ou evidência obrigatória não são comprovados;
+- integra o fluxo à opção 8 do menu e a **Governança → Regression Gate** no dashboard;
+- grava JSON, JUnit e SARIF de forma atômica para consumo em CI/CD;
+- adiciona regressões automatizadas para policy, gates, autenticação, persistência e exportações;
+- mantém a qualificação real de EKS, AKS e GKE explicitamente adiada, sem inferir validação cloud.
+
 ## 0.4.0-rc.7 — 2026-09-28
 
 - integra o `Provider Validation Runner` ao menu como opção 7 e ao dashboard em `Governança → Release Gate`;
