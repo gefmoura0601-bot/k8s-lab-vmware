@@ -10,6 +10,8 @@ Na RC.6, use `src/provider_validation.py` somente após uma coleta `COMPLETED`. 
 
 Na RC.7, o mesmo gate está disponível na opção 7 do menu e em **Governança → Release Gate** no dashboard. A escolha do provider continua obrigatória e explícita. O dashboard usa os thresholds padrão; use o CLI para uma policy customizada.
 
+Na RC.8, a opção 8 e **Governança → Regression Gate** comparam duas coletas offline. O profile `standard` bloqueia regressões novas; `strict` também bloqueia riscos e lacunas nos findings atuais. A policy está em `data/assessment-policy.json` e gera JSON, JUnit e SARIF na coleta atual. Coleções antigas sem os contratos obrigatórios permanecem visíveis, mas não são aprovadas sem evidência.
+
 Após extrair o pacote, execute:
 
 ```bash

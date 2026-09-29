@@ -283,6 +283,133 @@ class DashboardAccessTests(unittest.TestCase):
             )
             writer.assert_called_once_with(collection, "eks")
 
+    def test_regression_gate_requires_baseline_and_renders_ci_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            before = root / "eks-20260928-before"
+            after = root / "eks-20260928-after"
+            before.mkdir(); after.mkdir()
+            for directory, created in ((before, "2026-09-28T00:00:00Z"), (after, "2026-09-28T01:00:00Z")):
+                (directory / "metadata.json").write_text(
+                    json.dumps({"clusterName": "lab", "createdAt": created}), encoding="utf-8"
+                )
+                (directory / "comprehensive-assessment.json").write_text(
+                    json.dumps({"summary": {}, "findings": []}), encoding="utf-8"
+                )
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root
+            handler.static = STATIC
+
+            empty_page = handler.regression_gate(after)
+            self.assertIn("Selecionar explicitamente", empty_page)
+            self.assertIn("Policy profile", empty_page)
+            self.assertIn("Não executado", empty_page)
+
+            report = {
+                "comparison": {"before": before.name, "after": after.name, "sameCluster": True},
+                "policy": {"profile": "standard", "thresholds": {"maxNewCritical": 0}},
+                "summary": {
+                    "state": "FAIL", "releaseReady": False, "status": {"PASS": 10, "FAIL": 1},
+                    "newRisks": 1, "severityRegressions": 0, "evidenceLoss": 0, "resolvedRisks": 0,
+                },
+                "gates": [{
+                    "gateId": "findings.new-risk", "category": "Findings", "status": "FAIL",
+                    "mandatory": True, "summary": "Novo risco detectado.", "evidence": {"newCritical": 1},
+                }],
+                "changes": [{
+                    "change": "NEW_RISK", "afterStatus": "CRIT", "ruleId": "k8s.security.privileged",
+                    "category": "Security", "namespace": "apps", "resource": "Deployment/api",
+                    "check": "Privileged", "detail": "privileged=true",
+                }],
+                "cisChanges": [],
+            }
+            (after / "regression-validation.json").write_text(json.dumps(report), encoding="utf-8")
+
+            page = handler.regression_gate(after)
+            self.assertIn("Regression Gate", page)
+            self.assertIn("findings.new-risk", page)
+            self.assertIn("k8s.security.privileged", page)
+            self.assertIn("Exportar JUnit", page)
+            self.assertIn("Exportar SARIF", page)
+            search = handler.search_page(after, {"q": ["k8s.security.privileged"]})
+            self.assertIn("Regression Gate", search)
+            self.assertIn("k8s.security.privileged", search)
+
+    def test_regression_gate_writes_all_artifacts_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            before, after = root / "eks-before", root / "eks-after"
+            before.mkdir(); after.mkdir()
+            report = {"summary": {"state": "PASS", "releaseReady": True}, "gates": []}
+            with (
+                patch.object(dashboard, "regression_profile_names", return_value=("standard",)),
+                patch.object(dashboard, "evaluate_regression", return_value=report) as evaluate,
+            ):
+                value = dashboard.write_regression_validation(before, after, "standard")
+            self.assertEqual(report, value)
+            self.assertTrue((after / "regression-validation.json").is_file())
+            self.assertTrue((after / "regression-validation.junit.xml").is_file())
+            self.assertTrue((after / "regression-validation.sarif.json").is_file())
+            self.assertFalse((after / ".regression-validation.json.tmp").exists())
+            evaluate.assert_called_once_with(
+                before, after, policy_path=dashboard.REGRESSION_POLICY, profile="standard"
+            )
+
+    def test_regression_gate_post_validates_ids_profile_and_action_token(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            before, after = root / "eks-before", root / "eks-after"
+            before.mkdir(); after.mkdir()
+
+            def request(body: str):
+                handler = object.__new__(dashboard.Handler)
+                handler.path = "/validate-regression"
+                handler.root = root
+                handler.static = STATIC
+                handler.repository = ROOT
+                handler.client_address = ("127.0.0.1", 12345)
+                handler.headers = {"Content-Length": str(len(body.encode("utf-8")))}
+                handler.rfile = io.BytesIO(body.encode("utf-8"))
+                handler.authenticated = lambda: True
+                handler.response_status = None
+                handler.response_headers = []
+                handler.response_payload = None
+                handler.send_response = lambda status: setattr(handler, "response_status", status)
+                handler.send_header = lambda name, value: handler.response_headers.append((name, value))
+                handler.end_headers = lambda: None
+                handler.send_json = lambda value, status=200, filename=None: (
+                    setattr(handler, "response_payload", value),
+                    setattr(handler, "response_status", status),
+                )
+                return handler
+
+            denied = request(f"action_token=invalid&before={before.name}&after={after.name}&profile=standard")
+            denied.do_POST()
+            self.assertEqual(403, denied.response_status)
+
+            invalid = request(
+                f"action_token={dashboard.ACTION_TOKEN}&before={before.name}&after={after.name}&profile=unknown"
+            )
+            invalid.do_POST()
+            self.assertEqual(400, invalid.response_status)
+
+            same = request(
+                f"action_token={dashboard.ACTION_TOKEN}&before={before.name}&after={before.name}&profile=standard"
+            )
+            same.do_POST()
+            self.assertEqual(400, same.response_status)
+
+            accepted = request(
+                f"action_token={dashboard.ACTION_TOKEN}&before={before.name}&after={after.name}&profile=standard"
+            )
+            with patch.object(dashboard, "write_regression_validation", return_value={}) as writer:
+                accepted.do_POST()
+            self.assertEqual(303, accepted.response_status)
+            self.assertIn(
+                ("Location", f"/regression-gate?collection={after.name}"), accepted.response_headers
+            )
+            writer.assert_called_once_with(before, after, "standard")
+
 
 if __name__ == "__main__":
     unittest.main()
