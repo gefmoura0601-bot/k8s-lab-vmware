@@ -11,6 +11,8 @@
 - persiste `namespaceScope` na metadata e bloqueia comparações entre coleta
   cluster-wide e coleta namespaced sem gerar deltas enganosos;
 - valida o pacote portátil, checksum, SBOM, sintaxe e versão antes da publicação;
+- publica o SBOM SPDX como asset independente e usa checksum relativo, portátil
+  após o download;
 - preserva todos os contratos e formatos de artefato da série `0.4.0-rc`.
 
 ## 0.4.0-rc.9 — 2026-09-28
