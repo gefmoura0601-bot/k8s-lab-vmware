@@ -38,7 +38,15 @@ SBOM="$STAGING/$NAME/SBOM.spdx"
   done < <(find "$STAGING/$NAME" -type f ! -name SBOM.spdx -print | LC_ALL=C sort)
 } > "$SBOM"
 
-ARCHIVE="$DESTINATION/$NAME.tar.gz"
+SBOM_ASSET="$DESTINATION/$NAME.spdx"
+cp "$SBOM" "$SBOM_ASSET"
+
+ARCHIVE_NAME="$NAME.tar.gz"
+ARCHIVE="$DESTINATION/$ARCHIVE_NAME"
 tar -C "$STAGING" -czf "$ARCHIVE" "$NAME"
-sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
-printf 'Pacote: %s\nChecksum: %s\n' "$ARCHIVE" "$ARCHIVE.sha256"
+(
+  cd "$DESTINATION"
+  sha256sum "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+)
+printf 'Pacote: %s\nChecksum: %s\nSBOM: %s\n' \
+  "$ARCHIVE" "$ARCHIVE.sha256" "$SBOM_ASSET"

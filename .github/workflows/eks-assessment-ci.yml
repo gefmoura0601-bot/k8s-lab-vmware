@@ -122,7 +122,12 @@ jobs:
           dist="$RUNNER_TEMP/dist"
           bash tools/eks-assessment/bin/package-release.sh "$dist"
           archive="$dist/eks-assessment-${version}.tar.gz"
-          sha256sum --check "$archive.sha256"
+          sbom_asset="$dist/eks-assessment-${version}.spdx"
+          (
+            cd "$dist"
+            sha256sum --check "$(basename "$archive.sha256")"
+          )
+          test -s "$sbom_asset"
           if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
             echo 'O pacote contém caminho absoluto ou traversal.' >&2
             exit 1
@@ -133,6 +138,18 @@ jobs:
           tar -xzf "$archive" -C "$extracted"
           package_root="$extracted/eks-assessment-${version}"
           test "$(bash "$package_root/bin/eks-assessment.sh" --version)" = "$version"
+          test -s "$package_root/SBOM.spdx"
+          cmp "$sbom_asset" "$package_root/SBOM.spdx"
+          (
+            cd "$package_root"
+            awk '
+              /^FileName: \.\// { file=substr($0, 13) }
+              /^FileChecksum: SHA256: / { print substr($0, 23) "  ./" file }
+            ' SBOM.spdx > "$RUNNER_TEMP/sbom.sha256"
+            test "$(wc -l < "$RUNNER_TEMP/sbom.sha256")" -eq \
+              "$(find . -type f ! -name SBOM.spdx | wc -l)"
+            sha256sum --check "$RUNNER_TEMP/sbom.sha256"
+          )
           python3 -m compileall -q "$package_root/src"
           mapfile -t scripts < <(find "$package_root/bin" "$package_root/src" -type f -name '*.sh')
           for script in "${scripts[@]}"; do bash -n "$script"; done

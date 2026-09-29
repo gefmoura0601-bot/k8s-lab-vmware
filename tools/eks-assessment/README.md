@@ -328,7 +328,11 @@ Gere o pacote portátil, o checksum e o SBOM SPDX com:
 
 ```bash
 ./bin/package-release.sh ./dist
-sha256sum -c ./dist/eks-assessment-*.tar.gz.sha256
+(cd ./dist && sha256sum -c eks-assessment-*.tar.gz.sha256)
 ```
+
+O diretório de saída contém o tarball portátil, o checksum relativo e o SBOM
+SPDX independente. O mesmo `SBOM.spdx` permanece dentro do pacote para validação
+offline do conteúdo extraído.
 
 Extraia o arquivo em qualquer diretório gravável e execute `bin/eks-assessment.sh`. O processo não pressupõe checkout Git nem caminhos como `/workspace`; dependências e permissões são verificadas pelo preflight.
