@@ -4,11 +4,26 @@ on:
   push:
     branches: [main]
     paths:
-      - app/account-service-java/**
-      - app/transaction-service-dotnet/**
-      - app/acquirer-service-dotnet/**
-      - app/store-service-go/**
-      - .github/workflows/banking-images-ci.yaml
+      - app/account-service-java/.dockerignore
+      - app/account-service-java/Dockerfile
+      - app/account-service-java/pom.xml
+      - app/account-service-java/src/main/**
+      - app/transaction-service-dotnet/.dockerignore
+      - app/transaction-service-dotnet/Dockerfile
+      - app/transaction-service-dotnet/appsettings.json
+      - app/transaction-service-dotnet/*.cs
+      - app/transaction-service-dotnet/*.csproj
+      - app/acquirer-service-dotnet/.dockerignore
+      - app/acquirer-service-dotnet/Dockerfile
+      - app/acquirer-service-dotnet/appsettings.json
+      - app/acquirer-service-dotnet/*.cs
+      - app/acquirer-service-dotnet/*.csproj
+      - app/store-service-go/.dockerignore
+      - app/store-service-go/Dockerfile
+      - app/store-service-go/go.mod
+      - app/store-service-go/go.sum
+      - app/store-service-go/main.go
+      - app/store-service-go/static/**
   workflow_dispatch:
 
 concurrency:
@@ -16,9 +31,9 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   packages: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   build-test-publish:
@@ -28,6 +43,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
 
       - name: Normalize image metadata
         id: meta
@@ -35,6 +52,16 @@ jobs:
         run: |
           echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect changed runtime services
+        id: changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          bash scripts/ci/detect-banking-runtime-changes.sh
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -44,6 +71,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish Account Service
+        if: steps.changes.outputs.account == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: app/account-service-java
@@ -51,6 +79,7 @@ jobs:
           tags: ghcr.io/${{ steps.meta.outputs.owner }}/account-service-java:${{ steps.meta.outputs.tag }}
 
       - name: Build and publish Transaction Service
+        if: steps.changes.outputs.transaction == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: app/transaction-service-dotnet
@@ -58,6 +87,7 @@ jobs:
           tags: ghcr.io/${{ steps.meta.outputs.owner }}/transaction-service-dotnet:${{ steps.meta.outputs.tag }}
 
       - name: Build and publish Acquirer Service
+        if: steps.changes.outputs.acquirer == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: app/acquirer-service-dotnet
@@ -65,6 +95,7 @@ jobs:
           tags: ghcr.io/${{ steps.meta.outputs.owner }}/acquirer-service-dotnet:${{ steps.meta.outputs.tag }}
 
       - name: Build and publish Store Service
+        if: steps.changes.outputs.store == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: app/store-service-go
@@ -72,24 +103,85 @@ jobs:
           tags: ghcr.io/${{ steps.meta.outputs.owner }}/store-service-go:${{ steps.meta.outputs.tag }}
 
       - name: Update GitOps image references
+        id: update
         shell: bash
         run: |
-          sed -i \
-            "s|image: ghcr.io/.*/account-service-java:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/account-service-java:${{ steps.meta.outputs.tag }}|" \
-            kubernetes/apps/banking/account-service.yaml
-          sed -i \
-            "s|image: ghcr.io/.*/transaction-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/transaction-service-dotnet:${{ steps.meta.outputs.tag }}|" \
-            kubernetes/apps/banking/transaction-service.yaml
-          sed -i \
-            "s|image: ghcr.io/.*/acquirer-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/acquirer-service-dotnet:${{ steps.meta.outputs.tag }}|" \
-            kubernetes/apps/banking/acquirer-service.yaml
-          sed -i \
-            "s|image: ghcr.io/.*/store-service-go:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/store-service-go:${{ steps.meta.outputs.tag }}|" \
-            kubernetes/apps/banking/store-service.yaml
+          set -euo pipefail
+          if [[ "${{ steps.changes.outputs.account }}" == "true" ]]; then
+            sed -i \
+              "s|image: ghcr.io/.*/account-service-java:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/account-service-java:${{ steps.meta.outputs.tag }}|" \
+              kubernetes/apps/banking/account-service.yaml
+          fi
+          if [[ "${{ steps.changes.outputs.transaction }}" == "true" ]]; then
+            sed -i \
+              "s|image: ghcr.io/.*/transaction-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/transaction-service-dotnet:${{ steps.meta.outputs.tag }}|" \
+              kubernetes/apps/banking/transaction-service.yaml
+          fi
+          if [[ "${{ steps.changes.outputs.acquirer }}" == "true" ]]; then
+            sed -i \
+              "s|image: ghcr.io/.*/acquirer-service-dotnet:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/acquirer-service-dotnet:${{ steps.meta.outputs.tag }}|" \
+              kubernetes/apps/banking/acquirer-service.yaml
+          fi
+          if [[ "${{ steps.changes.outputs.store }}" == "true" ]]; then
+            sed -i \
+              "s|image: ghcr.io/.*/store-service-go:.*|image: ghcr.io/${{ steps.meta.outputs.owner }}/store-service-go:${{ steps.meta.outputs.tag }}|" \
+              kubernetes/apps/banking/store-service.yaml
+          fi
+
+          git diff --check
+          if git diff --quiet -- kubernetes/apps/banking; then
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package portable GitOps update
+        if: steps.update.outputs.has_update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/banking-gitops-${{ steps.meta.outputs.tag }}"
+          mkdir -p "$output/manifests"
+          git diff --binary -- kubernetes/apps/banking > "$output/banking-images-${{ steps.meta.outputs.tag }}.patch"
+          cp kubernetes/apps/banking/{account-service,transaction-service,acquirer-service,store-service}.yaml \
+            "$output/manifests/"
+          printf '%s\n' \
+            "tag=${{ steps.meta.outputs.tag }}" \
+            "account=${{ steps.changes.outputs.account }}" \
+            "transaction=${{ steps.changes.outputs.transaction }}" \
+            "acquirer=${{ steps.changes.outputs.acquirer }}" \
+            "store=${{ steps.changes.outputs.store }}" \
+            > "$output/metadata.txt"
+
+      - name: Upload portable GitOps update
+        if: steps.update.outputs.has_update == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: banking-gitops-${{ steps.meta.outputs.tag }}
+          path: ${{ runner.temp }}/banking-gitops-${{ steps.meta.outputs.tag }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Detect GitOps automation credential
+        id: gitops_auth
+        if: steps.update.outputs.has_update == 'true'
+        shell: bash
+        env:
+          BANKING_GITOPS_TOKEN: ${{ secrets.BANKING_GITOPS_TOKEN }}
+        run: |
+          if [[ -n "$BANKING_GITOPS_TOKEN" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitOps update PR
+        id: gitops_pr
+        if: steps.update.outputs.has_update == 'true' && steps.gitops_auth.outputs.configured == 'true'
+        continue-on-error: true
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
+          token: ${{ secrets.BANKING_GITOPS_TOKEN }}
           commit-message: "ci: deploy banking images ${{ steps.meta.outputs.tag }}"
           branch: automation/banking-${{ steps.meta.outputs.tag }}
           delete-branch: true
@@ -100,3 +192,22 @@ jobs:
             kubernetes/apps/banking/transaction-service.yaml
             kubernetes/apps/banking/acquirer-service.yaml
             kubernetes/apps/banking/store-service.yaml
+
+      - name: Publish GitOps handoff summary
+        if: always()
+        shell: bash
+        env:
+          HAS_UPDATE: ${{ steps.update.outputs.has_update }}
+          PR_OUTCOME: ${{ steps.gitops_pr.outcome }}
+          PR_URL: ${{ steps.gitops_pr.outputs.pull-request-url }}
+        run: |
+          if [[ "$HAS_UPDATE" != "true" ]]; then
+            echo "### GitOps já atualizado" >> "$GITHUB_STEP_SUMMARY"
+            echo "Os manifests já referenciam o tag ${{ steps.meta.outputs.tag }}." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PR_OUTCOME" == "success" && -n "$PR_URL" ]]; then
+            echo "### PR GitOps criada" >> "$GITHUB_STEP_SUMMARY"
+            echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Handoff GitOps portátil" >> "$GITHUB_STEP_SUMMARY"
+            echo "A ruleset não foi contornada. Baixe o artifact banking-gitops-${{ steps.meta.outputs.tag }} e aplique o patch em uma branch autorizada." >> "$GITHUB_STEP_SUMMARY"
+            echo "Para automação integral, configure BANKING_GITOPS_TOKEN com Contents/PR write e bypass explícito apenas para esta ruleset." >> "$GITHUB_STEP_SUMMARY"

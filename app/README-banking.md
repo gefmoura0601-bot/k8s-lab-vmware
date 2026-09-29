@@ -237,7 +237,20 @@ bash scripts/validation/validate-banking-operational-readiness.sh
 
 Os manifests ficam em `kubernetes/apps/banking`. Alterações no código disparam
 os workflows de imagens bancárias, que publicam imagens imutáveis no GHCR e
-abrem um PR atualizando as referências GitOps.
+entregam a atualização GitOps por PR ou artifact portátil.
+
+O `Banking Images CI` identifica quais serviços tiveram mudança de runtime e
+publica somente essas imagens. Mudanças exclusivas em testes continuam sendo
+validadas pelo CI, mas não geram novo deploy. O `Banking Web CI` aplica a mesma
+regra para arquivos `*.test.ts`.
+
+Como a ruleset da `main` restringe criação de branches, a abertura automática
+do PR usa opcionalmente o Secret `BANKING_GITOPS_TOKEN`. Esse token deve possuir
+somente `Contents: write`, `Pull requests: write` e bypass explícito da ruleset
+necessária. Sem o Secret — ou se o PR não puder ser criado — o workflow termina
+com sucesso e publica por 14 dias um artifact portátil contendo patch,
+manifests e metadata para aplicação em uma branch autorizada. A ruleset não é
+enfraquecida.
 
 O `dotnet-monitor` do `transaction-service` escuta somente em
 `127.0.0.1:52323`, não possui `Service`/`Ingress` e não participa da prontidão

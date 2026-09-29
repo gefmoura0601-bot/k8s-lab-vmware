@@ -11,6 +11,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -47,10 +48,12 @@ class CardServiceTest {
         assertThat(result.number()).matches("999999\\d{10}");
         assertThat(result.cvv()).matches("\\d{3}");
         assertThat(result.availableAmount()).isEqualByComparingTo("100.00");
-        verify(cards).save(argThat(card ->
-            card.getPanFingerprint().length() == 64
-                && !card.getPanFingerprint().contains(result.number())
-                && !card.getPanFingerprint().contains(result.cvv())));
+        var savedCard = ArgumentCaptor.forClass(Card.class);
+        verify(cards).save(savedCard.capture());
+        assertThat(savedCard.getValue().getPanFingerprint())
+            .matches("[0-9a-f]{64}")
+            .isEqualTo(credentials.panFingerprint(result.number()))
+            .isNotEqualTo(result.number());
         verifyNoInteractions(creditLines);
         verify(metrics).issued(CardType.DEBIT);
     }

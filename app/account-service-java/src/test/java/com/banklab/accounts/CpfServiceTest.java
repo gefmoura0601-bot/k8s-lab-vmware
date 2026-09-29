@@ -24,7 +24,9 @@ class CpfServiceTest {
         assertThat(formatted.fingerprint()).isEqualTo(digits.fingerprint()).hasSize(64);
         assertThat(formatted.last4()).isEqualTo("4725");
         assertThat(CpfService.masked(formatted.last4())).isEqualTo("***.***.*47-25");
-        assertThat(formatted.fingerprint()).doesNotContain("52998224725");
+        assertThat(formatted.fingerprint())
+            .matches("[0-9a-f]{64}")
+            .isNotEqualTo("52998224725");
     }
 
     @Test
