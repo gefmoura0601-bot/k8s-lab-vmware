@@ -5,7 +5,10 @@ metadata:
   namespace: banking
   labels: {app: store-service, team: banking, environment: lab}
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   selector:
     matchLabels: {app: store-service}
   strategy:
@@ -16,6 +19,13 @@ spec:
       labels: {app: store-service, team: banking, environment: lab}
     spec:
       serviceAccountName: store-service
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: store-service}
       imagePullSecrets: [{name: ghcr-secret}]
       securityContext:
         seccompProfile: {type: RuntimeDefault}

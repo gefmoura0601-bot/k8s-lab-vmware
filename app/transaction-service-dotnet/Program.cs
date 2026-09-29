@@ -12,7 +12,8 @@ using var runtimeCollector = DotNetRuntimeStatsBuilder.Default().StartCollecting
 builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseUpper)));
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"]);
 builder.Services.AddSingleton<NpgsqlDataSource>(_ =>
 {
     var connectionString = builder.Configuration.GetConnectionString("Transactions")
@@ -37,7 +38,7 @@ var pixTransfers = Metrics.CreateCounter(
 app.UseHttpMetrics();
 app.MapOpenApi();
 app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
-app.MapHealthChecks("/health/ready");
+app.MapHealthChecks("/health/ready", new() { Predicate = check => check.Tags.Contains("ready") });
 app.MapMetrics();
 
 app.MapPost("/api/v1/transactions", async (

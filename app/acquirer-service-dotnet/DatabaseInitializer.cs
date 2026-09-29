@@ -1,8 +1,36 @@
 using Npgsql;
 
-public sealed class DatabaseInitializer(NpgsqlDataSource dataSource, ILogger<DatabaseInitializer> logger) : IHostedService
+public sealed class DatabaseInitializer(
+    NpgsqlDataSource dataSource,
+    ILogger<DatabaseInitializer> logger,
+    IConfiguration configuration) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        var maxAttempts = Math.Clamp(
+            configuration.GetValue<int?>("DatabaseInitialization:MaxAttempts") ?? 15,
+            1,
+            60);
+        var initialDelay = TimeSpan.FromMilliseconds(Math.Clamp(
+            configuration.GetValue<int?>("DatabaseInitialization:InitialDelayMilliseconds") ?? 1000,
+            0,
+            30_000));
+        var maxDelay = TimeSpan.FromMilliseconds(Math.Clamp(
+            configuration.GetValue<int?>("DatabaseInitialization:MaxDelayMilliseconds") ?? 5000,
+            (int)initialDelay.TotalMilliseconds,
+            30_000));
+
+        await DatabaseInitializationRetry.ExecuteAsync(
+            InitializeSchemaAsync,
+            maxAttempts,
+            initialDelay,
+            maxDelay,
+            logger,
+            cancellationToken);
+        logger.LogInformation("Acquiring database schema is ready");
+    }
+
+    private async Task InitializeSchemaAsync(CancellationToken cancellationToken)
     {
         await using var command = dataSource.CreateCommand(
             """
@@ -31,7 +59,6 @@ public sealed class DatabaseInitializer(NpgsqlDataSource dataSource, ILogger<Dat
                 ON acquiring_service.payments(merchant_id, created_at DESC);
             """);
         await command.ExecuteNonQueryAsync(cancellationToken);
-        logger.LogInformation("Acquiring database schema is ready");
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
