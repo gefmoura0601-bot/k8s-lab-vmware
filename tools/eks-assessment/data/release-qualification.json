@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "toolVersion": "0.4.0",
+  "profiles": {
+    "generic-kubernetes": {
+      "status": "STABLE",
+      "evidence": "Kubernetes API, Metrics API e validações on-premises read-only",
+      "limitations": "Control plane, node filesystem e logs permanecem condicionados à evidência explicitamente autorizada."
+    },
+    "eks": {
+      "status": "PREVIEW",
+      "evidence": "Contratos e fixtures offline",
+      "limitations": "Requer qualificação em Amazon EKS real com IAM read-only antes de suporte estável."
+    },
+    "aks": {
+      "status": "PREVIEW",
+      "evidence": "Contratos e fixtures offline",
+      "limitations": "Requer qualificação em Azure AKS real com RBAC read-only antes de suporte estável."
+    },
+    "gke": {
+      "status": "PREVIEW",
+      "evidence": "Contratos e fixtures offline",
+      "limitations": "Requer qualificação em Google GKE real com IAM read-only antes de suporte estável."
+    }
+  }
+}

@@ -68,6 +68,10 @@ bash tools/eks-assessment/bin/eks-assessment.sh collect \
 
 O final da saída inclui `COLLECTION_ID`, `COLLECTION_PATH` e `COLLECTION_STATUS`. Uma coleta `FAILED`, `TIMED_OUT` ou `CANCELLED` retorna exit code não zero. Prometheus não é autodetectado no modo headless: use `--prometheus-url` ou faça opt-in com `--auto-detect-prometheus`.
 
+O `namespaceScope` é persistido na metadata. O Regression Gate bloqueia uma
+comparação quando cluster ou namespace scope divergem e não calcula deltas
+enganosos para os demais gates.
+
 Exemplos offline, que não exigem `kubectl` nem novas chamadas às APIs:
 
 ```bash
@@ -314,6 +318,11 @@ O fluxo também está na opção 8 do menu e em **Governança → Regression Gat
 ## Versão e distribuição
 
 A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `data/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
+
+A versão `0.4.0` é estável para o profile `generic-kubernetes`. As integrações
+EKS, AKS e GKE permanecem `PREVIEW` até qualificação read-only em clusters reais;
+fixtures offline validam contratos, mas não equivalem a suporte operacional. O
+estado versionado de cada profile está em `data/release-qualification.json`.
 
 Gere o pacote portátil, o checksum e o SBOM SPDX com:
 

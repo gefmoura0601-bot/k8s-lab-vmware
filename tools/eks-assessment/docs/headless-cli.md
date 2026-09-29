@@ -54,7 +54,12 @@ bin/eks-assessment.sh regression-gate \
   --profile standard
 ```
 
-O profile e o provider esperado são escolhas do operador; não são inferidos para promover uma release. EKS, AKS e GKE continuam dependendo de qualificação real antes da versão estável.
+O profile e o provider esperado são escolhas do operador; não são inferidos para promover uma release. As duas coletas do Regression Gate precisam ter o mesmo cluster e o mesmo `namespaceScope`; uma coleta cluster-wide não é comparável a uma coleta limitada a namespace. EKS, AKS e GKE permanecem `PREVIEW` até qualificação real.
+
+O workflow `EKS Assessment CI` executa os dois gates com fixtures sanitizadas do
+profile `generic-kubernetes` e publica `provider-validation.json`, JSON/JUnit/
+SARIF do Regression Gate e os logs resumidos como artifact. O mesmo workflow
+valida checksum, SBOM, paths e execução do pacote portátil.
 
 ## Segurança operacional
 

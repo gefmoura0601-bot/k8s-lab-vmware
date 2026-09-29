@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 — 2026-09-29
+
+- promove o profile `generic-kubernetes` a estável após a matriz read-only,
+  coletas on-premises, cancelamento, timeout, logs sanitizados e gates offline;
+- mantém EKS, AKS e GKE explicitamente como `PREVIEW` até validação em ambientes
+  reais, registrada em `data/release-qualification.json`;
+- executa Release Gate e Regression Gate headless no CI com outputs JSON, JUnit
+  e SARIF publicados como artifact;
+- persiste `namespaceScope` na metadata e bloqueia comparações entre coleta
+  cluster-wide e coleta namespaced sem gerar deltas enganosos;
+- valida o pacote portátil, checksum, SBOM, sintaxe e versão antes da publicação;
+- preserva todos os contratos e formatos de artefato da série `0.4.0-rc`.
+
 ## 0.4.0-rc.9 — 2026-09-28
 
 - adiciona CLI headless para `preflight`, `collect`, `list`, `compare`, `terminal`, `dashboard`, `release-gate` e `regression-gate`;

@@ -314,13 +314,18 @@ cluster_identity(){
 
 write_metadata(){
   local out="$1" id="$2" phase="$3" cluster_name="$4" cluster_context="$5" baseline="$6" completed="$7" codes="$8"
-  local status="${9:-$([[ "$completed" == true ]] && echo COMPLETED || echo FAILED)}" reason="${10:-}" max_duration="${11:-$MAX_DURATION_SECONDS}" created duration=0
+  local status="${9:-$([[ "$completed" == true ]] && echo COMPLETED || echo FAILED)}" reason="${10:-}" max_duration="${11:-$MAX_DURATION_SECONDS}" namespace_scope="${12:-*}" created duration=0 metadata_tmp
   if ((COLLECTION_STARTED_EPOCH > 0)); then duration=$(( $(date +%s) - COLLECTION_STARTED_EPOCH )); fi
   created="$(jq -r '.createdAt // empty' "$out/metadata.json" 2>/dev/null || true)"; created="${created:-$(date -u +%FT%TZ)}"
-  jq -n --arg id "$id" --arg phase "$phase" --arg created "$created" --arg finished "$(date -u +%FT%TZ)" \
+  [[ -r "$out/metadata.json" ]] || printf '%s\n' '{}' > "$out/metadata.json"
+  metadata_tmp="$out/.metadata.json.tmp"
+  jq --arg id "$id" --arg phase "$phase" --arg created "$created" --arg finished "$(date -u +%FT%TZ)" \
     --arg cluster "$cluster_name" --arg context "$cluster_context" --arg status "$status" --arg reason "$reason" \
+    --arg namespaceScope "$namespace_scope" \
     --argjson baseline "$baseline" --argjson completed "$completed" --argjson codes "$codes" --argjson maxDuration "$max_duration" --argjson duration "$duration" \
-    '{id:$id,phase:$phase,createdAt:$created,finishedAt:(if $status=="RUNNING" then null else $finished end),clusterName:$cluster,context:$context,baseline:$baseline,status:$status,completed:$completed,cancelled:($status=="CANCELLED"),cancelReason:(if $reason=="" then null else $reason end),maxDurationSeconds:$maxDuration,readOnly:true,collectorExitCodes:$codes,performance:{durationSeconds:$duration}}' > "$out/metadata.json"
+    '. + {id:$id,phase:$phase,createdAt:$created,finishedAt:(if $status=="RUNNING" then null else $finished end),clusterName:$cluster,context:$context,namespaceScope:(if $namespaceScope=="" then "*" else $namespaceScope end),baseline:$baseline,status:$status,completed:$completed,cancelled:($status=="CANCELLED"),cancelReason:(if $reason=="" then null else $reason end),maxDurationSeconds:$maxDuration,readOnly:true,collectorExitCodes:$codes,performance:((.performance // {}) + {durationSeconds:$duration})}' \
+    "$out/metadata.json" > "$metadata_tmp"
+  mv "$metadata_tmp" "$out/metadata.json"
   cp "$out/metadata.json" "$out/menu-metadata.json"
 }
 
@@ -368,7 +373,7 @@ collect(){
   out="$(mktemp -d "$OUTROOT/eks-$(date -u +%Y%m%dT%H%M%SZ)-${phase}-${label}.XXXXXXXX")"
   id="$(basename "$out")"
   [[ "$phase" == before ]] && baseline=true
-  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS"
+  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS" "$namespace"
   echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s =="
   echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
 
@@ -402,7 +407,7 @@ collect(){
   else
     for code in "$assess_rc" "$discovery_rc" "$telemetry_rc" "$scanner_rc" "$validator_rc"; do ((code == 0)) || { status=FAILED; completed=false; }; done
   fi
-  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS"
+  write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS" "$namespace"
   COLLECTION_STARTED_EPOCH=0
   echo "Salvo em $out | status: $status"
   echo "Contexto: $cluster_context | códigos [assessment, discovery, Prometheus, scanner, smoke]: $codes"

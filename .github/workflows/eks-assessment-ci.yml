@@ -10,6 +10,7 @@ on:
     paths:
       - "tools/eks-assessment/**"
       - ".github/workflows/eks-assessment-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,3 +35,114 @@ jobs:
               exit 1
             fi
           done
+
+  offline-gates:
+    name: Generic Release and Regression Gates
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Generate sanitized gate fixtures
+        shell: bash
+        run: |
+          python3 tools/eks-assessment/tests/generate_ci_gate_fixtures.py \
+            "$RUNNER_TEMP/assessment-gates"
+
+      - name: Execute headless gates
+        shell: bash
+        env:
+          ASSESSMENT_ROOT: ${{ runner.temp }}/assessment-gates
+        run: |
+          set -euo pipefail
+          tool="tools/eks-assessment/bin/eks-assessment.sh"
+          bash "$tool" release-gate \
+            --collection eks-ci-after \
+            --provider generic-kubernetes \
+            | tee "$RUNNER_TEMP/release-gate.log"
+          bash "$tool" regression-gate \
+            --before eks-ci-before \
+            --after eks-ci-after \
+            --profile standard \
+            | tee "$RUNNER_TEMP/regression-gate.log"
+
+          after="$ASSESSMENT_ROOT/eks-ci-after"
+          jq -e '.summary.state == "PASS" and .summary.releaseReady == true' \
+            "$after/provider-validation.json" >/dev/null
+          jq -e '.summary.state == "PASS" and .summary.releaseReady == true' \
+            "$after/regression-validation.json" >/dev/null
+          jq -e \
+            '.toolVersion == "0.4.0" and
+             .profiles["generic-kubernetes"].status == "STABLE" and
+             ([.profiles.eks.status, .profiles.aks.status, .profiles.gke.status] | all(. == "PREVIEW"))' \
+            tools/eks-assessment/data/release-qualification.json >/dev/null
+
+          mkdir -p "$RUNNER_TEMP/gate-results"
+          cp \
+            "$after/provider-validation.json" \
+            "$after/regression-validation.json" \
+            "$after/regression-validation.junit.xml" \
+            "$after/regression-validation.sarif.json" \
+            "$RUNNER_TEMP/release-gate.log" \
+            "$RUNNER_TEMP/regression-gate.log" \
+            "$RUNNER_TEMP/gate-results/"
+          {
+            echo '### Assessment 0.4.0 — generic-kubernetes'
+            echo '- Release Gate: PASS'
+            echo '- Regression Gate: PASS'
+            echo '- EKS, AKS e GKE: PREVIEW'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload gate reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eks-assessment-gate-reports
+          path: ${{ runner.temp }}/gate-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  package:
+    name: Package generic stable release
+    needs: [validate, offline-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Build and validate portable package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < tools/eks-assessment/VERSION)"
+          test "$version" = "0.4.0"
+          dist="$RUNNER_TEMP/dist"
+          bash tools/eks-assessment/bin/package-release.sh "$dist"
+          archive="$dist/eks-assessment-${version}.tar.gz"
+          sha256sum --check "$archive.sha256"
+          if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+            echo 'O pacote contém caminho absoluto ou traversal.' >&2
+            exit 1
+          fi
+
+          extracted="$RUNNER_TEMP/extracted"
+          mkdir -p "$extracted"
+          tar -xzf "$archive" -C "$extracted"
+          package_root="$extracted/eks-assessment-${version}"
+          test "$(bash "$package_root/bin/eks-assessment.sh" --version)" = "$version"
+          python3 -m compileall -q "$package_root/src"
+          mapfile -t scripts < <(find "$package_root/bin" "$package_root/src" -type f -name '*.sh')
+          for script in "${scripts[@]}"; do bash -n "$script"; done
+          ASSESSMENT_ROOT="$RUNNER_TEMP/empty" \
+            bash "$package_root/bin/eks-assessment.sh" list
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eks-assessment-0.4.0
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 30

@@ -34,15 +34,18 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 - payloads brutos e IDs de account/subscription/project não são persistidos;
 - busca global não indexa conteúdo de logs.
 
-## Gates externos para `0.4.0` estável
+## Gates externos para qualificação dos profiles cloud
 
 - validar em EKS, AKS e GKE reais com permissões read-only;
 - calibrar falsos positivos e diferenças regionais com as três evidências reais;
-- medir duração, chamadas de API e memória em ambientes transacionais;
+- medir duração, chamadas de API e memória em ambientes transacionais cloud;
 - validar logs sanitizados com targets aprovados e política de retenção;
 - repetir cancelamento, timeout e coleta grande no pacote da release.
 
-Esses gates são operacionais, não pendências de implementação local. Sem credenciais/cluster acessível, a versão permanece release candidate e nenhum ambiente cloud é marcado como validado.
+Esses gates são operacionais, não pendências de implementação local. A versão
+`0.4.0` é estável para `generic-kubernetes`; sem credenciais e clusters reais,
+EKS, AKS e GKE permanecem `PREVIEW` e nenhum ambiente cloud é marcado como
+validado.
 
 ## Evidência local das RC.5 a RC.7
 
@@ -73,3 +76,18 @@ Esses gates são operacionais, não pendências de implementação local. Sem cr
 - pacote portátil `0.4.0-rc.9` validado por checksum, SBOM, compile, sintaxe Bash, versão e subcomando `list` a partir do diretório extraído.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.
+
+## Evidência de qualificação `0.4.0` generic-kubernetes
+
+- matriz local aprovada com 97 testes Python;
+- preflight live do namespace `banking` com 18 `PASS`, 0 `WARN` e 0 `FAIL`;
+- duas coletas live equivalentes concluídas com 166 checks, seis workloads, sete
+  containers e artefatos íntegros;
+- Release Gate live com 9 `PASS`, 0 `WARN`, 0 `FAIL`, 1 `N/A` e
+  `releaseReady=true`;
+- Regression Gate live entre scopes `banking` equivalentes com 12 gates,
+  zero novos riscos, zero regressões, zero Evidence Loss e `releaseReady=true`;
+- tentativa de comparar coleta cluster-wide com coleta `banking` bloqueada pelo
+  gate de scope, sem publicar regressões falsas;
+- pacote `0.4.0` aprovado por checksum, SBOM, compile, sintaxe Bash, versão e
+  execução offline dos dois gates.
