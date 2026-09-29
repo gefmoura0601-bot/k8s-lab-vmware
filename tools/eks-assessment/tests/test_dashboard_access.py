@@ -2,12 +2,14 @@
 """Authentication tests for the remotely exposed assessment dashboard."""
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,6 +156,132 @@ class DashboardAccessTests(unittest.TestCase):
             self.assertIn('<div class="facts">', page)
             self.assertIn("Chamadas read-only", page)
             self.assertIn("Exportar evidência sanitizada", page)
+
+    def test_release_gate_requires_explicit_provider_and_renders_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection = root / "eks-20260928-release-gate"
+            collection.mkdir()
+            (collection / "metadata.json").write_text(
+                json.dumps({"clusterName": "lab", "createdAt": "2026-09-28T00:00:00Z"}),
+                encoding="utf-8",
+            )
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root
+            handler.static = STATIC
+
+            empty_page = handler.release_gate(collection)
+            self.assertIn("Selecionar explicitamente", empty_page)
+            self.assertIn("Não executado", empty_page)
+            self.assertNotIn('value="generic-kubernetes" selected', empty_page)
+
+            report = {
+                "schemaVersion": "1.0",
+                "readOnly": True,
+                "provider": {
+                    "expected": "eks",
+                    "detectedSources": {
+                        "KubernetesEvidence": "eks",
+                        "CloudProviderArtifact": "eks",
+                        "OperationalInsights": "eks",
+                    },
+                    "cloudEvidenceState": "AVAILABLE",
+                },
+                "summary": {
+                    "state": "PASS",
+                    "releaseReady": True,
+                    "gates": 1,
+                    "status": {"PASS": 1},
+                },
+                "policy": {"maxApiRequests": 1000},
+                "inventory": {"nodes": 3},
+                "gates": [{
+                    "gateId": "provider.detection",
+                    "category": "Provider",
+                    "status": "PASS",
+                    "mandatory": True,
+                    "summary": "As fontes concordam.",
+                    "evidence": {"mismatchedSources": []},
+                }],
+            }
+            (collection / "provider-validation.json").write_text(
+                json.dumps(report), encoding="utf-8"
+            )
+
+            page = handler.release_gate(collection)
+            self.assertIn("Release Gate", page)
+            self.assertIn("Release Ready", page)
+            self.assertIn(">SIM<", page)
+            self.assertIn("provider.detection", page)
+            self.assertIn("KubernetesEvidence", page)
+            self.assertIn("Exportar validação sanitizada", page)
+            search = handler.search_page(collection, {"q": ["provider.detection"]})
+            self.assertIn("Release Gate", search)
+            self.assertIn("provider.detection", search)
+
+    def test_release_gate_report_is_written_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            collection = Path(temporary) / "eks-20260928-atomic"
+            collection.mkdir()
+            report = {"summary": {"state": "WARN", "releaseReady": False}}
+            with patch.object(dashboard, "evaluate_provider", return_value=report) as evaluate:
+                value = dashboard.write_provider_validation(collection, "generic-kubernetes")
+            self.assertEqual(report, value)
+            self.assertEqual(report, json.loads((collection / "provider-validation.json").read_text(encoding="utf-8")))
+            self.assertFalse((collection / ".provider-validation.json.tmp").exists())
+            evaluate.assert_called_once_with(collection, "generic-kubernetes")
+            with self.assertRaises(ValueError):
+                dashboard.write_provider_validation(collection, "auto")
+
+    def test_release_gate_post_requires_valid_action_and_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection = root / "eks-20260928-post"
+            collection.mkdir()
+
+            def request(body: str):
+                handler = object.__new__(dashboard.Handler)
+                handler.path = "/validate-provider"
+                handler.root = root
+                handler.static = STATIC
+                handler.repository = ROOT
+                handler.client_address = ("127.0.0.1", 12345)
+                handler.headers = {"Content-Length": str(len(body.encode("utf-8")))}
+                handler.rfile = io.BytesIO(body.encode("utf-8"))
+                handler.authenticated = lambda: True
+                handler.response_status = None
+                handler.response_headers = []
+                handler.response_payload = None
+                handler.send_response = lambda status: setattr(handler, "response_status", status)
+                handler.send_header = lambda name, value: handler.response_headers.append((name, value))
+                handler.end_headers = lambda: None
+                handler.send_json = lambda value, status=200, filename=None: (
+                    setattr(handler, "response_payload", value),
+                    setattr(handler, "response_status", status),
+                )
+                return handler
+
+            denied = request(f"action_token=invalid&collection={collection.name}&expected_provider=eks")
+            denied.do_POST()
+            self.assertEqual(403, denied.response_status)
+
+            invalid = request(
+                f"action_token={dashboard.ACTION_TOKEN}&collection={collection.name}&expected_provider=auto"
+            )
+            invalid.do_POST()
+            self.assertEqual(400, invalid.response_status)
+
+            accepted = request(
+                f"action_token={dashboard.ACTION_TOKEN}&collection={collection.name}&expected_provider=eks"
+            )
+            with patch.object(dashboard, "write_provider_validation", return_value={}) as writer:
+                accepted.do_POST()
+            self.assertEqual(303, accepted.response_status)
+            self.assertIn(
+                ("Location", f"/release-gate?collection={collection.name}"),
+                accepted.response_headers,
+            )
+            writer.assert_called_once_with(collection, "eks")
 
 
 if __name__ == "__main__":

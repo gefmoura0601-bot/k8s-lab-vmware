@@ -8,6 +8,8 @@ Logs continuam desabilitados por padrão. Não habilite `ASSESSMENT_INCLUDE_LOGS
 
 Na RC.6, use `src/provider_validation.py` somente após uma coleta `COMPLETED`. O argumento `--expected-provider` é obrigatório e `WARN` não promove a release. Consulte `docs/provider-validation.md` antes de definir os budgets do ambiente transacional.
 
+Na RC.7, o mesmo gate está disponível na opção 7 do menu e em **Governança → Release Gate** no dashboard. A escolha do provider continua obrigatória e explícita. O dashboard usa os thresholds padrão; use o CLI para uma policy customizada.
+
 Após extrair o pacote, execute:
 
 ```bash

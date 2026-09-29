@@ -97,6 +97,11 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("KUBERNETES ASSESSMENT CONSOLE", menu)
         self.assertIn("render_menu", menu)
         self.assertIn("NO_COLOR", menu)
+        self.assertIn("GOVERNANÇA & RELEASE", menu)
+        self.assertIn("Executar Release Gate offline por provider", menu)
+        self.assertIn("provider_gate", menu)
+        self.assertIn("Provider esperado [eks|aks|gke|generic-kubernetes]", menu)
+        self.assertIn("--expected-provider \"$expected\"", menu)
 
     def test_menu_uses_preflight_and_portable_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -9,6 +9,7 @@ DISCOVERY="$TOOL_ROOT/src/eks-cluster-discovery.sh"
 TELEMETRY="$TOOL_ROOT/src/prometheus_telemetry.py"
 SCANNER="$TOOL_ROOT/src/eks_comprehensive_assessment.py"
 VALIDATOR="$TOOL_ROOT/src/validate_assessment_artifacts.py"
+PROVIDER_VALIDATOR="$TOOL_ROOT/src/provider_validation.py"
 PREFLIGHT="$TOOL_ROOT/src/assessment-preflight.sh"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PORT="${DASHBOARD_PORT:-8765}"
@@ -184,6 +185,9 @@ render_menu(){
   menu_row "$C_LIGHT$C_BOLD" "INSIGHTS & REPORTING"
   menu_row "$C_CYAN" "[3] Comparar coletas              [4] Dashboard no terminal"
   menu_row "$C_CYAN" "[5] Abrir dashboard web nesta sessão (porta $PORT)"
+  menu_row "$C_RESET" ""
+  menu_row "$C_LIGHT$C_BOLD" "GOVERNANÇA & RELEASE"
+  menu_row "$C_CYAN" "[7] Executar Release Gate offline por provider"
   menu_row "$C_RED" "[0] Sair"
   printf '%s╰──────────────────────────────────────────────────────────────────────╯%s\n' "$C_BLUE" "$C_RESET"
 }
@@ -278,6 +282,45 @@ collect(){
   COLLECTION_STARTED_EPOCH=0
   echo "Salvo em $out | status: $status"
   echo "Contexto: $cluster_context | códigos [assessment, discovery, Prometheus, scanner, smoke]: $codes"
+  return 0
+}
+
+provider_gate(){
+  local id dir expected rc latest
+  latest="$(collections | tail -1)"
+  if [[ -z "$latest" ]]; then
+    echo "Nenhuma coleta disponível para validação."
+    return 0
+  fi
+  collections | nl -ba
+  read -r -p "ID da coleta (Enter = $latest): " id
+  id="${id:-$latest}"
+  if [[ ! "$id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "ID da coleta inválido."
+    return 0
+  fi
+  dir="$OUTROOT/$id"
+  if [[ ! -d "$dir" ]]; then
+    echo "Coleta não encontrada."
+    return 0
+  fi
+  read -r -p 'Provider esperado [eks|aks|gke|generic-kubernetes]: ' expected
+  case "$expected" in
+    eks|aks|gke|generic-kubernetes) ;;
+    *) echo "Provider esperado inválido; a expectativa deve ser explícita."; return 0 ;;
+  esac
+  echo "Executando Release Gate offline; nenhuma API do cluster ou do provider será consultada."
+  if "$PYTHON_BIN" "$PROVIDER_VALIDATOR" --collection "$dir" --expected-provider "$expected"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if ((rc == 0 || rc == 1)) && [[ -r "$dir/provider-validation.json" ]]; then
+    jq -r '"Estado: \(.summary.state) | Release Ready: \(.summary.releaseReady) | Gates: \(.summary.gates) | PASS: \(.summary.status.PASS // 0) | WARN: \(.summary.status.WARN // 0) | FAIL: \(.summary.status.FAIL // 0) | N/A: \(.summary.status["N/A"] // 0)"' "$dir/provider-validation.json"
+    echo "Relatório: $dir/provider-validation.json"
+  else
+    echo "ERRO: o Release Gate não pôde ser executado (exit code $rc)." >&2
+  fi
   return 0
 }
 
@@ -482,13 +525,14 @@ EOF
 need kubectl; need jq; need curl; need timeout; need setsid
 select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
 [[ -r "$PREFLIGHT" ]] || { echo "ERRO: preflight ausente em $PREFLIGHT" >&2; exit 1; }
+[[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
 mkdir -p "$OUTROOT"
 while :; do
   render_menu
   read -r -p "${C_BOLD}${C_LIGHT}Selecione uma opção › ${C_RESET}" op
   case "$op" in
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
-    5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";;
+    5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";; 7) provider_gate;;
     0) printf '%sSessão encerrada.%s\n' "$C_DIM" "$C_RESET"; exit 0;; *) printf '%sOpção inválida.%s\n' "$C_RED" "$C_RESET";;
   esac
   [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _

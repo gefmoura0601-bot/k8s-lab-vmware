@@ -46,7 +46,7 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 O menu terminal usa um tema Kubernetes em azul, mostra versão, contexto, porta do dashboard e quantidade de coletas. Cores ANSI são habilitadas somente em terminal interativo. Para desabilitá-las, use `NO_COLOR=1`; para impedir a limpeza de tela, use `ASSESSMENT_MENU_CLEAR=0`.
 
-O menu reúne baseline antes/depois, comparação, dashboard terminal e dashboard web preso à sessão:
+O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard web preso à sessão e execução offline do Release Gate pela opção 7:
 
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
@@ -89,7 +89,7 @@ A série `0.4.0-rc` adiciona áreas baseadas no mesmo artefato sanitizado:
 
 O artefato fica em `operational-insights.json` e pode ser exportado por `GET /export-operational`.
 
-O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Node Health, Versions, Manifest Quality e Best Practices; conteúdo de logs não é indexado.
+O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações, governança e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Node Health, Versions, Manifest Quality, Best Practices e gates de release; conteúdo de logs não é indexado.
 
 Logs permanecem desabilitados por padrão. Para coleta explícita:
 
@@ -263,6 +263,8 @@ python3 tools/eks-assessment/src/provider_validation.py \
 ```
 
 Providers aceitos: `eks`, `aks`, `gke` e `generic-kubernetes`. O runner exige estado `COMPLETED`, cruza três fontes de detecção e bloqueia mutações, evidência parcial, provider divergente, dados sensíveis, baixa cobertura e budgets excedidos. `WARN` mantém `releaseReady=false`. Contrato, thresholds e matriz real estão em [`docs/provider-validation.md`](docs/provider-validation.md).
+
+No menu, use a opção 7, selecione a coleta e informe o provider esperado. No dashboard, abra **Governança → Release Gate**, escolha explicitamente o provider e execute a validação offline. A página apresenta cada gate e sua evidência sanitizada, permite busca global e exporta o mesmo contrato por `GET /export-provider-validation`. A execução web exige autenticação e action token, compartilha o lock da coleta e substitui o relatório por operação atômica. Os thresholds configuráveis permanecem disponíveis pelo CLI.
 
 ## Versão e distribuição
 

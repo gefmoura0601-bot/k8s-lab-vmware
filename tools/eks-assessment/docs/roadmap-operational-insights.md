@@ -18,6 +18,7 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 14. cancelamento/timeout com estado terminal preservado desde o preflight;
 15. smoke de logs sanitizados sem exposição de conteúdo no output de validação.
 16. `Provider Validation Runner` offline com provider esperado obrigatório e gates de release reproduzíveis.
+17. `Release Gate Console` no menu e dashboard, com execução offline, persistência atômica, busca e exportação sanitizada.
 
 ## Guardrails
 
@@ -41,7 +42,7 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 
 Esses gates são operacionais, não pendências de implementação local. Sem credenciais/cluster acessível, a versão permanece release candidate e nenhum ambiente cloud é marcado como validado.
 
-## Evidência local da RC.5
+## Evidência local das RC.5 a RC.7
 
 - preflight on-premises sem `WARN` ou `FAIL`;
 - coleta completa no lab com estado `COMPLETED` e zero mutações;
@@ -55,5 +56,9 @@ Esses gates são operacionais, não pendências de implementação local. Sem cr
 - coleta anterior do lab permanece `WARN` no runner por não possuir evidência de chamadas/bytes da API, evitando aprovação retroativa sem métricas.
 - coleta fresh da RC.6 concluída pelo menu com todos os coletores em código zero e artefatos válidos; o runner retornou `PASS` e `releaseReady=true` para Kubernetes genérico, com cobertura Kubernetes de 100%, 156 chamadas de API, zero retry/throttling, 37s de duração, 34.614.935 bytes recebidos e peak RSS de 154.189.824 bytes;
 - pacote portátil `0.4.0-rc.6` validado por checksum, compile, preflight e execução do runner a partir do diretório extraído.
+- console `0.4.0-rc.7` validado pelo menu real: opção 7, provider `generic-kubernetes`, 10 gates, 9 `PASS`, 0 `WARN`, 0 `FAIL`, 1 `N/A` e `releaseReady=true`;
+- página e exportação do `Release Gate` validadas por smoke HTTP autenticado, sem novas chamadas às APIs;
+- pacote portátil `0.4.0-rc.7` validado por checksum, compile, sintaxe Bash, preflight com 18 `PASS`/0 `WARN`/0 `FAIL` e runner executado a partir do diretório extraído;
+- lab completo validado com `k8s-master`, `k8s-worker-01` e `k8s-worker-02` em estado `Ready`, incluindo resposta da Metrics API para os três nodes.
 
 Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os gates externos em EKS, AKS e GKE.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0-rc.7 — 2026-09-28
+
+- integra o `Provider Validation Runner` ao menu como opção 7 e ao dashboard em `Governança → Release Gate`;
+- mantém a escolha do provider esperado explícita, sem usar a autodetecção como expectativa;
+- executa o gate somente sobre artefatos sanitizados, sem novas chamadas ao Kubernetes ou ao Cloud Provider;
+- grava `provider-validation.json` de forma atômica e serializa coleta/validação com o mesmo lock operacional;
+- protege a execução web com autenticação, action token, allowlist de providers e validação estrita do ID da coleta;
+- adiciona visualização auditável dos gates, fontes independentes, policy, thresholds e inventário, além de busca e exportação JSON;
+- adiciona regressões para renderização, persistência atômica, token de ação, provider inválido e redirect de sucesso.
+
 ## 0.4.0-rc.6 — 2026-08-31
 
 - adiciona `Provider Validation Runner` offline com provider esperado obrigatório;

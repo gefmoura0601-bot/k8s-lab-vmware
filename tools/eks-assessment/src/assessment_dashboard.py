@@ -25,6 +25,7 @@ from assessment_process_supervisor import CollectionSupervisor
 from cis_security_assessment import compare_reports
 from eks_comprehensive_assessment import sanitize_snapshot_tree
 from localization_pt_br import localize_finding
+from provider_validation import PROVIDERS, evaluate as evaluate_provider
 
 LOCK = threading.Lock()
 SUPERVISOR = CollectionSupervisor()
@@ -330,6 +331,21 @@ def details(directory: Path) -> dict:
     return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cloudProvider": jfile(directory / "cloud-provider-assessment.json", comprehensive.get("cloudProvider", {"state": "N/A", "provider": "generic-kubernetes"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "operationalInsights": jfile(directory / "operational-insights.json", comprehensive.get("operationalInsights", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
 
 
+def write_provider_validation(collection: Path, expected_provider: str) -> dict[str, Any]:
+    """Evaluate existing sanitized artifacts and persist the report atomically."""
+    if expected_provider not in PROVIDERS:
+        raise ValueError("provider esperado inválido")
+    report = evaluate_provider(collection, expected_provider)
+    destination = collection / "provider-validation.json"
+    temporary = collection / ".provider-validation.json.tmp"
+    try:
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return report
+
+
 class Handler(BaseHTTPRequestHandler):
     root: Path
     static: Path
@@ -402,6 +418,7 @@ class Handler(BaseHTTPRequestHandler):
             ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
             ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
             ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
+            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate")]),
             ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
         ]
         nav = []
@@ -506,6 +523,9 @@ class Handler(BaseHTTPRequestHandler):
         for item in ((operational.get("logs") or {}).get("entries") or []):
             safe_log_index = {"target": item.get("target"), "state": item.get("state"), "reason": item.get("reason")}
             add("Log", item.get("target"), item.get("state"), item.get("reason") or "Conteúdo sanitizado disponível na aba Logs.", f'/logs?collection={collection}', safe_log_index)
+        provider_validation = jfile(directory / "provider-validation.json", {})
+        for item in provider_validation.get("gates") or []:
+            add("Release Gate", item.get("gateId"), item.get("status"), item.get("summary"), f'/release-gate?collection={collection}', item)
         message = f'<div class="message good">{len(rows)} resultado(s) para <b>{esc(term)}</b>. Limite: 500; conteúdo de logs não é indexado.</div>' if rows else f'<div class="message">Nenhum resultado para <b>{esc(term)}</b>.</div>'
         body = f'<h1>Busca global</h1>{form}{message}{table(rows, [("source","Origem"),("title","Item"),("status","Estado"),("detail","Detalhe"),("open","Ação")], raw={"open"})}'
         return self.layout("Busca global", body, directory, "search")
@@ -1125,6 +1145,96 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.layout("Prometheus", body, directory, "prometheus")
 
+    def release_gate(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        report = jfile(directory / "provider-validation.json", {})
+        provider = report.get("provider") or {}
+        summary = report.get("summary") or {}
+        selected_provider = str(provider.get("expected") or "")
+        provider_options = "".join(
+            f'<option value="{esc(item)}" {"selected" if item == selected_provider else ""}>{esc(item)}</option>'
+            for item in PROVIDERS
+        )
+        validation_form = (
+            f'<form class="filters" method="post" action="/validate-provider">'
+            f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
+            f'<input type="hidden" name="collection" value="{esc(directory.name)}">'
+            f'<label>Provider esperado<select name="expected_provider" required>'
+            f'<option value="">Selecionar explicitamente</option>{provider_options}</select></label>'
+            f'<button type="submit">Executar validação offline</button></form>'
+        )
+        notice = (
+            '<div class="message">A validação usa somente os artefatos sanitizados desta coleta. '
+            'Ela não realiza novas chamadas ao Kubernetes ou ao Cloud Provider e não representa certificação.</div>'
+        )
+        if not report:
+            body = (
+                '<h1>Release Gate</h1>'
+                '<div class="message warn"><b>Não executado.</b> Selecione explicitamente o provider esperado; '
+                'a detecção da própria coleta não é usada como expectativa.</div>'
+                f'{validation_form}{notice}'
+            )
+            return self.layout("Release Gate", body, directory, "release-gate")
+
+        state = str(summary.get("state") or "UNKNOWN")
+        release_ready = summary.get("releaseReady") is True
+        message_class = "good" if release_ready else "bad" if state == "FAIL" else "warn"
+        status_counts = summary.get("status") or {}
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Estado</small><b>{esc(state)}</b></div>'
+            f'<div><small>Release Ready</small><b>{"SIM" if release_ready else "NÃO"}</b></div>'
+            f'<div><small>Provider esperado</small><b>{esc(selected_provider or "UNKNOWN")}</b></div>'
+            f'<div><small>Cloud evidence</small><b>{esc(provider.get("cloudEvidenceState", "UNKNOWN"))}</b></div>'
+            f'<div><small>PASS</small><b>{esc(status_counts.get("PASS", 0))}</b></div>'
+            f'<div><small>WARN</small><b>{esc(status_counts.get("WARN", 0))}</b></div>'
+            f'<div><small>FAIL</small><b>{esc(status_counts.get("FAIL", 0))}</b></div>'
+            f'<div><small>N/A</small><b>{esc(status_counts.get("N/A", 0))}</b></div>'
+            '</div>'
+        )
+        sources = [
+            {"source": name, "provider": value}
+            for name, value in sorted((provider.get("detectedSources") or {}).items())
+        ]
+        gate_cards = []
+        for item in report.get("gates") or []:
+            gate_state = str(item.get("status") or "UNKNOWN")
+            evidence = json.dumps(item.get("evidence") or {}, ensure_ascii=False, indent=2, sort_keys=True)
+            gate_cards.append(
+                f'<details class="cis-control {esc(gate_state)}"><summary>'
+                f'<span><b>{esc(item.get("gateId"))}</b> — {esc(item.get("summary"))}</span>'
+                f'<span class="metric-status {esc(gate_state.lower())}">{esc(gate_state)}</span></summary>'
+                f'<div class="cis-meta"><span>Categoria: <b>{esc(item.get("category"))}</b></span>'
+                f'<span>Obrigatório: <b>{"sim" if item.get("mandatory") else "não"}</b></span></div>'
+                f'<h3>Evidência sanitizada</h3><pre>{esc(evidence)}</pre></details>'
+            )
+        policy_rows = [
+            {"threshold": key, "value": value}
+            for key, value in sorted((report.get("policy") or {}).items())
+        ]
+        inventory_rows = [
+            {"metric": key, "value": value}
+            for key, value in sorted((report.get("inventory") or {}).items())
+        ]
+        gate_message = (
+            "Todos os gates obrigatórios passaram; a coleta está pronta para promoção."
+            if release_ready
+            else "A promoção está bloqueada enquanto existir WARN ou FAIL em gate obrigatório."
+        )
+        gates_html = "".join(gate_cards) or '<div class="message">Nenhum gate disponível.</div>'
+        body = (
+            f'<h1>Release Gate <small>{esc(selected_provider or "UNKNOWN")}</small></h1>'
+            f'<div class="message {message_class}"><b>{esc(state)}</b> — {esc(gate_message)}</div>'
+            f'{facts}{validation_form}{notice}'
+            f'<div class="cis-actions"><a class="button" href="/export-provider-validation?collection={quote_plus(directory.name)}">Exportar validação sanitizada</a></div>'
+            f'<h2>Detecção independente do provider</h2>{table(sources, [("source","Fonte"),("provider","Provider detectado")])}'
+            f'<h2>Gates</h2>{gates_html}'
+            f'<h2>Policy e thresholds</h2>{table(policy_rows, [("threshold","Threshold"),("value","Valor")])}'
+            f'<h2>Inventário validado</h2>{table(inventory_rows, [("metric","Métrica"),("value","Valor")])}'
+        )
+        return self.layout("Release Gate", body, directory, "release-gate")
+
     def cloud_provider(self, directory: Path | None) -> str:
         if not directory:
             return self.overview(None)
@@ -1501,6 +1611,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/best-practices": return self.send_html(self.best_practices(directory, query))
         if path == "/logs": return self.send_html(self.logs(directory))
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
+        if path == "/release-gate": return self.send_html(self.release_gate(directory))
         if path == "/cloud": return self.send_html(self.cloud_provider(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
@@ -1527,6 +1638,11 @@ class Handler(BaseHTTPRequestHandler):
             report = details(directory).get("cloudProvider") or {}
             if not report: return self.send_json({"error": "Evidência do cloud provider não disponível"}, 404)
             return self.send_json(report, filename=f"{directory.name}-cloud-provider.json")
+        if path == "/export-provider-validation":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = jfile(directory / "provider-validation.json", {})
+            if not report: return self.send_json({"error": "Release Gate ainda não executado para esta coleta"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-provider-validation.json")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
@@ -1547,7 +1663,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authenticated(): return
         path = urlparse(self.path).path
-        if path not in {"/collect", "/cancel"}:
+        if path not in {"/collect", "/cancel", "/validate-provider"}:
             return self.send_json({"error": "Rota não encontrada"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1568,6 +1684,36 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not secrets.compare_digest(supplied_token, ACTION_TOKEN):
             return self.send_json({"error": "Token de ação inválido"}, 403)
+        if path == "/validate-provider":
+            ident = form.get("collection", [""])[0]
+            expected_provider = form.get("expected_provider", [""])[0]
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", ident):
+                return self.send_json({"error": "ID da coleta inválido"}, 400)
+            directory = self.root / ident
+            if not directory.is_dir():
+                return self.send_json({"error": "Coleta não encontrada"}, 404)
+            if expected_provider not in PROVIDERS:
+                return self.send_json({"error": "Provider esperado inválido"}, 400)
+            if not LOCK.acquire(blocking=False):
+                return self.send_json({"error": "Já existe uma coleta ou validação em execução"}, 409)
+            try:
+                write_provider_validation(directory, expected_provider)
+            except Exception:
+                return self.send_html(
+                    self.layout(
+                        "Release Gate",
+                        '<div class="message bad">Não foi possível gerar a validação. Verifique a integridade dos artefatos e tente novamente.</div>',
+                        directory,
+                        "release-gate",
+                    ),
+                    500,
+                )
+            finally:
+                LOCK.release()
+            self.send_response(303)
+            self.send_header("Location", f"/release-gate?{urlencode({'collection': ident})}")
+            self.end_headers()
+            return
         if not LOCK.acquire(blocking=False):
             return self.send_html(
                 self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'),
