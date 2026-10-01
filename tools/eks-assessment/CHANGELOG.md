@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0-rc.2 — 2026-09-29
+
+- adiciona Blue-Green Readiness provider-neutral com estados `GO`, `NO_GO` e `UNKNOWN` fail-closed;
+- cria Configuration References para ConfigMaps, Secrets, imagePullSecrets e TLS, com metadata opt-in e sem persistir values;
+- modela Traffic Paths de Ingress, Gateway API/ReferenceGrant, Istio e OpenShift Route até Services e EndpointSlices;
+- adiciona gates de State & Data para PVC, StorageClass, snapshot, backup/restore, replicação, schema, singleton jobs e rollback;
+- adiciona probes HTTP/HTTPS explícitos, sem redirects, credenciais ou response body persistido;
+- cria Migration Gate source → target com mapping entre clusters/namespaces e outputs JSON, JUnit, SARIF e Markdown;
+- amplia a comparação com Services, policies/autoscaling, ServiceAccounts, API/lifecycle, storage, Node Health, CIS e observabilidade;
+- integra opções 11/12 ao menu e **Governança → Blue-Green Readiness** ao dashboard;
+- publica JSON Schemas, exemplos de mapping/evidência manual e RBAC namespaced opcional para ConfigMap/Secret metadata;
+- exige namespace explícito para ConfigMap/Secret metadata no CLI, dashboard, collector e preflight, bloqueando leitura cluster-wide;
+- diferencia objeto ausente de evidência fora do namespace coletado e evita falso `NO_GO` para Gateway cross-namespace;
+- evita falso stateful para database clients e remove credenciais de URLs rejeitadas e o Kubernetes context dos relatórios de migração;
+- mantém EKS, AKS e GKE fora da qualificação desta RC e preserva o profile `generic-kubernetes` como estável.
+
 ## 0.5.0-rc.1 — 2026-09-29
 
 - adiciona JSON Schemas versionados e o comando `validate` para contratos de coleta;

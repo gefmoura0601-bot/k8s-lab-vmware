@@ -1,0 +1,13 @@
+{
+  "namespaceMap": {
+    "banking-blue": "banking-green"
+  },
+  "resourceMap": {
+    "Service/banking-blue/banking-api": "Service/banking-green/banking-api-green",
+    "StorageClass/-/fast": "StorageClass/-/fast-green"
+  },
+  "allowedDifferences": [
+    "image",
+    "replicas"
+  ]
+}

@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from test_provider_validation import ProviderValidationTests  # noqa: E402
+from blue_green_readiness import generate as generate_blue_green  # noqa: E402
 
 
 def complete_regression_evidence(collection: Path) -> None:
@@ -49,6 +50,7 @@ def complete_regression_evidence(collection: Path) -> None:
         "summary": {"resources": 1, "issues": 0, "critical": 0, "warnings": 0},
         "findings": [],
     }
+    operational["manifestSchema"] = {"state": "PASS", "summary": {"resources": 0, "failed": 0}}
     path.write_text(
         json.dumps(operational, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -70,6 +72,23 @@ def main() -> int:
     )
     complete_regression_evidence(before)
     complete_regression_evidence(after)
+    manual = {
+        "schemaVersion": "1.0", "generatedAt": "2026-09-29T00:00:00Z", "readOnly": True,
+        "changeReference": "CI-SANITIZED", "approvalReference": "CI-SANITIZED",
+        "dnsValidated": True, "loadBalancerValidated": True, "rollbackAvailable": True,
+        "restoreTested": True, "schemaBackwardCompatible": True, "singletonJobsControlled": True,
+        "dataReplication": {"state": "READY", "detail": "sanitized CI fixture"},
+    }
+    for collection in (before, after):
+        (collection / "migration-evidence.json").write_text(json.dumps(manual, ensure_ascii=False, indent=2), encoding="utf-8")
+        generate_blue_green(collection)
+    probes = json.loads((after / "migration-probes.json").read_text(encoding="utf-8"))
+    probes.update({
+        "state": "PASS",
+        "summary": {"probes": 1, "passed": 1, "warnings": 0, "failed": 0, "maxLatencyMs": 2000},
+        "items": [{"url": "https://green.example.test/health", "state": "PASS", "httpStatus": 200, "latencyMs": 20, "tlsValidated": True}],
+    })
+    (after / "migration-probes.json").write_text(json.dumps(probes, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"before": before.name, "after": after.name}))
     return 0
 

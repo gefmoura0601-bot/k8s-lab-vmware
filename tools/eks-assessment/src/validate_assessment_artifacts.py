@@ -39,6 +39,11 @@ def safe_runtime_env_name(name: str) -> bool:
     upper = name.upper()
     return upper in SAFE_RUNTIME_ENV_UPPER or upper.startswith(SAFE_RUNTIME_ENV_PREFIXES)
 
+
+def version_at_least(value: str, minimum: tuple[int, ...]) -> bool:
+    numbers = tuple(int(item) for item in re.findall(r"\d+", str(value))[: len(minimum)])
+    return numbers + (0,) * (len(minimum) - len(numbers)) >= minimum
+
 REQUIRED = (
     "metadata.json", "nodes.json", "pods.json", "workloads.json",
     "comprehensive-assessment.json", "application-manifests-sanitized.json",
@@ -117,6 +122,68 @@ def main() -> int:
         errors.append("read-only safety invariant missing")
     if str(report.get("schemaVersion", "")).split(".", 1)[0] not in {"4"}:
         errors.append("unexpected comprehensive assessment schema")
+    blue_green_names = (
+        "configuration-references.json", "traffic-paths.json", "state-data-readiness.json",
+        "migration-probes.json", "blue-green-readiness.json",
+    )
+    blue_green_documents: dict[str, Any] = {}
+    for filename in (*blue_green_names, "configuration-metadata.json", "migration-comparison.json"):
+        path = root / filename
+        if path.is_file():
+            blue_green_documents[filename] = parse(path, errors)
+        elif filename in blue_green_names and version_at_least(str(report.get("schemaVersion", "0")), (4, 1)):
+            errors.append(f"missing blue-green artifact: {filename}")
+    configuration_metadata = blue_green_documents.get("configuration-metadata.json") or {}
+    if configuration_metadata:
+        if configuration_metadata.get("readOnly") is not True:
+            errors.append("configuration metadata read-only invariant missing")
+        policy = configuration_metadata.get("policy") or {}
+        if policy.get("valuesPersisted") is not False or policy.get("annotationsPersisted") is not False:
+            errors.append("configuration metadata persistence policy is unsafe")
+        allowed_configuration_fields = {"kind", "namespace", "name", "immutable", "keys", "type"}
+        for item in configuration_metadata.get("items") or []:
+            if not isinstance(item, dict) or not set(item).issubset(allowed_configuration_fields):
+                errors.append("configuration metadata contains fields beyond the allowlist")
+                continue
+            if item.get("kind") not in {"ConfigMap", "Secret"} or not isinstance(item.get("keys"), list):
+                errors.append("invalid configuration metadata item")
+        walk(configuration_metadata, "configuration-metadata.json", errors)
+    configuration_references = blue_green_documents.get("configuration-references.json") or {}
+    if configuration_references:
+        if configuration_references.get("readOnly") is not True:
+            errors.append("configuration references read-only invariant missing")
+        reference_policy = configuration_references.get("policy") or {}
+        if reference_policy.get("secretValues") != "NOT_COLLECTED" or reference_policy.get("configMapValues") != "NOT_COLLECTED":
+            errors.append("configuration reference values persistence invariant missing")
+        if configuration_references.get("state") == "PASS" and any(item.get("state") != "RESOLVED" for item in configuration_references.get("references") or []):
+            errors.append("configuration references passed with unresolved evidence")
+    traffic_paths = blue_green_documents.get("traffic-paths.json") or {}
+    if traffic_paths and traffic_paths.get("readOnly") is not True:
+        errors.append("traffic paths read-only invariant missing")
+    state_data = blue_green_documents.get("state-data-readiness.json") or {}
+    if state_data and state_data.get("readOnly") is not True:
+        errors.append("state and data readiness read-only invariant missing")
+    probes = blue_green_documents.get("migration-probes.json") or {}
+    if probes:
+        if probes.get("readOnly") is not True or (probes.get("policy") or {}).get("responseBodyPersisted") is not False:
+            errors.append("migration probe safety invariant missing")
+        for item in probes.get("items") or []:
+            url = str(item.get("url") or "")
+            if "@" in url or "?" in url or "#" in url:
+                errors.append("migration probe URL contains credentials, query or fragment")
+    for filename in ("blue-green-readiness.json", "migration-comparison.json"):
+        gate_report = blue_green_documents.get(filename) or {}
+        if not gate_report:
+            continue
+        if gate_report.get("readOnly") is not True:
+            errors.append(f"{filename} read-only invariant missing")
+        mandatory = [item for item in gate_report.get("gates") or [] if item.get("mandatory")]
+        if gate_report.get("status") == "GO" and any(item.get("status") in {"FAIL", "UNKNOWN", "EVIDENCE_UNAVAILABLE"} for item in mandatory):
+            errors.append(f"{filename} returned GO without complete mandatory evidence")
+        if gate_report.get("status") == "NO_GO" and not any(item.get("status") == "FAIL" for item in mandatory):
+            errors.append(f"{filename} returned NO_GO without a mandatory failure")
+        if filename == "migration-comparison.json" and any("context" in (gate_report.get(side) or {}) for side in ("source", "target")):
+            errors.append("migration comparison contains Kubernetes context")
     allowed_severities = {"CRIT", "WARN", "UNKNOWN", "PARTIAL", "INFO", "PASS", "N/A"}
     for finding in report.get("findings", []) if isinstance(report, dict) else []:
         if finding.get("severity") not in allowed_severities:

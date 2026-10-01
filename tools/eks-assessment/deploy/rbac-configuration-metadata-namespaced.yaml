@@ -1,0 +1,51 @@
+# RBAC opcional para Configuration References. Substitua os dois placeholders de namespace.
+# Aplique somente os RoleBindings exigidos pelo opt-in selecionado. Kubernetes list/get
+# entrega objetos completos ao processo, embora o assessment persista apenas nomes,
+# types e keys. Prefira uma identidade temporária e o namespace mais restrito possível.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubernetes-assessment-configmap-metadata
+  namespace: REPLACE_NAMESPACE
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubernetes-assessment-configmap-metadata
+  namespace: REPLACE_NAMESPACE
+subjects:
+  - kind: ServiceAccount
+    name: eks-assessment
+    namespace: assessment-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubernetes-assessment-configmap-metadata
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubernetes-assessment-secret-metadata
+  namespace: REPLACE_NAMESPACE
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubernetes-assessment-secret-metadata
+  namespace: REPLACE_NAMESPACE
+subjects:
+  - kind: ServiceAccount
+    name: eks-assessment
+    namespace: assessment-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubernetes-assessment-secret-metadata

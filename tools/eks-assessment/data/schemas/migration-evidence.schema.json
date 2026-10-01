@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/migration-evidence-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "generatedAt": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "changeReference": {"type": "string"},
+    "approvalReference": {"type": "string"},
+    "dnsValidated": {"type": "boolean"},
+    "loadBalancerValidated": {"type": "boolean"},
+    "restoreTested": {"type": "boolean"},
+    "schemaBackwardCompatible": {"type": "boolean"},
+    "singletonJobsControlled": {"type": "boolean"},
+    "rollbackAvailable": {"type": "boolean"},
+    "pointOfNoReturn": {"type": "string"},
+    "dataReplication": {"type": "object", "required": ["state"], "properties": {"state": {"enum": ["READY", "FAILED", "UNKNOWN"]}, "detail": {"type": "string"}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}

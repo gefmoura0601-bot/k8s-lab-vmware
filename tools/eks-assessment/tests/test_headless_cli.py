@@ -29,6 +29,11 @@ class HeadlessCliTests(unittest.TestCase):
         self.assertIn("collect --phase before|after --change-id ID", result.stdout)
         self.assertIn("release-gate --collection ID", result.stdout)
         self.assertIn("regression-gate --before ID --after ID", result.stdout)
+        self.assertIn("blue-green-gate --collection ID", result.stdout)
+        self.assertIn("migration-gate --source ID --target ID", result.stdout)
+        self.assertIn("--configmap-metadata", result.stdout)
+        self.assertIn("--secret-metadata", result.stdout)
+        self.assertIn("--probe-url URL", result.stdout)
         self.assertIn("validate --collection ID", result.stdout)
         self.assertIn("bundle export --collection ID", result.stdout)
         self.assertIn("verify-release --archive", result.stdout)
@@ -64,6 +69,17 @@ class HeadlessCliTests(unittest.TestCase):
         self.assertEqual(2, invalid_namespace.returncode)
         self.assertIn("namespace inválido", invalid_namespace.stderr)
 
+        cluster_wide_metadata = run_cli(
+            "collect",
+            "--phase",
+            "before",
+            "--change-id",
+            "deploy-42",
+            "--secret-metadata",
+        )
+        self.assertEqual(2, cluster_wide_metadata.returncode)
+        self.assertIn("--namespace explícito", cluster_wide_metadata.stderr)
+
     def test_gate_arguments_are_explicit(self) -> None:
         release = run_cli("release-gate", "--collection", "sample")
         self.assertEqual(2, release.returncode)
@@ -72,6 +88,14 @@ class HeadlessCliTests(unittest.TestCase):
         regression = run_cli("regression-gate", "--before", "same", "--after", "same")
         self.assertEqual(2, regression.returncode)
         self.assertIn("devem ser diferentes", regression.stderr)
+
+        readiness = run_cli("blue-green-gate", "--collection", "..")
+        self.assertEqual(2, readiness.returncode)
+        self.assertIn("--collection válido", readiness.stderr)
+
+        migration = run_cli("migration-gate", "--source", "same", "--target", "same")
+        self.assertEqual(2, migration.returncode)
+        self.assertIn("devem ser diferentes", migration.stderr)
 
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('if ((NON_INTERACTIVE == 1)); then profile="$default_profile"', source)

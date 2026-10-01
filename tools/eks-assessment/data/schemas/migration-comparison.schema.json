@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/migration-comparison-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "status", "comparisonId", "source", "target", "mapping", "summary", "gates", "notice"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "status": {"enum": ["GO", "NO_GO", "UNKNOWN"]}, "comparisonId": {"type": "string", "minLength": 8},
+    "source": {
+      "type": "object",
+      "required": ["collection", "clusterName", "namespaceScope", "readiness"],
+      "properties": {
+        "collection": {"type": "string", "minLength": 1},
+        "clusterName": {"type": ["string", "null"]},
+        "namespaceScope": {"type": ["string", "array", "null"]},
+        "readiness": {"enum": ["GO", "NO_GO", "UNKNOWN", null]}
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["collection", "clusterName", "namespaceScope", "readiness"],
+      "properties": {
+        "collection": {"type": "string", "minLength": 1},
+        "clusterName": {"type": ["string", "null"]},
+        "namespaceScope": {"type": ["string", "array", "null"]},
+        "readiness": {"enum": ["GO", "NO_GO", "UNKNOWN", null]}
+      },
+      "additionalProperties": false
+    },
+    "mapping": {
+      "type": "object",
+      "required": ["namespaceMap", "resourceMap", "allowedDifferences"],
+      "properties": {
+        "namespaceMap": {"type": "object", "additionalProperties": {"type": "string"}},
+        "resourceMap": {"type": "object", "additionalProperties": {"type": "string"}},
+        "allowedDifferences": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "summary": {"type": "object", "required": ["gates", "blocking", "unknown", "warnings", "missingWorkloads", "missingConfigurationReferences"]},
+    "gates": {"type": "array", "items": {"type": "object", "required": ["gateId", "domain", "status", "mandatory", "summary", "evidence"], "properties": {"gateId": {"type": "string"}, "domain": {"type": "string"}, "status": {"enum": ["PASS", "WARN", "FAIL", "UNKNOWN", "N/A"]}, "mandatory": {"type": "boolean"}, "summary": {"type": "string"}, "evidence": {}}, "additionalProperties": false}},
+    "notice": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

@@ -34,9 +34,10 @@ from eks_semantic_assessment import apply_semantic_assessment
 from cis_security_assessment import generate as generate_cis_security
 from operational_insights import generate as generate_operational_insights
 from cloud_provider_assessment import generate as generate_cloud_provider_assessment
+from blue_green_readiness import generate as generate_blue_green_readiness
 
 
-SCHEMA_VERSION = "4.0"
+SCHEMA_VERSION = "4.1"
 SYSTEM_NAMESPACES = {
     "kube-system", "kube-public", "kube-node-lease", "calico-system",
     "calico-apiserver", "tigera-operator", "monitoring", "observability",
@@ -119,7 +120,13 @@ RESOURCE_SPECS: dict[str, tuple[str, tuple[str, ...], bool]] = {
     "karpenter_ec2nodeclasses": ("karpenter-ec2nodeclasses.json", ("ec2nodeclasses.karpenter.k8s.aws",), False),
     "istio_virtualservices": ("istio-virtualservices.json", ("virtualservices.networking.istio.io",), True),
     "istio_destinationrules": ("istio-destinationrules.json", ("destinationrules.networking.istio.io",), True),
+    "istio_gateways": ("istio-gateways.json", ("gateways.networking.istio.io",), True),
     "istio_peerauthentications": ("istio-peerauthentications.json", ("peerauthentications.security.istio.io",), True),
+    "istio_authorizationpolicies": ("istio-authorizationpolicies.json", ("authorizationpolicies.security.istio.io",), True),
+    "istio_requestauthentications": ("istio-requestauthentications.json", ("requestauthentications.security.istio.io",), True),
+    "istio_serviceentries": ("istio-serviceentries.json", ("serviceentries.networking.istio.io",), True),
+    "referencegrants": ("referencegrants.json", ("referencegrants.gateway.networking.k8s.io",), True),
+    "openshift_routes": ("openshift-routes.json", ("routes.route.openshift.io",), True),
     "kyverno_clusterpolicies": ("kyverno-clusterpolicies.json", ("clusterpolicies.kyverno.io",), False),
     "argocd_applications": ("argocd-applications.json", ("applications.argoproj.io",), True),
     "volumesnapshots": ("volumesnapshots.json", ("volumesnapshots.snapshot.storage.k8s.io",), True),
@@ -1207,7 +1214,7 @@ class Assessment:
                 self.add("PASS" if entry.get("count", 0) else "INFO", "Extensions", label, f"API available; objects={entry.get('count',0)}", "Review controller health and object status." if entry.get("count", 0) else "API is installed but no objects were found.")
 
     def manifests(self) -> None:
-        application_keys = ["jobs", "cronjobs", "services", "ingresses", "hpas", "vpas", "keda_scaledobjects", "pdbs", "networkpolicies", "serviceaccounts", "gateways", "httproutes", "rollouts"]
+        application_keys = ["jobs", "cronjobs", "services", "ingresses", "hpas", "vpas", "keda_scaledobjects", "pdbs", "networkpolicies", "serviceaccounts", "gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes", "referencegrants", "istio_gateways", "istio_virtualservices", "istio_destinationrules", "istio_peerauthentications", "istio_authorizationpolicies", "istio_requestauthentications", "istio_serviceentries", "openshift_routes", "rollouts"]
         evidence = [sanitize_tree(x) for x in items(self.base["workloads"])]
         for key in application_keys:
             evidence.extend(sanitize_tree(x) for x in items(self.raw.get(key)))
@@ -1252,6 +1259,7 @@ class Assessment:
         operational = generate_operational_insights(
             self.directory, self.workloads, self.findings, self.capacity, technologies, self.aws_eks, cloud_provider
         )
+        blue_green = generate_blue_green_readiness(self.directory)
         order = {"CRIT": 0, "WARN": 1, "UNKNOWN": 2, "PARTIAL": 3, "INFO": 4, "PASS": 5, "N/A": 6}
         self.findings.sort(key=lambda x: (order.get(x["severity"], 9), x["category"], x["namespace"], x["workload"], x["check"]))
         counts = Counter(x["severity"] for x in self.findings)
@@ -1285,6 +1293,7 @@ class Assessment:
             "semantic": self.semantic_summary,
             "cisSecurity": cis_security,
             "operationalInsights": operational,
+            "blueGreenReadiness": blue_green,
             "cloudProvider": cloud_provider,
             "awsEks": {
                 "state": self.aws_eks.get("state", "UNKNOWN") if isinstance(self.aws_eks, dict) else "UNKNOWN",
@@ -1294,7 +1303,7 @@ class Assessment:
                 "inventory": self.aws_eks.get("inventory", {}) if isinstance(self.aws_eks, dict) else {},
             },
             "prometheus": {"state": telemetry.get("state", "DISABLED"), "window": telemetry.get("window"), "reason": telemetry.get("reason", "")},
-            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cloudProvider": "cloud-provider-assessment.json", "cisSecurity": "cis-security-assessment.json", "operationalInsights": "operational-insights.json"},
+            "artifacts": {"sanitizedManifests": "application-manifests-sanitized.json", "sanitizedSnapshots": self.sanitized_snapshots, "apiResources": "api-resources.json", "universalInventory": "universal-inventory.json", "awsEks": "aws-eks-assessment.json", "cloudProvider": "cloud-provider-assessment.json", "cisSecurity": "cis-security-assessment.json", "operationalInsights": "operational-insights.json", "configurationReferences": "configuration-references.json", "trafficPaths": "traffic-paths.json", "stateDataReadiness": "state-data-readiness.json", "migrationProbes": "migration-probes.json", "blueGreenReadiness": "blue-green-readiness.json"},
         }
 
 

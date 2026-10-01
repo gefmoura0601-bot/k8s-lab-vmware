@@ -22,10 +22,12 @@ from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from assessment_process_supervisor import CollectionSupervisor
+from blue_green_readiness import generate as generate_blue_green_readiness
 from cis_security_assessment import compare_reports
 from collector_registry import build_plan as build_collector_plan, load_registry as load_collector_registry
 from eks_comprehensive_assessment import sanitize_snapshot_tree
 from localization_pt_br import localize_finding
+from migration_compare import evaluate as evaluate_migration, normalize_mapping, write_outputs as write_migration_outputs
 from provider_validation import PROVIDERS, evaluate as evaluate_provider, write_outputs as write_provider_outputs
 from regression_validation import (
     DEFAULT_POLICY as DEFAULT_REGRESSION_POLICY,
@@ -326,7 +328,7 @@ def basic_findings(directory: Path, resources: dict[str, list[dict]]) -> list[di
     return findings
 
 
-def details(directory: Path) -> dict:
+def _base_details(directory: Path) -> dict:
     comprehensive = jfile(directory / "comprehensive-assessment.json", {})
     resources = inventory(directory)
     findings = comprehensive.get("findings") or basic_findings(directory, resources)
@@ -337,6 +339,20 @@ def details(directory: Path) -> dict:
     scanner_summary = comprehensive.get("summary") or {}
     summary = {"nodes": len(resources["nodes"]), "readyNodes": sum(1 for x in resources["nodes"] if x["ready"]), "pods": len(resources["pods"]), "running": phases["Running"], "pending": phases["Pending"], "failed": phases["Failed"], "deployments": len(resources["deployments"]), "statefulsets": len(resources["statefulsets"]), "daemonsets": len(resources["daemonsets"]), "jobs": len(resources["jobs"]), "cronjobs": len(resources["cronjobs"]), "rollouts": len(resources["rollouts"]), "namespaces": len(resources["namespaces"]), "services": len(resources["services"]), "pvcs": len(resources["pvcs"]), "hpas": len(resources["hpas"]), "keda": len(resources["keda"]), "vpas": len(resources["vpas"]), "rabbitReady": rabbit["ready"] if rabbit else 0, "rabbitDesired": rabbit.get("desired", 0) if rabbit else 0, **scanner_summary}
     return {"id": directory.name, "metadata": metadata(directory), "summary": summary, "resources": resources, "findings": findings, "metrics": tsv(directory / "prometheus-baseline.tsv"), "telemetry": jfile(directory / "prometheus-telemetry.json", {"state": "DISABLED"}), "discovery": jfile(directory / "discovery" / "summary.json", None), "comprehensive": comprehensive, "awsEks": jfile(directory / "aws-eks-assessment.json", comprehensive.get("awsEks", {"state": "UNKNOWN"})), "cloudProvider": jfile(directory / "cloud-provider-assessment.json", comprehensive.get("cloudProvider", {"state": "N/A", "provider": "generic-kubernetes"})), "cisSecurity": jfile(directory / "cis-security-assessment.json", comprehensive.get("cisSecurity", {})), "operationalInsights": jfile(directory / "operational-insights.json", comprehensive.get("operationalInsights", {})), "technologies": comprehensive.get("technologies", []), "capacity": comprehensive.get("capacityRecommendations", []), "coverage": (comprehensive.get("collection") or {}).get("resources", {}), "universal": jfile(directory / "universal-inventory.json", {"resources": []})}
+
+
+def details(directory: Path) -> dict:
+    value = _base_details(directory)
+    value.update({
+        "blueGreenReadiness": jfile(directory / "blue-green-readiness.json", value["comprehensive"].get("blueGreenReadiness", {})),
+        "configurationReferences": jfile(directory / "configuration-references.json", {}),
+        "configurationMetadata": jfile(directory / "configuration-metadata.json", {}),
+        "trafficPaths": jfile(directory / "traffic-paths.json", {}),
+        "stateDataReadiness": jfile(directory / "state-data-readiness.json", {}),
+        "migrationProbes": jfile(directory / "migration-probes.json", {}),
+        "migrationComparison": jfile(directory / "migration-comparison.json", {}),
+    })
+    return value
 
 
 def write_provider_validation(collection: Path, expected_provider: str) -> dict[str, Any]:
@@ -365,6 +381,18 @@ def write_regression_validation(before: Path, after: Path, profile: str) -> dict
         after / "regression-validation.junit.xml",
         after / "regression-validation.sarif.json",
     )
+    return report
+
+
+def write_blue_green_readiness(collection: Path, probe_urls: list[str]) -> dict[str, Any]:
+    """Regenerate provider-neutral readiness from sanitized artifacts and explicit probes."""
+    return generate_blue_green_readiness(collection, probe_urls, include_environment_probes=False)
+
+
+def write_migration_validation(source: Path, target: Path, mapping_value: Any) -> dict[str, Any]:
+    """Compare source and target collections and atomically persist CI artifacts."""
+    report = evaluate_migration(source, target, normalize_mapping(mapping_value))
+    write_migration_outputs(report, target / "migration-comparison.json")
     return report
 
 
@@ -449,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
             ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("timeline", "/timeline", "Operational Timeline"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
             ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
             ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
-            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate"), ("regression-gate", "/regression-gate", "Regression Gate")]),
+            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate"), ("regression-gate", "/regression-gate", "Regression Gate"), ("blue-green", "/blue-green", "Blue-Green Readiness")]),
             ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
         ]
         nav = []
@@ -562,6 +590,14 @@ class Handler(BaseHTTPRequestHandler):
             add("Regression Gate", item.get("gateId"), item.get("status"), item.get("summary"), f'/regression-gate?collection={collection}', item)
         for item in regression_validation.get("changes") or []:
             add("Regression Gate", item.get("ruleId"), item.get("afterStatus"), item.get("detail"), f'/regression-gate?collection={collection}', item)
+        for item in (value.get("blueGreenReadiness") or {}).get("gates") or []:
+            add("Blue-Green Readiness", item.get("gateId"), item.get("status"), item.get("summary"), f'/blue-green?collection={collection}', item)
+        for item in (value.get("configurationReferences") or {}).get("references") or []:
+            add("Configuration Reference", (item.get("target") or {}).get("name"), item.get("state"), item.get("detail"), f'/blue-green?collection={collection}', item)
+        for item in (value.get("trafficPaths") or {}).get("paths") or []:
+            add("Traffic Path", item.get("name"), item.get("state"), item.get("type"), f'/blue-green?collection={collection}', item)
+        for item in (value.get("migrationComparison") or {}).get("gates") or []:
+            add("Migration Gate", item.get("gateId"), item.get("status"), item.get("summary"), f'/blue-green?collection={collection}', item)
         message = f'<div class="message good">{len(rows)} resultado(s) para <b>{esc(term)}</b>. Limite: 500; conteúdo de logs não é indexado.</div>' if rows else f'<div class="message">Nenhum resultado para <b>{esc(term)}</b>.</div>'
         body = f'<h1>Busca global</h1>{form}{message}{table(rows, [("source","Origem"),("title","Item"),("status","Estado"),("detail","Detalhe"),("open","Ação")], raw={"open"})}'
         return self.layout("Busca global", body, directory, "search")
@@ -1428,6 +1464,116 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.layout("Regression Gate", body, directory, "regression-gate")
 
+    def blue_green(self, directory: Path | None) -> str:
+        if not directory:
+            return self.overview(None)
+        value = details(directory)
+        readiness = value.get("blueGreenReadiness") or {}
+        configuration = value.get("configurationReferences") or {}
+        configuration_metadata = value.get("configurationMetadata") or {}
+        traffic = value.get("trafficPaths") or {}
+        state_data = value.get("stateDataReadiness") or {}
+        probes = value.get("migrationProbes") or {}
+        migration = value.get("migrationComparison") or {}
+
+        def gate_cards(items: list[dict[str, Any]]) -> str:
+            cards = []
+            for item in items:
+                state = str(item.get("status") or "UNKNOWN")
+                evidence = item.get("evidence", item.get("detail", {}))
+                rendered = json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) if isinstance(evidence, (dict, list)) else str(evidence)
+                cards.append(
+                    f'<details class="cis-control {esc(state)}"><summary><span><b>{esc(item.get("gateId"))}</b> — {esc(item.get("summary", item.get("detail", "")))}</span>'
+                    f'<span class="metric-status {esc(state.lower())}">{esc(state)}</span></summary>'
+                    f'<div class="cis-meta"><span>Domínio: <b>{esc(item.get("domain", "Blue-Green"))}</b></span>'
+                    f'<span>Obrigatório: <b>{"sim" if item.get("mandatory") else "não"}</b></span></div><pre>{esc(rendered)}</pre></details>'
+                )
+            return "".join(cards) or '<div class="message">Nenhum gate disponível nesta coleta.</div>'
+
+        readiness_status = str(readiness.get("status") or "NOT_GENERATED")
+        readiness_summary = readiness.get("summary") or {}
+        status_class = "good" if readiness_status == "GO" else "bad" if readiness_status == "NO_GO" else "warn"
+        probe_form = (
+            '<form class="compare" method="post" action="/validate-blue-green">'
+            f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
+            f'<input type="hidden" name="collection" value="{esc(directory.name)}">'
+            '<label>URLs para probe HTTP/HTTPS read-only (uma por linha)'
+            '<textarea name="probe_urls" rows="3" placeholder="https://green.example.test/health"></textarea></label>'
+            '<button type="submit">Atualizar Blue-Green Readiness</button></form>'
+        )
+        source_options = "".join(
+            f'<option value="{esc(item.name)}">{esc(item.name)}</option>'
+            for item in self.directories() if item != directory
+        )
+        default_mapping = json.dumps({"namespaceMap": {}, "resourceMap": {}, "allowedDifferences": ["image", "replicas"]}, ensure_ascii=False)
+        migration_form = (
+            '<form class="compare" method="post" action="/validate-migration">'
+            f'<input type="hidden" name="action_token" value="{ACTION_TOKEN}">'
+            f'<input type="hidden" name="target" value="{esc(directory.name)}">'
+            f'<label>Coleta source/blue<select name="source" required><option value="">Selecionar explicitamente</option>{source_options}</select></label>'
+            f'<label>Mapping JSON explícito<textarea name="mapping" rows="5" required>{esc(default_mapping)}</textarea></label>'
+            '<button type="submit">Executar Migration Gate</button></form>'
+        )
+        facts = (
+            '<div class="facts">'
+            f'<div><small>Readiness</small><b>{esc(readiness_status)}</b></div>'
+            f'<div><small>Gates</small><b>{esc(readiness_summary.get("gates", 0))}</b></div>'
+            f'<div><small>Bloqueios</small><b>{esc(readiness_summary.get("blocking", 0))}</b></div>'
+            f'<div><small>Desconhecidos</small><b>{esc(readiness_summary.get("unknown", 0))}</b></div>'
+            f'<div><small>Configuration References</small><b>{esc((configuration.get("summary") or {}).get("references", 0))}</b></div>'
+            f'<div><small>Traffic Paths</small><b>{esc((traffic.get("summary") or {}).get("paths", 0))}</b></div>'
+            f'<div><small>Stateful workloads</small><b>{esc((state_data.get("summary") or {}).get("statefulWorkloads", 0))}</b></div>'
+            f'<div><small>Probes</small><b>{esc((probes.get("summary") or {}).get("probes", 0))}</b></div>'
+            '</div>'
+        )
+        reference_rows = []
+        for item in configuration.get("references") or []:
+            source, target = item.get("source") or {}, item.get("target") or {}
+            reference_rows.append({
+                "state": item.get("state"),
+                "source": f'{source.get("kind")}/{source.get("namespace")}/{source.get("name")}',
+                "target": f'{target.get("kind")}/{target.get("namespace")}/{target.get("name")}',
+                "key": target.get("key", "-"), "usage": item.get("usage"), "detail": item.get("detail"),
+            })
+        traffic_rows = []
+        for item in traffic.get("paths") or []:
+            targets = ", ".join(str(target.get("service") or "-") for target in item.get("targets") or []) or "-"
+            traffic_rows.append({"state": item.get("state"), "type": item.get("type"), "namespace": item.get("namespace"), "name": item.get("name"), "targets": targets})
+        metadata_policy = configuration_metadata.get("policy") or {}
+        migration_html = ""
+        if migration:
+            migration_status = str(migration.get("status") or "UNKNOWN")
+            migration_summary = migration.get("summary") or {}
+            migration_html = (
+                f'<h2>Último Migration Gate <small>{esc((migration.get("source") or {}).get("collection"))} → {esc((migration.get("target") or {}).get("collection"))}</small></h2>'
+                f'<div class="message {"good" if migration_status == "GO" else "bad" if migration_status == "NO_GO" else "warn"}"><b>{esc(migration_status)}</b> — '
+                f'{esc(migration_summary.get("blocking", 0))} bloqueio(s), {esc(migration_summary.get("unknown", 0))} desconhecido(s).</div>'
+                '<div class="cis-actions">'
+                f'<a class="button" href="/export-migration?collection={quote_plus(directory.name)}">Exportar JSON</a>'
+                f'<a class="button secondary" href="/export-migration-junit?collection={quote_plus(directory.name)}">Exportar JUnit</a>'
+                f'<a class="button secondary" href="/export-migration-sarif?collection={quote_plus(directory.name)}">Exportar SARIF</a>'
+                f'<a class="button secondary" href="/export-migration-markdown?collection={quote_plus(directory.name)}">Exportar Markdown</a></div>'
+                f'{gate_cards(migration.get("gates") or [])}'
+            )
+        body = (
+            '<h1>Blue-Green Readiness</h1>'
+            f'<div class="message {status_class}"><b>{esc(readiness_status)}</b> — Avaliação provider-neutral e read-only. '
+            'O resultado não executa cutover e não substitui aprovação operacional.</div>'
+            f'{facts}{probe_form}'
+            '<div class="message warn"><b>ConfigMap e Secret metadata são opt-in.</b> Valores nunca são persistidos. '
+            f'Estado: {esc(configuration_metadata.get("state", "NOT_REQUESTED"))}. {esc(metadata_policy.get("rbacWarning", "A validação sem opt-in permanece EVIDENCE_UNAVAILABLE."))}</div>'
+            f'<h2>Readiness Gates</h2>{gate_cards(readiness.get("gates") or [])}'
+            f'<h2>Configuration References</h2>{table(reference_rows, [("state","Estado"),("source","Origem"),("target","Destino"),("key","Key"),("usage","Uso"),("detail","Evidência")])}'
+            f'<h2>Traffic Paths</h2>{table(traffic_rows, [("state","Estado"),("type","Tipo"),("namespace","Namespace"),("name","Nome"),("targets","Targets")])}'
+            f'<h2>State & Data</h2>{table(state_data.get("gates") or [], [("status","Estado"),("gateId","Gate"),("mandatory","Obrigatório"),("detail","Evidência")])}'
+            f'<h2>Cutover Probes</h2>{table(probes.get("items") or [], [("state","Estado"),("url","URL"),("httpStatus","HTTP"),("latencyMs","Latência ms"),("tlsValidated","TLS validado"),("error","Erro")])}'
+            f'<h2>Migration Gate source → target</h2>{migration_form}'
+            '<div class="message">Clusters e namespaces diferentes são suportados somente por mapping explícito. '
+            'Diferenças de image e replicas são permitidas por padrão; os demais campos bloqueiam o gate.</div>'
+            f'{migration_html}'
+        )
+        return self.layout("Blue-Green Readiness", body, directory, "blue-green")
+
     def cloud_provider(self, directory: Path | None) -> str:
         if not directory:
             return self.overview(None)
@@ -1771,6 +1917,11 @@ class Handler(BaseHTTPRequestHandler):
             '<label class="checkbox-row"><input type="checkbox" name="account_security" value="1"><span>Incluir GuardDuty/runtime security (requer permissão de conta)</span></label>'
             '<label class="checkbox-row"><input type="checkbox" name="include_logs" value="1"><span>Incluir logs sanitizados (opt-in; exige targets explícitos)</span></label>'
             '<label>Targets de logs (namespace/kind/name[:container], separados por vírgula)<input name="log_targets" placeholder="apps/deployment/minha-api:app"></label>'
+            '<details class="form-section"><summary>Configuration References para migração (opt-in)</summary>'
+            '<div class="message warn">Valores de ConfigMaps e Secrets nunca são persistidos. Mesmo assim, o RBAC de get/list permite que o processo receba o objeto completo; este opt-in exige namespace explícito e bloqueia coleta cluster-wide.</div>'
+            '<label class="checkbox-row"><input type="checkbox" name="configmap_metadata" value="1"><span>Validar nomes e keys referenciadas de ConfigMaps</span></label>'
+            '<label class="checkbox-row"><input type="checkbox" name="secret_metadata" value="1"><span>Validar nomes, types e keys referenciadas de Secrets</span></label></details>'
+            '<label>URLs para probe de cutover (opcional; uma por linha)<textarea name="probe_urls" rows="3" placeholder="https://green.example.test/health"></textarea></label>'
             '<label>Namespace do Service Prometheus (opcional)<input name="prometheus_namespace" placeholder="informar explicitamente"></label>'
             '<label>Service Prometheus (opcional)<input name="prometheus_service" placeholder="informar explicitamente"></label>'
             f'<label>URL explícita do Prometheus (opcional)<input name="prometheus_url" value="{esc(prometheus_url)}" placeholder="http://prometheus.example:9090"></label>'
@@ -1780,7 +1931,7 @@ class Handler(BaseHTTPRequestHandler):
             '<div class="progress-track" role="progressbar" aria-label="Progresso da coleta" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>'
             '<p id="progress-detail">Validando o ambiente...</p></section>'
             '<button id="collection-submit">Iniciar assessment read-only</button></form>'
-            '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","node-evidence":"Atribuindo uso dos nodes","inventory-services":"Inventariando Services","inventory-pvcs":"Inventariando PVCs","inventory-hpas":"Inventariando HPAs","artifact-validation":"Validando artefatos","contract-validation":"Validando JSON Schemas"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
+            '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery","configuration-metadata":"Validando Configuration References",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","node-evidence":"Atribuindo uso dos nodes","inventory-services":"Inventariando Services","inventory-pvcs":"Inventariando PVCs","inventory-hpas":"Inventariando HPAs","artifact-validation":"Validando artefatos","contract-validation":"Validando JSON Schemas"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
         )
         return self.layout("Nova coleta", body)
     def do_GET(self):
@@ -1807,6 +1958,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/prometheus": return self.send_html(self.prometheus(directory))
         if path == "/release-gate": return self.send_html(self.release_gate(directory))
         if path == "/regression-gate": return self.send_html(self.regression_gate(directory))
+        if path == "/blue-green": return self.send_html(self.blue_green(directory))
         if path == "/cloud": return self.send_html(self.cloud_provider(directory))
         if path == "/aws": return self.send_html(self.aws_eks(directory))
         if path == "/cis-security": return self.send_html(self.cis_security(directory, query))
@@ -1858,6 +2010,25 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/export-regression-sarif":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_file(directory / "regression-validation.sarif.json", "application/sarif+json; charset=utf-8", f"{directory.name}-regression-validation.sarif.json")
+        if path == "/export-blue-green":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = jfile(directory / "blue-green-readiness.json", {})
+            if not report: return self.send_json({"error": "Blue-Green Readiness não disponível"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-blue-green-readiness.json")
+        if path == "/export-migration":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            report = jfile(directory / "migration-comparison.json", {})
+            if not report: return self.send_json({"error": "Migration Gate ainda não executado"}, 404)
+            return self.send_json(report, filename=f"{directory.name}-migration-comparison.json")
+        if path == "/export-migration-junit":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "migration-comparison.junit.xml", "application/xml; charset=utf-8", f"{directory.name}-migration-comparison.junit.xml")
+        if path == "/export-migration-sarif":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "migration-comparison.sarif.json", "application/sarif+json; charset=utf-8", f"{directory.name}-migration-comparison.sarif.json")
+        if path == "/export-migration-markdown":
+            if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
+            return self.send_file(directory / "migration-comparison.md", "text/markdown; charset=utf-8", f"{directory.name}-migration-comparison.md")
         if path == "/manifests":
             if not directory: return self.send_json({"error": "Coleta não encontrada"}, 404)
             return self.send_json(jfile(directory / "application-manifests-sanitized.json", {}), filename=f"{directory.name}-manifests-sanitized.json")
@@ -1878,7 +2049,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authenticated(): return
         path = urlparse(self.path).path
-        if path not in {"/collect", "/cancel", "/validate-provider", "/validate-regression"}:
+        if path not in {"/collect", "/cancel", "/validate-provider", "/validate-regression", "/validate-blue-green", "/validate-migration"}:
             return self.send_json({"error": "Rota não encontrada"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1966,6 +2137,71 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", f"/regression-gate?{urlencode({'collection': after_id})}")
             self.end_headers()
             return
+        if path == "/validate-blue-green":
+            ident = form.get("collection", [""])[0]
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", ident):
+                return self.send_json({"error": "ID da coleta inválido"}, 400)
+            directory = self.root / ident
+            if not directory.is_dir():
+                return self.send_json({"error": "Coleta não encontrada"}, 404)
+            probe_urls = [item.strip() for item in form.get("probe_urls", [""])[0].splitlines() if item.strip()]
+            if len(probe_urls) > 20 or any(len(item) > 2048 for item in probe_urls):
+                return self.send_json({"error": "Informe no máximo 20 URLs de até 2048 caracteres"}, 400)
+            if not LOCK.acquire(blocking=False):
+                return self.send_json({"error": "Já existe uma coleta ou validação em execução"}, 409)
+            try:
+                write_blue_green_readiness(directory, probe_urls)
+            except (OSError, ValueError) as error:
+                return self.send_html(
+                    self.layout("Blue-Green Readiness", f'<div class="message bad">Não foi possível atualizar a readiness: {esc(error)}</div>', directory, "blue-green"),
+                    400,
+                )
+            except Exception:
+                return self.send_html(
+                    self.layout("Blue-Green Readiness", '<div class="message bad">Não foi possível atualizar a readiness. Revise os artefatos e as URLs explícitas.</div>', directory, "blue-green"),
+                    500,
+                )
+            finally:
+                LOCK.release()
+            self.send_response(303)
+            self.send_header("Location", f"/blue-green?{urlencode({'collection': ident})}")
+            self.end_headers()
+            return
+        if path == "/validate-migration":
+            source_id = form.get("source", [""])[0]
+            target_id = form.get("target", [""])[0]
+            if not all(re.fullmatch(r"[A-Za-z0-9._-]+", ident) for ident in (source_id, target_id)):
+                return self.send_json({"error": "ID source ou target inválido"}, 400)
+            if source_id == target_id:
+                return self.send_json({"error": "Source e target devem ser diferentes"}, 400)
+            source, target = self.root / source_id, self.root / target_id
+            if not source.is_dir() or not target.is_dir():
+                return self.send_json({"error": "Coleta source ou target não encontrada"}, 404)
+            try:
+                mapping_value = json.loads(form.get("mapping", ["{}"])[0])
+                normalize_mapping(mapping_value)
+            except (json.JSONDecodeError, ValueError) as error:
+                return self.send_json({"error": f"Mapping JSON inválido: {error}"}, 400)
+            if not LOCK.acquire(blocking=False):
+                return self.send_json({"error": "Já existe uma coleta ou validação em execução"}, 409)
+            try:
+                write_migration_validation(source, target, mapping_value)
+            except (OSError, ValueError) as error:
+                return self.send_html(
+                    self.layout("Blue-Green Readiness", f'<div class="message bad">Migration Gate inválido: {esc(error)}</div>', target, "blue-green"),
+                    400,
+                )
+            except Exception:
+                return self.send_html(
+                    self.layout("Blue-Green Readiness", '<div class="message bad">Não foi possível comparar source e target. Revise a integridade das coletas e o mapping.</div>', target, "blue-green"),
+                    500,
+                )
+            finally:
+                LOCK.release()
+            self.send_response(303)
+            self.send_header("Location", f"/blue-green?{urlencode({'collection': target_id})}")
+            self.end_headers()
+            return
         if not LOCK.acquire(blocking=False):
             return self.send_html(
                 self.layout("Coleta", '<div class="message bad">Já existe uma coleta em execução.</div>'),
@@ -1975,7 +2211,6 @@ class Handler(BaseHTTPRequestHandler):
         collection_started = False
         final_status = "FAILED"
         try:
-            context, detected = cluster()
             label = re.sub(r"[^A-Za-z0-9._-]", "-", form.get("label", ["manual"])[0])[:64] or "manual"
             baseline = form.get("baseline", ["0"])[0] == "1"
             phase = "before" if baseline else "manual"
@@ -1990,6 +2225,18 @@ class Handler(BaseHTTPRequestHandler):
             if namespace and not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", namespace):
                 return self.send_html(self.layout("Erro", '<div class="message bad">Namespace inválido.</div>'), 400)
             prometheus_url = form.get("prometheus_url", [""])[0].strip() or os.environ.get("PROMETHEUS_URL", "").strip()
+            probe_urls = [item.strip() for item in form.get("probe_urls", [""])[0].splitlines() if item.strip()]
+            if len(probe_urls) > 20 or any(len(item) > 2048 for item in probe_urls):
+                return self.send_html(self.layout("Erro", '<div class="message bad">Informe no máximo 20 URLs de probe, cada uma com até 2048 caracteres.</div>'), 400)
+            include_configmaps = form.get("configmap_metadata", ["0"])[0] == "1"
+            include_secrets = form.get("secret_metadata", ["0"])[0] == "1"
+            configuration_metadata_enabled = include_configmaps or include_secrets
+            if configuration_metadata_enabled and not namespace:
+                message = "ConfigMap/Secret metadata exige namespace explícito; coleta cluster-wide é bloqueada para esse opt-in."
+                if async_request:
+                    return self.send_json({"error": message}, 400)
+                return self.send_html(self.layout("Erro", f'<div class="message bad">{esc(message)}</div>'), 400)
+            context, detected = cluster()
             runtime_env = {
                 **os.environ,
                 "EKS_CLUSTER_NAME": eks_cluster_name(),
@@ -2007,6 +2254,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ASSESSMENT_INCLUDE_ACCOUNT_SECURITY": "1" if form.get("account_security", ["0"])[0] == "1" else "0",
                 "ASSESSMENT_INCLUDE_LOGS": "1" if form.get("include_logs", ["0"])[0] == "1" else "0",
                 "ASSESSMENT_LOG_TARGETS": form.get("log_targets", [""])[0].strip(),
+                "ASSESSMENT_INCLUDE_CONFIGMAP_METADATA": "1" if include_configmaps else "0",
+                "ASSESSMENT_INCLUDE_SECRET_METADATA": "1" if include_secrets else "0",
+                "ASSESSMENT_PROBE_URLS": "\n".join(probe_urls),
             }
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             ident = f"eks-{stamp}-{phase}-{label}-{secrets.token_hex(4)}"
@@ -2015,6 +2265,7 @@ class Handler(BaseHTTPRequestHandler):
                 collector_registry,
                 channel="web",
                 prometheus=bool(prometheus_url),
+                configuration_metadata=configuration_metadata_enabled,
             )
             planned_components = [item["id"] for item in collector_plan]
             component_weights = {item["id"]: item["weight"] for item in collector_plan}
@@ -2091,6 +2342,24 @@ class Handler(BaseHTTPRequestHandler):
                 (output / logfile).write_text(result.stdout + result.stderr, encoding="utf-8")
                 components.append(component)
                 codes.append(result.returncode)
+            if configuration_metadata_enabled:
+                configuration_command = [
+                    sys.executable,
+                    str(self.repository / "src/configuration_metadata.py"),
+                    "--output", str(output / "configuration-metadata.json"),
+                ]
+                if namespace:
+                    configuration_command.extend(["--namespace", namespace])
+                if include_configmaps:
+                    configuration_command.append("--include-configmaps")
+                if include_secrets:
+                    configuration_command.append("--include-secrets")
+                configuration_result = SUPERVISOR.run(
+                    "configuration-metadata", configuration_command, cwd=self.repository, env=env, timeout=300,
+                )
+                (output / "configuration-metadata.log").write_text(configuration_result.stdout + configuration_result.stderr, encoding="utf-8")
+                components.append("configuration-metadata")
+                codes.append(configuration_result.returncode)
             inventory_scope = ["-n", namespace] if namespace else ["-A"]
             for filename, args in {
                 "services.json": ["kubectl", "get", "services", *inventory_scope, "-o", "json"],

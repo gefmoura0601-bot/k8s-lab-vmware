@@ -15,7 +15,10 @@ O assessment é adaptativo, somente leitura e executável a partir de qualquer h
 11. `collector_registry.py`: plano de coleta com dependências, pesos, retomada e retry;
 12. `manifest_schema_validation.py`: validação estrutural e semântica offline de manifests sanitizados;
 13. `collection_bundle.py`: exportação, verificação, importação e retenção segura de coletas;
-14. `release_verification.py`: verificação de package, checksum, SBOM, provenance e assinatura opcional.
+14. `release_verification.py`: verificação de package, checksum, SBOM, provenance e assinatura opcional;
+15. `configuration_metadata.py`: opt-in de nomes/types/keys de ConfigMaps e Secrets, sem persistir values;
+16. `blue_green_readiness.py`: Configuration References, Traffic Paths, State & Data e probes de cutover;
+17. `migration_compare.py`: Migration Gate source → target com mapping explícito entre clusters e namespaces.
 
 Estados: `CRIT`, `WARN`, `UNKNOWN`, `PARTIAL`, `INFO`, `PASS` e `N/A`. Recurso comprovadamente não aplicável é `N/A`; evidência ausente é `UNKNOWN`; coleta incompleta é `PARTIAL`. Falha de RBAC/API nunca é conformidade. Nenhum componente aplica, altera, reinicia, escala ou exclui recursos.
 
@@ -30,7 +33,7 @@ Execute a partir da raiz do repositório em qualquer host Linux autorizado, como
 
 O host não precisa pertencer ao cluster. Em EKS, o assessment não acessa hosts do control plane, etcd ou processos internos; ele usa a API Kubernetes e, opcionalmente, as configurações gerenciadas expostas pelas APIs AWS.
 
-Secrets e valores de ConfigMap não são solicitados pelo perfil padrão. Essas APIs aparecem como cobertura `PARTIAL` por política de minimização de dados.
+Secrets e valores de ConfigMap não são solicitados pelo perfil padrão. Nomes, types e keys podem ser validados por opt-in; values nunca são persistidos. Essas APIs aparecem como cobertura `PARTIAL` por política de minimização de dados.
 
 ## Preflight
 
@@ -52,7 +55,7 @@ PYTHON_BIN=/caminho/python3 bash tools/eks-assessment/bin/eks-assessment.sh
 
 O menu terminal usa um tema Kubernetes em azul, mostra versão, contexto, porta do dashboard e quantidade de coletas. Cores ANSI são habilitadas somente em terminal interativo. Para desabilitá-las, use `NO_COLOR=1`; para impedir a limpeza de tela, use `ASSESSMENT_MENU_CLEAR=0`.
 
-O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard web preso à sessão, Release Gate pela opção 7 e Regression Gate entre duas coletas pela opção 8:
+O menu reúne baseline antes/depois, comparação, dashboard terminal, dashboard web preso à sessão, Release Gate pela opção 7, Regression Gate pela opção 8, Blue-Green Readiness pela opção 11 e Migration Gate pela opção 12:
 
 ```bash
 bash tools/eks-assessment/bin/eks-assessment.sh
@@ -85,6 +88,11 @@ bash tools/eks-assessment/bin/eks-assessment.sh release-gate \
   --root assessment --collection "$COLLECTION_ID" --provider generic-kubernetes
 bash tools/eks-assessment/bin/eks-assessment.sh regression-gate \
   --root assessment --before "$BEFORE_ID" --after "$COLLECTION_ID" --profile standard
+bash tools/eks-assessment/bin/eks-assessment.sh blue-green-gate \
+  --root assessment --collection "$COLLECTION_ID" --probe-url https://green.example.test/health
+bash tools/eks-assessment/bin/eks-assessment.sh migration-gate \
+  --root assessment --source "$BEFORE_ID" --target "$COLLECTION_ID" \
+  --mapping tools/eks-assessment/docs/migration-mapping.example.json
 ```
 
 Argumentos, exit codes e requisitos por subcomando estão em [`docs/headless-cli.md`](docs/headless-cli.md).
@@ -168,10 +176,11 @@ Exemplos auditáveis ficam em `deploy/`:
 - `iam-account-security-optional.json`: GuardDuty opcional, separado do perfil padrão.
 - `azure-aks-assessment-readonly-role.json`: Azure RBAC custom role somente leitura para configuração, node pools, upgrade profile e versões regionais;
 - `gcp-gke-assessment-readonly-role.yaml`: custom role GCP mínima para leitura do cluster e server config.
+- `rbac-configuration-metadata-namespaced.yaml`: Roles opcionais e separadas para ConfigMap e Secret metadata.
 
 O ClusterRole inclui `get/list` em `nodes` e `pods` de `metrics.k8s.io`. A Role namespaced inclui apenas Pod metrics; sem acesso cluster-scoped a nodes e Node metrics, `Node Health` permanece `PARTIAL` ou `EVIDENCE_UNAVAILABLE`, nunca `PASS`.
 
-Os exemplos não concedem leitura de Secrets ou ConfigMaps. Substitua os namespaces e vincule as roles somente à identidade aprovada. APIs opcionais sem permissão ficam `PARTIAL` ou `UNKNOWN`.
+Os perfis padrão não concedem leitura de Secrets ou ConfigMaps. O exemplo adicional é opt-in, namespaced e separa as duas permissões para que somente o RoleBinding necessário seja aplicado. Mesmo sem persistir values, `get/list` entrega o objeto completo ao processo; use identidade temporária e namespace mínimo. APIs opcionais sem permissão ficam `PARTIAL` ou `UNKNOWN`.
 
 ## Visibilidade por plataforma
 
@@ -293,6 +302,12 @@ As propostas de requests/limits comparam valores atuais com p90/p99 e headroom. 
 - `provider-validation.junit.xml`, `provider-validation.sarif.json` e `provider-validation.md`: formatos adicionais do Release Gate;
 - `regression-validation.json`: comparação offline orientada pela policy entre baseline e coleta atual;
 - `regression-validation.junit.xml` e `regression-validation.sarif.json`: resultados bloqueantes para CI/CD;
+- `configuration-metadata.json`: artefato opt-in com nomes/types/keys, sem values ou annotations;
+- `configuration-references.json`: referências de workloads, TLS, ConfigMaps e Secrets com estado de resolução;
+- `traffic-paths.json`: Ingress, Gateway API, Istio, OpenShift Route, Services e EndpointSlices;
+- `state-data-readiness.json`: PVCs, snapshots, backup/restore, replicação, schema, jobs e rollback;
+- `migration-probes.json` e `blue-green-readiness.json`: probes explícitos e decisão `GO`/`NO_GO`/`UNKNOWN` por coleta;
+- `migration-comparison.json`, `.junit.xml`, `.sarif.json` e `.md`: Migration Gate source → target;
 - `nodes.json`, `pods.json`, `workloads.json`, `namespaces.json`, `pvcs.json`: snapshots com status preservado e valores arbitrários de `env` redatados;
 - `node-metrics.json`, `pod-metrics.json`: uso pontual sanitizado da Metrics API; quando indisponível, os arquivos ficam vazios e a cobertura é declarada incompleta;
 - `events.json`: classificação e timestamps preservados, sem mensagens livres ou UIDs;
@@ -353,11 +368,19 @@ O profile `standard` bloqueia regressões novas sem exigir a eliminação imedia
 
 O fluxo também está na opção 8 do menu e em **Governança → Regression Gate**. Ele cruza fingerprints de findings, CIS, Node Health, Manifest Quality, lifecycle, quality gate e impacto da coleta. Identidade divergente, coleta incompleta, artefato inválido ou evidência obrigatória ausente nunca produz `PASS`. Os resultados são exportados como JSON, JUnit e SARIF. Contrato, thresholds e limitações estão em [`docs/regression-validation.md`](docs/regression-validation.md).
 
+## Blue-Green Readiness e Migration Gate
+
+A opção 11 e **Governança → Blue-Green Readiness** avaliam uma coleta sem alterar o cluster. A opção 12 e o subcomando `migration-gate` comparam source e target, inclusive em clusters e namespaces diferentes, desde que o mapping seja explícito. Os gates cobrem workloads, Services, Configuration References, Traffic Paths, NetworkPolicy/PDB/autoscaling, ServiceAccounts, API/lifecycle, storage/dados, Node Health, CIS, observabilidade, probes, DNS/load balancer e rollback.
+
+ConfigMap/Secret metadata é opt-in com `--configmap-metadata` e `--secret-metadata` e exige `--namespace` explícito; coleta cluster-wide desses objetos é bloqueada. DNS, consistência de dados e rollback usam `migration-evidence.json`; ausência de evidência obrigatória resulta em `UNKNOWN`, nunca `GO`. O desenho, exemplos, RBAC e limitações estão em [`docs/blue-green-migration.md`](docs/blue-green-migration.md).
+
+Em coletas namespaced, referências para outro namespace ficam `UNKNOWN` quando a evidência externa não foi coletada; elas não viram `FAIL` artificial. O Migration Gate não replica o `context` Kubernetes em seus relatórios, e URLs de probe inválidas são sanitizadas antes de qualquer persistência.
+
 ## Versão e distribuição
 
 A versão está em `VERSION`. A saída padrão é `${XDG_STATE_HOME:-$PWD}/eks-assessment`, substituível por `ASSESSMENT_ROOT`. Uma distribuição deve conter apenas `bin/`, `src/`, `data/`, `web/`, `deploy/`, `docs/`, `README.md`, `CHANGELOG.md` e `VERSION`, preservar permissões executáveis e publicar checksum SHA-256 e SBOM do pacote.
 
-A versão `0.5.0-rc.1` mantém estável o profile `generic-kubernetes`. As integrações
+A versão `0.5.0-rc.2` mantém estável o profile `generic-kubernetes`. As integrações
 EKS, AKS e GKE permanecem `PREVIEW` até qualificação read-only em clusters reais;
 fixtures offline validam contratos, mas não equivalem a suporte operacional. O
 estado versionado de cada profile está em `data/release-qualification.json`.
@@ -374,10 +397,10 @@ externa. O mesmo `SBOM.spdx` permanece no pacote. Verifique todos os vínculos:
 
 ```bash
 bin/kubernetes-assessment verify-release \
-  --archive dist/eks-assessment-0.5.0-rc.1.tar.gz \
-  --checksum dist/eks-assessment-0.5.0-rc.1.tar.gz.sha256 \
-  --sbom dist/eks-assessment-0.5.0-rc.1.spdx \
-  --provenance dist/eks-assessment-0.5.0-rc.1.provenance.json
+  --archive dist/eks-assessment-0.5.0-rc.2.tar.gz \
+  --checksum dist/eks-assessment-0.5.0-rc.2.tar.gz.sha256 \
+  --sbom dist/eks-assessment-0.5.0-rc.2.spdx \
+  --provenance dist/eks-assessment-0.5.0-rc.2.provenance.json
 ```
 
 No GitHub Actions, o tarball também recebe uma attestation Sigstore/SLSA. Uma

@@ -4,6 +4,7 @@
     {"id": "preflight", "label": "Validar ambiente", "weight": 5, "timeoutSeconds": 90, "required": true, "channels": ["cli", "web"], "dependencies": []},
     {"id": "assessment", "label": "Coletar evidências Kubernetes", "weight": 15, "timeoutSeconds": 600, "required": true, "channels": ["cli", "web"], "dependencies": ["preflight"]},
     {"id": "discovery", "label": "Executar discovery", "weight": 10, "timeoutSeconds": 900, "required": true, "channels": ["cli", "web"], "dependencies": ["preflight"]},
+    {"id": "configuration-metadata", "label": "Coletar metadados de configuração", "weight": 5, "timeoutSeconds": 300, "required": false, "conditional": "configuration-metadata", "channels": ["cli", "web"], "dependencies": ["preflight"]},
     {"id": "inventory-services", "label": "Inventariar Services", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
     {"id": "inventory-pvcs", "label": "Inventariar PVCs", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
     {"id": "inventory-hpas", "label": "Inventariar HPAs", "weight": 3, "timeoutSeconds": 120, "required": false, "channels": ["web"], "dependencies": ["preflight"]},
