@@ -30,6 +30,12 @@ Implementado na série `0.4.0-rc` na ordem que minimiza chamadas e código dupli
 26. Release Gate em JSON, JUnit, SARIF e Markdown.
 27. verificação de package/SBOM/provenance e attestation no GitHub Actions.
 28. alias provider-neutral `kubernetes-assessment`, mantendo compatibilidade.
+29. Configuration References opt-in, sem persistência de values de ConfigMaps ou Secrets.
+30. Traffic Paths para Ingress, Gateway API, Istio e OpenShift Route.
+31. State & Data Readiness com evidência manual versionada para migração.
+32. Blue-Green Readiness por coleta e probes HTTP/HTTPS explícitos.
+33. Migration Gate source → target com mapping cross-cluster/cross-namespace e outputs de CI/CD.
+34. console Blue-Green no menu e dashboard, com JSON Schemas fail-closed.
 
 ## Guardrails
 
@@ -99,6 +105,18 @@ Essa evidência confirma o caminho Kubernetes genérico. Ela não substitui os g
 - package `0.5.0-rc.1` validado por archive safety, checksum, inventário SPDX, provenance e alias provider-neutral;
 - 104 testes Python e sintaxe Bash aprovados no master do lab; `shellcheck` é
   executado pelo CI porque não está instalado na VM do lab.
+
+## Evidência local `0.5.0-rc.2`
+
+- preflight namespaced com ConfigMap/Secret metadata e Prometheus aprovado com 21 `PASS`, 0 `WARN` e 0 `FAIL`;
+- coleta fresh concluída em 32s com nove exit codes zero, 172 checks, seis workloads, sete containers e progresso em 100%;
+- 15 Configuration References resolvidas sem persistir values; cinco Traffic Paths com Services e EndpointSlices saudáveis ficaram `UNKNOWN`, e não `FAIL`, porque o Istio Gateway estava fora do namespace coletado;
+- database client baseado na imagem `postgres` corretamente excluído da classificação stateful; Blue-Green Readiness final `UNKNOWN`, com zero bloqueios e duas evidências externas pendentes;
+- artifact validation sem erros e contract validation terminal com 14 `PASS`, 0 `FAIL` e quatro artefatos opcionais ausentes;
+- Release Gate, Regression Gate, Blue-Green Readiness e Migration Gate sintéticos aprovados; Migration Gate com 17 gates, zero bloqueios e zero desconhecidos;
+- smoke HTTP aprovado em 29 rotas do dashboard contra a coleta real;
+- matriz local aprovada com 118 testes Python, compile, JSON Schemas e sintaxe Bash; `shellcheck` permanece delegado ao CI;
+- pacote `0.5.0-rc.2` aprovado por archive safety, checksum, SBOM SPDX com 85 arquivos, provenance, compile e execução offline do alias provider-neutral.
 
 ## Evidência de qualificação `0.4.0` generic-kubernetes
 

@@ -14,6 +14,9 @@ COLLECTOR_MANAGER="$TOOL_ROOT/src/collector_registry.py"
 COLLECTOR_REGISTRY="$TOOL_ROOT/data/collectors.json"
 BUNDLE_MANAGER="$TOOL_ROOT/src/collection_bundle.py"
 NODE_EVIDENCE="$TOOL_ROOT/src/node_process_evidence.py"
+CONFIGURATION_METADATA="$TOOL_ROOT/src/configuration_metadata.py"
+BLUE_GREEN_READINESS="$TOOL_ROOT/src/blue_green_readiness.py"
+MIGRATION_COMPARE="$TOOL_ROOT/src/migration_compare.py"
 RELEASE_VERIFIER="$TOOL_ROOT/src/release_verification.py"
 PROVIDER_VALIDATOR="$TOOL_ROOT/src/provider_validation.py"
 REGRESSION_VALIDATOR="$TOOL_ROOT/src/regression_validation.py"
@@ -56,8 +59,14 @@ CLI_SIGSTORE_BUNDLE=""
 CLI_CERTIFICATE_IDENTITY=""
 CLI_OIDC_ISSUER=""
 CLI_REQUIRE_SIGNATURE=0
+CLI_CONFIGMAP_METADATA="${ASSESSMENT_INCLUDE_CONFIGMAP_METADATA:-0}"
+CLI_SECRET_METADATA="${ASSESSMENT_INCLUDE_SECRET_METADATA:-0}"
+CLI_SOURCE=""
+CLI_TARGET=""
+CLI_MAPPING=""
 declare -a CLI_INCLUDE_COLLECTORS=()
 declare -a CLI_EXCLUDE_COLLECTORS=()
+declare -a CLI_PROBE_URLS=()
 [[ -z "$CLI_PROMETHEUS_URL" ]] || CLI_PROMETHEUS_MODE="explicit"
 
 if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
@@ -80,6 +89,8 @@ Uso:
   eks-assessment.sh dashboard [--port PORTA] [--root DIRETÓRIO]
   eks-assessment.sh release-gate --collection ID --provider generic-kubernetes
   eks-assessment.sh regression-gate --before ID --after ID [--profile standard]
+  eks-assessment.sh blue-green-gate --collection ID [--probe-url URL]
+  eks-assessment.sh migration-gate --source ID --target ID [--mapping mapping.json]
   eks-assessment.sh validate --collection ID
   eks-assessment.sh bundle export --collection ID --output ARQUIVO.tar.gz
   eks-assessment.sh bundle verify --bundle ARQUIVO.tar.gz
@@ -100,6 +111,9 @@ Opções de coleta:
   --exclude-collector ID[,ID]    omite collector opcional
   --resume ID                    retoma uma coleta parcial existente
   --retry-failed                 repete collectors que terminaram em FAIL
+  --configmap-metadata           opt-in namespaced: persiste somente nome/keys de ConfigMaps
+  --secret-metadata              opt-in namespaced: persiste somente nome/type/keys de Secrets
+  --probe-url URL                probe HTTP/HTTPS read-only; repetível, sem query/credenciais
 
 Sem subcomando, abre o menu interativo. Os subcomandos nunca solicitam input.
 Variáveis principais: KUBECONFIG, ASSESSMENT_ROOT, ASSESSMENT_NAMESPACE,
@@ -118,7 +132,7 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   --version) tr -d '[:space:]' < "$TOOL_ROOT/VERSION"; printf '\n'; exit 0 ;;
   menu) COMMAND="menu"; shift ;;
-  preflight|collect|list|compare|terminal|dashboard|release-gate|regression-gate|validate|prune|verify-release)
+  preflight|collect|list|compare|terminal|dashboard|release-gate|regression-gate|blue-green-gate|migration-gate|validate|prune|verify-release)
     COMMAND="$1"; NON_INTERACTIVE=1; shift ;;
   bundle)
     COMMAND="bundle"; NON_INTERACTIVE=1; shift
@@ -141,6 +155,9 @@ while (($#)); do
     --collection) require_cli_value "$@"; CLI_COLLECTION="$2"; shift 2 ;;
     --before) require_cli_value "$@"; CLI_BEFORE="$2"; shift 2 ;;
     --after) require_cli_value "$@"; CLI_AFTER="$2"; shift 2 ;;
+    --source) require_cli_value "$@"; CLI_SOURCE="$2"; shift 2 ;;
+    --target) require_cli_value "$@"; CLI_TARGET="$2"; shift 2 ;;
+    --mapping) require_cli_value "$@"; CLI_MAPPING="$2"; shift 2 ;;
     --provider) require_cli_value "$@"; CLI_PROVIDER="$2"; shift 2 ;;
     --profile) require_cli_value "$@"; CLI_PROFILE="$2"; shift 2 ;;
     --output) require_cli_value "$@"; CLI_OUTPUT="$2"; shift 2 ;;
@@ -152,6 +169,9 @@ while (($#)); do
     --exclude-collector) require_cli_value "$@"; CLI_EXCLUDE_COLLECTORS+=("$2"); shift 2 ;;
     --resume) require_cli_value "$@"; CLI_RESUME="$2"; shift 2 ;;
     --retry-failed) CLI_RETRY_FAILED=1; shift ;;
+    --configmap-metadata) CLI_CONFIGMAP_METADATA=1; shift ;;
+    --secret-metadata) CLI_SECRET_METADATA=1; shift ;;
+    --probe-url) require_cli_value "$@"; CLI_PROBE_URLS+=("$2"); shift 2 ;;
     --checksum) require_cli_value "$@"; CLI_CHECKSUM="$2"; shift 2 ;;
     --sbom) require_cli_value "$@"; CLI_SBOM="$2"; shift 2 ;;
     --provenance) require_cli_value "$@"; CLI_PROVENANCE="$2"; shift 2 ;;
@@ -170,6 +190,8 @@ valid_collection_id(){ [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != "." && "$1" != ".
 valid_namespace(){ [[ -z "$1" || "$1" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; }
 
 if ((NON_INTERACTIVE == 1)); then
+  [[ "$CLI_CONFIGMAP_METADATA" =~ ^(0|1)$ ]] || { echo "ERRO: ASSESSMENT_INCLUDE_CONFIGMAP_METADATA deve ser 0 ou 1." >&2; exit 2; }
+  [[ "$CLI_SECRET_METADATA" =~ ^(0|1)$ ]] || { echo "ERRO: ASSESSMENT_INCLUDE_SECRET_METADATA deve ser 0 ou 1." >&2; exit 2; }
   case "$COMMAND" in
     collect)
       if [[ -n "$CLI_RESUME" ]]; then
@@ -182,9 +204,19 @@ if ((NON_INTERACTIVE == 1)); then
         fi
       fi
       valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; }
+      if [[ -z "$CLI_RESUME" && -z "$CLI_NAMESPACE" ]] && ((CLI_CONFIGMAP_METADATA == 1 || CLI_SECRET_METADATA == 1)); then
+        echo "ERRO: --configmap-metadata e --secret-metadata exigem --namespace explícito." >&2
+        exit 2
+      fi
       [[ "$CLI_PROMETHEUS_WINDOW" =~ ^(1d|3d|7d|14d|30d)$ ]] || { echo "ERRO: janela Prometheus inválida." >&2; exit 2; }
       ;;
-    preflight) valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; } ;;
+    preflight)
+      valid_namespace "$CLI_NAMESPACE" || { echo "ERRO: namespace inválido." >&2; exit 2; }
+      if [[ -z "$CLI_NAMESPACE" ]] && ((CLI_CONFIGMAP_METADATA == 1 || CLI_SECRET_METADATA == 1)); then
+        echo "ERRO: --configmap-metadata e --secret-metadata exigem --namespace explícito." >&2
+        exit 2
+      fi
+      ;;
     compare|regression-gate)
       if ! valid_collection_id "$CLI_BEFORE" || ! valid_collection_id "$CLI_AFTER"; then
         echo "ERRO: $COMMAND exige --before e --after válidos." >&2
@@ -196,6 +228,17 @@ if ((NON_INTERACTIVE == 1)); then
     release-gate)
       valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: release-gate exige --collection válido." >&2; exit 2; }
       [[ "$CLI_PROVIDER" =~ ^(eks|aks|gke|generic-kubernetes)$ ]] || { echo "ERRO: provider inválido." >&2; exit 2; }
+      ;;
+    blue-green-gate)
+      valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: blue-green-gate exige --collection válido." >&2; exit 2; }
+      ;;
+    migration-gate)
+      if ! valid_collection_id "$CLI_SOURCE" || ! valid_collection_id "$CLI_TARGET"; then
+        echo "ERRO: migration-gate exige --source e --target válidos." >&2
+        exit 2
+      fi
+      [[ "$CLI_SOURCE" != "$CLI_TARGET" ]] || { echo "ERRO: source e target devem ser diferentes." >&2; exit 2; }
+      [[ -z "$CLI_MAPPING" || -r "$CLI_MAPPING" ]] || { echo "ERRO: mapping não encontrado." >&2; exit 2; }
       ;;
     validate)
       valid_collection_id "$CLI_COLLECTION" || { echo "ERRO: validate exige --collection válido." >&2; exit 2; }
@@ -329,7 +372,8 @@ select_python(){
   return 1
 }
 run_preflight(){
-  PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" ASSESSMENT_NAMESPACE="${3:-}" bash "$PREFLIGHT"
+  PYTHON_BIN="$PYTHON_BIN" PROMETHEUS_URL="${1:-}" EKS_CLUSTER_NAME="${2:-${EKS_CLUSTER_NAME:-}}" ASSESSMENT_NAMESPACE="${3:-}" \
+    ASSESSMENT_INCLUDE_CONFIGMAP_METADATA="$CLI_CONFIGMAP_METADATA" ASSESSMENT_INCLUDE_SECRET_METADATA="$CLI_SECRET_METADATA" bash "$PREFLIGHT"
 }
 suggest_prometheus_url(){
   kubectl get services --all-namespaces -o json --request-timeout=10s 2>/dev/null | jq -r '
@@ -374,6 +418,7 @@ render_menu(){
   menu_row "$C_LIGHT$C_BOLD" "GOVERNANÇA & RELEASE"
   menu_row "$C_CYAN" "[7] Release Gate por provider   [8] Regression Gate entre coletas"
   menu_row "$C_CYAN" "[9] Validar contratos JSON       [10] Exportar bundle portátil"
+  menu_row "$C_CYAN" "[11] Blue-Green Readiness         [12] Migration Gate source → target"
   menu_row "$C_RED" "[0] Sair"
   printf '%s╰──────────────────────────────────────────────────────────────────────╯%s\n' "$C_BLUE" "$C_RESET"
 }
@@ -412,8 +457,8 @@ write_metadata(){
 }
 
 collector_init(){
-  local out="$1" prometheus_state="$2" resume_flag="$3" argument
-  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" init --collection "$out" --channel cli --prometheus "$prometheus_state")
+  local out="$1" prometheus_state="$2" configuration_state="$3" resume_flag="$4" argument
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" init --collection "$out" --channel cli --prometheus "$prometheus_state" --configuration-metadata "$configuration_state")
   for argument in "${CLI_INCLUDE_COLLECTORS[@]}"; do args+=(--include "$argument"); done
   for argument in "${CLI_EXCLUDE_COLLECTORS[@]}"; do args+=(--exclude "$argument"); done
   [[ "$resume_flag" == true ]] && args+=(--resume)
@@ -422,8 +467,8 @@ collector_init(){
 }
 
 collector_validate_plan(){
-  local prometheus_state="$1" argument
-  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" plan --channel cli --prometheus "$prometheus_state")
+  local prometheus_state="$1" configuration_state="$2" argument
+  local -a args=("$PYTHON_BIN" "$COLLECTOR_MANAGER" --registry "$COLLECTOR_REGISTRY" plan --channel cli --prometheus "$prometheus_state" --configuration-metadata "$configuration_state")
   for argument in "${CLI_INCLUDE_COLLECTORS[@]}"; do args+=(--include "$argument"); done
   for argument in "${CLI_EXCLUDE_COLLECTORS[@]}"; do args+=(--exclude "$argument"); done
   "${args[@]}" >/dev/null
@@ -526,9 +571,9 @@ interactive_bundle(){
 
 collect(){
   local phase="$1" label id out prom_url prom_window answer cluster_context cluster_name eks_name status reason namespace
-  local existing_context required_failures resume=false prometheus_state=disabled
-  local preflight_rc=0 assess_rc=0 discovery_rc=0 telemetry_rc=0 node_rc=0 scanner_rc=0 validator_rc=0 contract_rc=0 completed=false baseline=false codes
-  local -a discovery_args scanner_args
+  local existing_context required_failures resume=false prometheus_state=disabled configuration_state=disabled probe_csv interactive_probe_url=""
+  local preflight_rc=0 assess_rc=0 discovery_rc=0 configuration_rc=0 telemetry_rc=0 node_rc=0 scanner_rc=0 validator_rc=0 contract_rc=0 completed=false baseline=false codes
+  local -a discovery_args scanner_args metadata_args
   COLLECTION_CANCELLED=0; COLLECTION_TIMED_OUT=0; COLLECTION_STARTED_EPOCH=0
   if ((NON_INTERACTIVE == 1)) && [[ -n "$CLI_RESUME" ]]; then
     resume=true
@@ -564,8 +609,18 @@ collect(){
   if ((NON_INTERACTIVE == 0)); then
     read -r -p "Namespace (Enter = ${namespace:-cluster inteiro}): " answer
     namespace="${answer:-$namespace}"
+    read -r -p "Validar nomes e keys de ConfigMaps? [s/N]: " answer
+    if [[ "$answer" =~ ^[sSyY]$ ]]; then CLI_CONFIGMAP_METADATA=1; else CLI_CONFIGMAP_METADATA=0; fi
+    echo "AVISO: Secret metadata exige get/list; valores não serão persistidos, mas passam pela memória do processo."
+    read -r -p "Validar nomes, types e keys de Secrets? [s/N]: " answer
+    if [[ "$answer" =~ ^[sSyY]$ ]]; then CLI_SECRET_METADATA=1; else CLI_SECRET_METADATA=0; fi
+    read -r -p "URL HTTP/HTTPS para probe de cutover (Enter = nenhuma): " interactive_probe_url
   fi
   [[ -z "$namespace" || "$namespace" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] || { echo "Namespace inválido." >&2; return 1; }
+  if [[ -z "$namespace" ]] && ((CLI_CONFIGMAP_METADATA == 1 || CLI_SECRET_METADATA == 1)); then
+    echo "ERRO: ConfigMap/Secret metadata exige namespace explícito; coleta cluster-wide não é permitida para esse opt-in." >&2
+    return 2
+  fi
   if ((NON_INTERACTIVE == 0)); then
     read -r -p "URL explícita do Prometheus (Enter = ${prom_url:-DISABLED}): " answer
     prom_url="${answer:-$prom_url}"
@@ -574,7 +629,8 @@ collect(){
   fi
   [[ "$prom_window" =~ ^(1d|3d|7d|14d|30d)$ ]] || prom_window=7d
   [[ -z "$prom_url" ]] || prometheus_state=enabled
-  collector_validate_plan "$prometheus_state" || return $?
+  if ((CLI_CONFIGMAP_METADATA == 1 || CLI_SECRET_METADATA == 1)); then configuration_state=enabled; fi
+  collector_validate_plan "$prometheus_state" "$configuration_state" || return $?
 
   IFS=$'\t' read -r cluster_context cluster_name eks_name < <(cluster_identity)
   if [[ "$resume" == true ]]; then
@@ -596,7 +652,7 @@ collect(){
     [[ "$phase" == before ]] && baseline=true
   fi
   write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" false '[]' RUNNING '' "$MAX_DURATION_SECONDS" "$namespace"
-  collector_init "$out" "$prometheus_state" "$resume"
+  collector_init "$out" "$prometheus_state" "$configuration_state" "$resume"
   collector_mark "$out" preflight PASS 0
   echo "== Coleta $phase: $id | cluster: $cluster_name | limite total: ${MAX_DURATION_SECONDS}s$( [[ "$resume" == true ]] && printf ' | RETOMADA' ) =="
   echo "Ctrl+C cancela toda a árvore; dados parciais serão preservados."
@@ -619,6 +675,19 @@ collect(){
       collector_finish "$out" discovery "$discovery_rc"
     else
       discovery_rc="$(collector_existing_rc "$out" discovery)"; echo "Reutilizando collector discovery (exit code $discovery_rc)."
+    fi
+  fi
+  if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" configuration-metadata; then
+    if collector_should_run "$out" configuration-metadata; then
+      collector_mark "$out" configuration-metadata RUNNING
+      metadata_args=(--output "$out/configuration-metadata.json")
+      [[ -n "$namespace" ]] && metadata_args+=(--namespace "$namespace")
+      ((CLI_CONFIGMAP_METADATA == 1)) && metadata_args+=(--include-configmaps)
+      ((CLI_SECRET_METADATA == 1)) && metadata_args+=(--include-secrets)
+      if run_bounded configuration-metadata 300 "$out/configuration-metadata.log" "$PYTHON_BIN" "$CONFIGURATION_METADATA" "${metadata_args[@]}"; then configuration_rc=0; else configuration_rc=$?; fi
+      collector_finish "$out" configuration-metadata "$configuration_rc"
+    else
+      configuration_rc="$(collector_existing_rc "$out" configuration-metadata)"; echo "Reutilizando collector configuration-metadata (exit code $configuration_rc)."
     fi
   fi
   if ((COLLECTION_CANCELLED == 0 && COLLECTION_TIMED_OUT == 0)) && collector_enabled "$out" prometheus; then
@@ -647,7 +716,10 @@ collect(){
     scanner_args=(--snapshot-dir "$out" --collect-live --timeout 30 --chunk-size 200 --inventory-workers "${ASSESSMENT_WORKERS:-4}" --api-delay-ms "${ASSESSMENT_API_DELAY_MS:-100}" --max-requests "${ASSESSMENT_MAX_REQUESTS:-1500}" --max-duration "$MAX_DURATION_SECONDS" --max-response-mb "${ASSESSMENT_MAX_RESPONSE_MB:-512}")
     [[ -n "$namespace" ]] && scanner_args+=(--namespace "$namespace")
     [[ "$resume" == true ]] && scanner_args+=(--resume)
-    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" "$PYTHON_BIN" "$SCANNER" "${scanner_args[@]}"; then scanner_rc=0; else scanner_rc=$?; fi
+    probe_csv="${ASSESSMENT_PROBE_URLS:-}"
+    if ((${#CLI_PROBE_URLS[@]})); then probe_csv="$(IFS=,; printf '%s' "${CLI_PROBE_URLS[*]}")"; fi
+    if [[ -n "$interactive_probe_url" ]]; then probe_csv="${probe_csv:+$probe_csv,}$interactive_probe_url"; fi
+    if run_bounded comprehensive "$MAX_DURATION_SECONDS" "$out/comprehensive-assessment.log" env ASSESSMENT_PROBE_URLS="$probe_csv" "$PYTHON_BIN" "$SCANNER" "${scanner_args[@]}"; then scanner_rc=0; else scanner_rc=$?; fi
       collector_finish "$out" comprehensive "$scanner_rc"
     else
       scanner_rc="$(collector_existing_rc "$out" comprehensive)"; echo "Reutilizando collector comprehensive (exit code $scanner_rc)."
@@ -672,7 +744,7 @@ collect(){
     fi
   fi
 
-  codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$t,$n,$s,$v,$c]')"
+  codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson m "$configuration_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$m,$t,$n,$s,$v,$c]')"
   status=COMPLETED; reason=''; completed=true
   if ((COLLECTION_CANCELLED == 1)); then status=CANCELLED; reason='operator requested cancellation'; completed=false
   elif ((COLLECTION_TIMED_OUT == 1)); then status=TIMED_OUT; reason="collection exceeded ${MAX_DURATION_SECONDS}s"; completed=false
@@ -690,12 +762,12 @@ collect(){
       collector_mark "$out" contract-validation FAIL "$contract_rc" 'final terminal metadata failed validation'
       status=FAILED; completed=false; reason='final JSON Schema validation failed'
     fi
-    codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$t,$n,$s,$v,$c]')"
+    codes="$(jq -nc --argjson p "$preflight_rc" --argjson a "$assess_rc" --argjson d "$discovery_rc" --argjson m "$configuration_rc" --argjson t "$telemetry_rc" --argjson n "$node_rc" --argjson s "$scanner_rc" --argjson v "$validator_rc" --argjson c "$contract_rc" '[$p,$a,$d,$m,$t,$n,$s,$v,$c]')"
     write_metadata "$out" "$id" "$phase" "$cluster_name" "$cluster_context" "$baseline" "$completed" "$codes" "$status" "$reason" "$MAX_DURATION_SECONDS" "$namespace"
   fi
   COLLECTION_STARTED_EPOCH=0
   echo "Salvo em $out | status: $status"
-  echo "Contexto: $cluster_context | códigos [preflight, assessment, discovery, Prometheus, node evidence, scanner, artifacts, contracts]: $codes"
+  echo "Contexto: $cluster_context | códigos [preflight, assessment, discovery, configuration metadata, Prometheus, node evidence, scanner, artifacts, contracts]: $codes"
   if ((NON_INTERACTIVE == 1)); then
     printf 'COLLECTION_ID=%s\nCOLLECTION_PATH=%s\nCOLLECTION_STATUS=%s\n' "$id" "$out" "$status"
     case "$status" in
@@ -820,6 +892,107 @@ regression_gate(){
     echo "SARIF: $after/regression-validation.sarif.json"
   else
     echo "ERRO: o Regression Gate não pôde ser executado (exit code $rc)." >&2
+  fi
+  ((NON_INTERACTIVE == 1)) && return "$rc"
+  return 0
+}
+
+blue_green_gate(){
+  local id dir latest rc url
+  local -a args
+  id="${1:-}"
+  latest="$(collections | tail -1)"
+  if [[ -z "$latest" ]]; then
+    echo "Nenhuma coleta disponível para Blue-Green Readiness." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  if [[ -z "$id" ]]; then
+    collections | nl -ba
+    read -r -p "ID da coleta (Enter = $latest): " id
+    id="${id:-$latest}"
+  fi
+  if ! valid_collection_id "$id"; then
+    echo "ID da coleta inválido." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  dir="$OUTROOT/$id"
+  if [[ ! -d "$dir" ]]; then
+    echo "Coleta não encontrada." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  args=("$PYTHON_BIN" "$BLUE_GREEN_READINESS" --collection "$dir")
+  if ((NON_INTERACTIVE == 0)); then
+    read -r -p 'URL HTTP/HTTPS para probe de cutover (Enter = nenhuma): ' url
+    [[ -z "$url" ]] || args+=(--probe-url "$url")
+  else
+    for url in "${CLI_PROBE_URLS[@]}"; do args+=(--probe-url "$url"); done
+  fi
+  echo "Gerando Blue-Green Readiness read-only; nenhum cutover ou alteração será executado."
+  if "${args[@]}"; then rc=0; else rc=$?; fi
+  if ((rc == 0 || rc == 1)) && [[ -r "$dir/blue-green-readiness.json" ]]; then
+    jq -r '"Status: \(.status) | Gates: \(.summary.gates) | Bloqueios: \(.summary.blocking) | Desconhecidos: \(.summary.unknown) | Alertas: \(.summary.warnings)"' "$dir/blue-green-readiness.json"
+    echo "Readiness: $dir/blue-green-readiness.json"
+    echo "Configuration References: $dir/configuration-references.json"
+    echo "Traffic Paths: $dir/traffic-paths.json"
+    echo "State & Data: $dir/state-data-readiness.json"
+    echo "Probes: $dir/migration-probes.json"
+  else
+    echo "ERRO: Blue-Green Readiness não pôde ser gerado (exit code $rc)." >&2
+  fi
+  ((NON_INTERACTIVE == 1)) && return "$rc"
+  return 0
+}
+
+migration_gate(){
+  local source_id target_id source target mapping rc latest previous
+  local -a available=() args
+  source_id="${1:-}"; target_id="${2:-}"; mapping="${3:-}"
+  mapfile -t available < <(collections)
+  if ((${#available[@]} < 2)); then
+    echo "São necessárias ao menos duas coletas para o Migration Gate." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  latest="${available[${#available[@]}-1]}"
+  previous="${available[${#available[@]}-2]}"
+  if [[ -z "$source_id" || -z "$target_id" ]]; then
+    collections | nl -ba
+    read -r -p "ID source/blue (Enter = $previous): " source_id
+    read -r -p "ID target/green (Enter = $latest): " target_id
+    source_id="${source_id:-$previous}"; target_id="${target_id:-$latest}"
+    read -r -p 'Mapping JSON opcional (Enter = mapeamento por identidade): ' mapping
+  fi
+  if ! valid_collection_id "$source_id" || ! valid_collection_id "$target_id" || [[ "$source_id" == "$target_id" ]]; then
+    echo "Source e target devem ser IDs válidos e diferentes." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  source="$OUTROOT/$source_id"; target="$OUTROOT/$target_id"
+  if [[ ! -d "$source" || ! -d "$target" ]]; then
+    echo "Coleta source ou target não encontrada." >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  if [[ -n "$mapping" && ! -r "$mapping" ]]; then
+    echo "Mapping JSON não encontrado: $mapping" >&2
+    ((NON_INTERACTIVE == 0)) || return 2
+    return 0
+  fi
+  args=("$PYTHON_BIN" "$MIGRATION_COMPARE" --source "$source" --target "$target" --output "$target/migration-comparison.json")
+  [[ -z "$mapping" ]] || args+=(--mapping "$mapping")
+  echo "Comparando source e target offline; identidades de cluster e namespace podem diferir por mapping explícito."
+  if "${args[@]}"; then rc=0; else rc=$?; fi
+  if ((rc == 0 || rc == 1)) && [[ -r "$target/migration-comparison.json" ]]; then
+    jq -r '"Status: \(.status) | Gates: \(.summary.gates) | Bloqueios: \(.summary.blocking) | Desconhecidos: \(.summary.unknown) | Workloads ausentes: \(.summary.missingWorkloads)"' "$target/migration-comparison.json"
+    echo "JSON: $target/migration-comparison.json"
+    echo "JUnit: $target/migration-comparison.junit.xml"
+    echo "SARIF: $target/migration-comparison.sarif.json"
+    echo "Markdown: $target/migration-comparison.md"
+  else
+    echo "ERRO: Migration Gate não pôde ser executado (exit code $rc)." >&2
   fi
   ((NON_INTERACTIVE == 1)) && return "$rc"
   return 0
@@ -1057,6 +1230,16 @@ prepare_runtime(){
       [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
       ;;
+    blue-green-gate)
+      need jq
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$BLUE_GREEN_READINESS" ]] || { echo "ERRO: Blue-Green Readiness ausente em $BLUE_GREEN_READINESS" >&2; exit 1; }
+      ;;
+    migration-gate)
+      need jq
+      select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
+      [[ -r "$BLUE_GREEN_READINESS" && -r "$MIGRATION_COMPARE" ]] || { echo "ERRO: módulos do Migration Gate ausentes." >&2; exit 1; }
+      ;;
     validate|bundle|prune|verify-release)
       select_python || { echo "ERRO: Python 3.10+ ausente; defina PYTHON_BIN se necessário" >&2; exit 1; }
       [[ -r "$CONTRACT_VALIDATOR" && -r "$BUNDLE_MANAGER" && -r "$RELEASE_VERIFIER" ]] || { echo "ERRO: módulos de portabilidade ausentes." >&2; exit 1; }
@@ -1072,6 +1255,7 @@ prepare_runtime(){
       [[ -r "$PROVIDER_VALIDATOR" ]] || { echo "ERRO: Provider Validation Runner ausente em $PROVIDER_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_VALIDATOR" ]] || { echo "ERRO: Regression Gate ausente em $REGRESSION_VALIDATOR" >&2; exit 1; }
       [[ -r "$REGRESSION_POLICY" ]] || { echo "ERRO: policy do Regression Gate ausente em $REGRESSION_POLICY" >&2; exit 1; }
+      [[ -r "$CONFIGURATION_METADATA" && -r "$BLUE_GREEN_READINESS" && -r "$MIGRATION_COMPARE" ]] || { echo "ERRO: módulos de Blue-Green Readiness ausentes." >&2; exit 1; }
       [[ -r "$COLLECTOR_MANAGER" && -r "$COLLECTOR_REGISTRY" && -r "$CONTRACT_VALIDATOR" && -r "$NODE_EVIDENCE" ]] || { echo "ERRO: módulos do collector registry ausentes." >&2; exit 1; }
       ;;
   esac
@@ -1090,6 +1274,8 @@ if ((NON_INTERACTIVE == 1)); then
     dashboard) web ;;
     release-gate) provider_gate "$CLI_COLLECTION" "$CLI_PROVIDER" ;;
     regression-gate) regression_gate "$CLI_BEFORE" "$CLI_AFTER" "$CLI_PROFILE" ;;
+    blue-green-gate) blue_green_gate "$CLI_COLLECTION" ;;
+    migration-gate) migration_gate "$CLI_SOURCE" "$CLI_TARGET" "$CLI_MAPPING" ;;
     validate) validate_collection_contracts "$CLI_COLLECTION" ;;
     bundle) bundle_command ;;
     prune) prune_collections ;;
@@ -1106,6 +1292,7 @@ while :; do
     1) collect before;; 2) collect after;; 3) compare;; 4) terminal;;
     5) web;; 6) run_preflight "${PROMETHEUS_URL:-}" "${EKS_CLUSTER_NAME:-}";; 7) provider_gate;; 8) regression_gate;;
     9) interactive_validate;; 10) interactive_bundle;;
+    11) blue_green_gate;; 12) migration_gate;;
     0) printf '%sSessão encerrada.%s\n' "$C_DIM" "$C_RESET"; exit 0;; *) printf '%sOpção inválida.%s\n' "$C_RED" "$C_RESET";;
   esac
   [[ "$op" == 0 || "$op" == 5 ]] || read -r -p 'Enter para continuar…' _

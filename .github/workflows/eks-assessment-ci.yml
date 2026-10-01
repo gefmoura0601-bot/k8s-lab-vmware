@@ -40,7 +40,7 @@ jobs:
           done
 
   offline-gates:
-    name: Generic Release and Regression Gates
+    name: Generic Release, Regression and Migration Gates
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -70,14 +70,23 @@ jobs:
             --after eks-ci-after \
             --profile standard \
             | tee "$RUNNER_TEMP/regression-gate.log"
+          bash "$tool" blue-green-gate \
+            --collection eks-ci-before \
+            | tee "$RUNNER_TEMP/blue-green-gate.log"
+          bash "$tool" migration-gate \
+            --source eks-ci-before \
+            --target eks-ci-after \
+            | tee "$RUNNER_TEMP/migration-gate.log"
 
           after="$ASSESSMENT_ROOT/eks-ci-after"
           jq -e '.summary.state == "PASS" and .summary.releaseReady == true' \
             "$after/provider-validation.json" >/dev/null
           jq -e '.summary.state == "PASS" and .summary.releaseReady == true' \
             "$after/regression-validation.json" >/dev/null
+          jq -e '.status == "GO" and .summary.blocking == 0 and .summary.unknown == 0' \
+            "$after/migration-comparison.json" >/dev/null
           jq -e \
-            '.toolVersion == "0.5.0-rc.1" and
+            '.toolVersion == "0.5.0-rc.2" and
              .profiles["generic-kubernetes"].status == "STABLE" and
              ([.profiles.eks.status, .profiles.aks.status, .profiles.gke.status] | all(. == "PREVIEW"))' \
             tools/eks-assessment/data/release-qualification.json >/dev/null
@@ -91,13 +100,21 @@ jobs:
             "$after/regression-validation.json" \
             "$after/regression-validation.junit.xml" \
             "$after/regression-validation.sarif.json" \
+            "$after/migration-comparison.json" \
+            "$after/migration-comparison.junit.xml" \
+            "$after/migration-comparison.sarif.json" \
+            "$after/migration-comparison.md" \
             "$RUNNER_TEMP/release-gate.log" \
             "$RUNNER_TEMP/regression-gate.log" \
+            "$RUNNER_TEMP/blue-green-gate.log" \
+            "$RUNNER_TEMP/migration-gate.log" \
             "$RUNNER_TEMP/gate-results/"
           {
-            echo '### Assessment 0.5.0-rc.1 — generic-kubernetes'
+            echo '### Assessment 0.5.0-rc.2 — generic-kubernetes'
             echo '- Release Gate: PASS'
             echo '- Regression Gate: PASS'
+            echo '- Blue-Green Readiness: GO'
+            echo '- Migration Gate: GO'
             echo '- EKS, AKS e GKE: PREVIEW'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -129,7 +146,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < tools/eks-assessment/VERSION)"
-          test "$version" = "0.5.0-rc.1"
+          test "$version" = "0.5.0-rc.2"
           dist="$RUNNER_TEMP/dist"
           bash tools/eks-assessment/bin/package-release.sh "$dist"
           archive="$dist/eks-assessment-${version}.tar.gz"
@@ -183,7 +200,7 @@ jobs:
       - name: Upload portable package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: kubernetes-assessment-0.5.0-rc.1
+          name: kubernetes-assessment-0.5.0-rc.2
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
           retention-days: 30

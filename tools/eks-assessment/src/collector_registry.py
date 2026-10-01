@@ -64,6 +64,7 @@ def build_plan(
     *,
     channel: str,
     prometheus: bool,
+    configuration_metadata: bool = False,
     include: set[str] | None = None,
     exclude: set[str] | None = None,
 ) -> list[dict[str, Any]]:
@@ -73,10 +74,14 @@ def build_plan(
     unknown = (include | exclude) - set(entries)
     if unknown:
         raise ValueError(f"unknown collectors: {', '.join(sorted(unknown))}")
+    conditional_features = {
+        "prometheus": prometheus,
+        "configuration-metadata": configuration_metadata,
+    }
     channel_ids = {
         item["id"] for item in registry
         if channel in (item.get("channels") or [])
-        and (item.get("conditional") != "prometheus" or prometheus)
+        and (not item.get("conditional") or conditional_features.get(str(item.get("conditional")), False))
     }
     unavailable = include - channel_ids
     if unavailable:
@@ -210,12 +215,14 @@ def parse_args() -> argparse.Namespace:
     plan = sub.add_parser("plan")
     plan.add_argument("--channel", choices=("cli", "web"), required=True)
     plan.add_argument("--prometheus", choices=("enabled", "disabled"), default="disabled")
+    plan.add_argument("--configuration-metadata", choices=("enabled", "disabled"), default="disabled")
     plan.add_argument("--include", action="append", default=[])
     plan.add_argument("--exclude", action="append", default=[])
     init = sub.add_parser("init")
     init.add_argument("--collection", required=True, type=Path)
     init.add_argument("--channel", choices=("cli", "web"), required=True)
     init.add_argument("--prometheus", choices=("enabled", "disabled"), default="disabled")
+    init.add_argument("--configuration-metadata", choices=("enabled", "disabled"), default="disabled")
     init.add_argument("--include", action="append", default=[])
     init.add_argument("--exclude", action="append", default=[])
     init.add_argument("--resume", action="store_true")
@@ -244,6 +251,7 @@ def main() -> int:
                 registry,
                 channel=args.channel,
                 prometheus=args.prometheus == "enabled",
+                configuration_metadata=args.configuration_metadata == "enabled",
                 include=split_ids(args.include),
                 exclude=split_ids(args.exclude),
             )

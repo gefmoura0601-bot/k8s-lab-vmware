@@ -63,6 +63,7 @@ paths=(
   "/prometheus?collection=$COLLECTION"
   "/release-gate?collection=$COLLECTION"
   "/regression-gate?collection=$COLLECTION"
+  "/blue-green?collection=$COLLECTION"
   "/cloud?collection=$COLLECTION"
   "/aws?collection=$COLLECTION"
   "/cis-security?collection=$COLLECTION"
@@ -164,6 +165,11 @@ grep -Fq 'id="collection-progress"' <<<"$collect_page"
 grep -Fq 'role="progressbar"' <<<"$collect_page"
 grep -Fq 'X-Assessment-Async' <<<"$collect_page"
 grep -Fq 'progressPercent' <<<"$collect_page"
+grep -Fq 'name="configmap_metadata"' <<<"$collect_page"
+grep -Fq 'name="secret_metadata"' <<<"$collect_page"
+grep -Fq 'name="probe_urls"' <<<"$collect_page"
+grep -Fq 'Valores de ConfigMaps e Secrets nunca são persistidos' <<<"$collect_page"
+grep -Fq 'este opt-in exige namespace explícito' <<<"$collect_page"
 unauthorized_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/collect")"
 [[ "$unauthorized_code" == "403" ]] || { echo "unauthenticated collection was not rejected" >&2; exit 1; }
 
@@ -190,6 +196,19 @@ if [[ -f "$DIR/regression-validation.json" ]]; then
   curl -fsS "$BASE_URL/export-regression-validation?collection=$COLLECTION" | jq -e '.schemaVersion == "1.0" and .readOnly == true' >/dev/null
   curl -fsS "$BASE_URL/export-regression-junit?collection=$COLLECTION" | grep -Fq '<testsuite'
   curl -fsS "$BASE_URL/export-regression-sarif?collection=$COLLECTION" | jq -e '.version == "2.1.0"' >/dev/null
+fi
+blue_green_page="$(curl -fsS "$BASE_URL/blue-green?collection=$COLLECTION")"
+grep -Fq 'Blue-Green Readiness' <<<"$blue_green_page"
+grep -Fq 'Configuration References' <<<"$blue_green_page"
+grep -Fq 'Traffic Paths' <<<"$blue_green_page"
+grep -Fq 'Migration Gate source → target' <<<"$blue_green_page"
+if [[ -f "$DIR/blue-green-readiness.json" ]]; then
+  curl -fsS "$BASE_URL/export-blue-green?collection=$COLLECTION" | jq -e '.schemaVersion == "1.0" and .readOnly == true' >/dev/null
+fi
+if [[ -f "$DIR/migration-comparison.json" ]]; then
+  curl -fsS "$BASE_URL/export-migration?collection=$COLLECTION" | jq -e '.schemaVersion == "1.0" and .readOnly == true' >/dev/null
+  curl -fsS "$BASE_URL/export-migration-junit?collection=$COLLECTION" | grep -Fq '<testsuite'
+  curl -fsS "$BASE_URL/export-migration-sarif?collection=$COLLECTION" | jq -e '.version == "2.1.0"' >/dev/null
 fi
 
 jq -n --arg collection "$COLLECTION" --arg baseUrl "$BASE_URL" \

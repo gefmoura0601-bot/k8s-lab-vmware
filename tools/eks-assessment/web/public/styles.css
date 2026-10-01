@@ -128,6 +128,17 @@ aside { background: rgba(255,255,255,.96); border-right: 1px solid var(--line); 
   background: #fff;
   min-width: 230px;
 }
+.compare textarea, .collect textarea {
+  min-width: min(520px, 75vw);
+  min-height: 84px;
+  padding: 9px;
+  border: 1px solid #9cb5da;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
 .filters input { min-width: min(460px, 70vw); }
 .collect { display: grid; max-width: 760px; align-items: stretch; }
 .collect button { justify-self: start; }

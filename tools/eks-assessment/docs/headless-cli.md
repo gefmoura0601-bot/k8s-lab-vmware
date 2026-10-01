@@ -14,12 +14,14 @@
 | `dashboard` | Python 3.10+ | permanece em foreground; `Ctrl+C` encerra |
 | `release-gate` | Python e `jq` | `0` aprovado; `1` bloqueado; `2` input inválido |
 | `regression-gate` | Python e `jq` | `0` aprovado; `1` bloqueado; `2` input inválido |
+| `blue-green-gate` | Python e `jq`; rede somente para probes explícitos | `0` somente em `GO`; `1` em `NO_GO`/`UNKNOWN`; `2` input inválido |
+| `migration-gate` | Python, `jq` e duas coletas | `0` somente em `GO`; `1` em `NO_GO`/`UNKNOWN`; `2` input inválido |
 | `validate` | Python e schemas locais | `0` contratos válidos; `1` inválidos |
 | `bundle export/verify/import` | Python e filesystem local | `0` íntegro; `1` inválido |
 | `prune` | Python e filesystem local | dry-run por padrão; `--confirm` remove |
 | `verify-release` | Python; `cosign` apenas com Sigstore bundle | `0` íntegro; `1` inválido |
 
-`release-gate` e `regression-gate` são offline e não exigem `kubectl`, kubeconfig ou conectividade com o cluster.
+`release-gate`, `regression-gate` e `migration-gate` são offline e não exigem `kubectl`, kubeconfig ou conectividade com o cluster. `blue-green-gate` usa somente artefatos locais, salvo quando recebe `--probe-url` explícita.
 
 ## Coleta
 
@@ -42,6 +44,16 @@ O modo headless não descobre Prometheus por padrão. Isso evita que uma automa�
 - `--auto-detect-prometheus`: opt-in na sugestão read-only usada pelo menu.
 
 Nunca inclua credenciais na URL. O preflight rejeita credentials, redirects e destinos proibidos.
+
+Para resolver Configuration References sem persistir values, habilite um ou os dois opt-ins:
+
+```bash
+bin/kubernetes-assessment collect --phase after --change-id green \
+  --namespace banking-green --configmap-metadata --secret-metadata \
+  --probe-url https://green.example.test/health --no-prometheus
+```
+
+Os dois opt-ins exigem `--namespace` explícito; metadata cluster-wide é bloqueada. O preflight exige o RBAC correspondente. Secret metadata deve usar identidade temporária e namespace mínimo; consulte `docs/blue-green-migration.md`.
 
 ### Collector registry e retomada
 
@@ -89,9 +101,20 @@ bin/eks-assessment.sh regression-gate \
   --before eks-20260928T110000Z-before-release.abcd1234 \
   --after eks-20260928T120000Z-after-release.efgh5678 \
   --profile standard
+
+bin/eks-assessment.sh blue-green-gate \
+  --root ./assessment \
+  --collection eks-20260928T120000Z-after-release.efgh5678 \
+  --probe-url https://green.example.test/health
+
+bin/eks-assessment.sh migration-gate \
+  --root ./assessment \
+  --source eks-20260928T110000Z-before-release.abcd1234 \
+  --target eks-20260928T120000Z-after-release.efgh5678 \
+  --mapping docs/migration-mapping.example.json
 ```
 
-O profile e o provider esperado são escolhas do operador; não são inferidos para promover uma release. As duas coletas do Regression Gate precisam ter o mesmo cluster e o mesmo `namespaceScope`; uma coleta cluster-wide não é comparável a uma coleta limitada a namespace. EKS, AKS e GKE permanecem `PREVIEW` até qualificação real.
+O profile, o provider esperado e o mapping são escolhas do operador; não são inferidos para promover uma release. As duas coletas do Regression Gate precisam ter o mesmo cluster e o mesmo `namespaceScope`; o Migration Gate permite identidades distintas por mapping explícito. EKS, AKS e GKE permanecem `PREVIEW` até qualificação real.
 
 O workflow `EKS Assessment CI` executa os dois gates com fixtures sanitizadas do
 profile `generic-kubernetes` e publica JSON/JUnit/SARIF/Markdown do Release Gate,

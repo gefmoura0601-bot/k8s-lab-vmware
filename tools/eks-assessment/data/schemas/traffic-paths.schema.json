@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/traffic-paths-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "summary", "paths", "evidence"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "state": {"enum": ["PASS", "WARN", "FAIL", "UNKNOWN", "N/A"]},
+    "summary": {"type": "object", "required": ["paths", "passed", "warnings", "failed", "unknown", "services"]},
+    "paths": {"type": "array", "items": {"type": "object", "required": ["type", "namespace", "name", "targets", "checks", "state"], "properties": {"type": {"type": "string"}, "namespace": {"type": "string"}, "name": {"type": "string"}, "targets": {"type": "array"}, "checks": {"type": "array"}, "state": {"enum": ["PASS", "WARN", "FAIL", "UNKNOWN"]}}, "additionalProperties": true}},
+    "evidence": {"type": "object"}
+  },
+  "additionalProperties": false
+}

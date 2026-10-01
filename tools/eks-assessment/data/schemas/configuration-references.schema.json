@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/configuration-references-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "policy", "summary", "references"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "state": {"enum": ["PASS", "WARN", "FAIL", "EVIDENCE_UNAVAILABLE"]},
+    "policy": {"type": "object", "required": ["secretValues", "configMapValues"], "properties": {"secretValues": {"const": "NOT_COLLECTED"}, "configMapValues": {"const": "NOT_COLLECTED"}}, "additionalProperties": true},
+    "summary": {"type": "object", "required": ["references", "resolved", "missing", "warnings", "evidenceUnavailable"]},
+    "references": {"type": "array", "items": {"type": "object", "required": ["source", "target", "usage", "optional", "state", "detail", "evidenceSource"], "properties": {"source": {"type": "object"}, "target": {"type": "object"}, "usage": {"type": "string"}, "optional": {"type": "boolean"}, "state": {"enum": ["RESOLVED", "WARN", "MISSING", "EVIDENCE_UNAVAILABLE"]}, "detail": {"type": "string"}, "evidenceSource": {"type": "string"}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false
+}

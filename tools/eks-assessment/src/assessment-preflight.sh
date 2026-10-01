@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMETHEUS_URL="${PROMETHEUS_URL:-}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-}"
 ASSESSMENT_NAMESPACE="${ASSESSMENT_NAMESPACE:-}"
+ASSESSMENT_INCLUDE_CONFIGMAP_METADATA="${ASSESSMENT_INCLUDE_CONFIGMAP_METADATA:-0}"
+ASSESSMENT_INCLUDE_SECRET_METADATA="${ASSESSMENT_INCLUDE_SECRET_METADATA:-0}"
 AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-}"
 AKS_RESOURCE_GROUP="${AKS_RESOURCE_GROUP:-${AZURE_RESOURCE_GROUP:-}}"
 GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:-}"
@@ -57,6 +59,17 @@ if select_python; then
   ok "Python" "$("$PYTHON_BIN" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))') em $PYTHON_BIN"
 else
   failure "Python" "Python 3.10+ não encontrado; defina PYTHON_BIN se necessário"
+fi
+
+if [[ ! "$ASSESSMENT_INCLUDE_CONFIGMAP_METADATA" =~ ^(0|1)$ ]]; then
+  failure "Metadata config." "ASSESSMENT_INCLUDE_CONFIGMAP_METADATA deve ser 0 ou 1"
+fi
+if [[ ! "$ASSESSMENT_INCLUDE_SECRET_METADATA" =~ ^(0|1)$ ]]; then
+  failure "Metadata config." "ASSESSMENT_INCLUDE_SECRET_METADATA deve ser 0 ou 1"
+fi
+if [[ -z "$ASSESSMENT_NAMESPACE" ]] &&
+   { [[ "$ASSESSMENT_INCLUDE_CONFIGMAP_METADATA" == 1 ]] || [[ "$ASSESSMENT_INCLUDE_SECRET_METADATA" == 1 ]]; }; then
+  failure "Escopo de metadata" "ConfigMap/Secret metadata exige ASSESSMENT_NAMESPACE explícito; escopo cluster-wide é bloqueado"
 fi
 
 if ((failed > 0)); then
@@ -117,6 +130,12 @@ if ((api_ready == 1)); then
   check_optional_access list customresourcedefinitions.apiextensions.k8s.io
   check_optional_access list clusterroles.rbac.authorization.k8s.io
   check_optional_access list storageclasses.storage.k8s.io
+  if [[ "$ASSESSMENT_INCLUDE_CONFIGMAP_METADATA" == 1 ]]; then
+    check_required_access list configmaps -n "$ASSESSMENT_NAMESPACE"
+  fi
+  if [[ "$ASSESSMENT_INCLUDE_SECRET_METADATA" == 1 ]]; then
+    check_required_access list secrets -n "$ASSESSMENT_NAMESPACE"
+  fi
   if kubectl --request-timeout="$REQUEST_TIMEOUT" api-resources --verbs=list -o name >/dev/null 2>&1; then
     ok "API discovery" "recursos listáveis podem ser descobertos"
   else

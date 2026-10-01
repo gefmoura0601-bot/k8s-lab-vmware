@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -409,6 +410,80 @@ class DashboardAccessTests(unittest.TestCase):
                 ("Location", f"/regression-gate?collection={after.name}"), accepted.response_headers
             )
             writer.assert_called_once_with(before, after, "standard")
+
+    def test_blue_green_page_renders_readiness_and_migration_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, target = root / "eks-blue", root / "eks-green"
+            source.mkdir(); target.mkdir()
+            (source / "metadata.json").write_text(json.dumps({"clusterName": "blue", "createdAt": "2026-09-29T00:00:00Z"}), encoding="utf-8")
+            (target / "metadata.json").write_text(json.dumps({"clusterName": "green", "createdAt": "2026-09-29T01:00:00Z"}), encoding="utf-8")
+            (target / "comprehensive-assessment.json").write_text(json.dumps({"summary": {}, "findings": [], "technologies": [], "capacityRecommendations": []}), encoding="utf-8")
+            readiness_report = {"status": "UNKNOWN", "summary": {"gates": 1, "blocking": 0, "unknown": 1, "warnings": 0}, "gates": [{"gateId": "cutover.dns", "domain": "Cutover", "status": "UNKNOWN", "mandatory": True, "summary": "DNS exige evidência"}]}
+            (target / "blue-green-readiness.json").write_text(json.dumps(readiness_report), encoding="utf-8")
+            configuration = {"summary": {"references": 1}, "references": [{"source": {"kind": "Deployment", "namespace": "apps", "name": "api"}, "target": {"kind": "Secret", "namespace": "apps", "name": "db", "key": "password"}, "usage": "env", "state": "EVIDENCE_UNAVAILABLE", "detail": "metadata opt-in", "optional": False}]}
+            (target / "configuration-references.json").write_text(json.dumps(configuration), encoding="utf-8")
+            handler = object.__new__(dashboard.Handler)
+            handler.root = root; handler.static = STATIC
+            page = handler.blue_green(target)
+            self.assertIn("Blue-Green Readiness", page)
+            self.assertIn("Configuration References", page)
+            self.assertIn("Traffic Paths", page)
+            self.assertIn("Migration Gate source → target", page)
+            self.assertIn('action="/validate-blue-green"', page)
+            self.assertIn('action="/validate-migration"', page)
+            self.assertIn("Valores nunca são persistidos", page)
+            self.assertNotIn("secret-value", page)
+
+    def test_blue_green_posts_validate_input_and_use_action_token(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, target = root / "eks-blue", root / "eks-green"
+            source.mkdir(); target.mkdir()
+
+            def request(path: str, fields: dict[str, str]):
+                body = urlencode(fields)
+                handler = object.__new__(dashboard.Handler)
+                handler.path = path; handler.root = root; handler.static = STATIC; handler.repository = ROOT
+                handler.client_address = ("127.0.0.1", 12345)
+                handler.headers = {"Content-Length": str(len(body.encode("utf-8")))}
+                handler.rfile = io.BytesIO(body.encode("utf-8")); handler.authenticated = lambda: True
+                handler.response_status = None; handler.response_headers = []; handler.response_payload = None
+                handler.send_response = lambda status: setattr(handler, "response_status", status)
+                handler.send_header = lambda name, value: handler.response_headers.append((name, value))
+                handler.end_headers = lambda: None
+                handler.send_json = lambda value, status=200, filename=None: (setattr(handler, "response_payload", value), setattr(handler, "response_status", status))
+                handler.send_html = lambda value, status=200: (setattr(handler, "response_payload", value), setattr(handler, "response_status", status))
+                return handler
+
+            denied = request("/validate-blue-green", {"action_token": "invalid", "collection": target.name})
+            denied.do_POST()
+            self.assertEqual(403, denied.response_status)
+
+            accepted = request("/validate-blue-green", {"action_token": dashboard.ACTION_TOKEN, "collection": target.name, "probe_urls": "https://green.example.test/health"})
+            with patch.object(dashboard, "write_blue_green_readiness", return_value={}) as writer:
+                accepted.do_POST()
+            self.assertEqual(303, accepted.response_status)
+            writer.assert_called_once_with(target, ["https://green.example.test/health"])
+
+            invalid_mapping = request("/validate-migration", {"action_token": dashboard.ACTION_TOKEN, "source": source.name, "target": target.name, "mapping": "not-json"})
+            invalid_mapping.do_POST()
+            self.assertEqual(400, invalid_mapping.response_status)
+
+            mapping = {"namespaceMap": {"blue": "green"}, "allowedDifferences": ["image", "replicas"]}
+            migration = request("/validate-migration", {"action_token": dashboard.ACTION_TOKEN, "source": source.name, "target": target.name, "mapping": json.dumps(mapping)})
+            with patch.object(dashboard, "write_migration_validation", return_value={}) as writer:
+                migration.do_POST()
+            self.assertEqual(303, migration.response_status)
+            writer.assert_called_once_with(source, target, mapping)
+
+            cluster_wide_metadata = request(
+                "/collect",
+                {"action_token": dashboard.ACTION_TOKEN, "label": "unsafe", "configmap_metadata": "1"},
+            )
+            cluster_wide_metadata.do_POST()
+            self.assertEqual(400, cluster_wide_metadata.response_status)
+            self.assertIn("exige namespace explícito", cluster_wide_metadata.response_payload)
 
 
 if __name__ == "__main__":

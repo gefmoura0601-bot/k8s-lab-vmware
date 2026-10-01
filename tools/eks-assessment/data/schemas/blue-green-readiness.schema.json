@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/blue-green-readiness-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "status", "notice", "collection", "summary", "gates", "artifacts"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "status": {"enum": ["GO", "NO_GO", "UNKNOWN"]}, "notice": {"type": "string", "minLength": 1}, "collection": {"type": "string", "minLength": 1},
+    "summary": {"type": "object", "required": ["gates", "blocking", "unknown", "warnings"]},
+    "gates": {"type": "array", "items": {"type": "object", "required": ["gateId", "domain", "status", "mandatory", "summary"], "properties": {"gateId": {"type": "string"}, "domain": {"type": "string"}, "status": {"enum": ["PASS", "WARN", "FAIL", "UNKNOWN", "N/A"]}, "mandatory": {"type": "boolean"}, "summary": {"type": "string"}}, "additionalProperties": false}},
+    "artifacts": {"type": "object"}
+  },
+  "additionalProperties": false
+}

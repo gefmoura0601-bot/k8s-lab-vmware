@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/configuration-metadata-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "namespaceScope", "policy", "resources", "items"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "generatedAt": {"type": "string", "minLength": 1},
+    "readOnly": {"const": true},
+    "state": {"enum": ["AVAILABLE", "PARTIAL", "EVIDENCE_UNAVAILABLE"]},
+    "namespaceScope": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"},
+    "policy": {"type": "object", "required": ["optIn", "valuesPersisted", "annotationsPersisted", "fieldsPersisted"], "properties": {"optIn": {"const": true}, "valuesPersisted": {"const": false}, "annotationsPersisted": {"const": false}, "fieldsPersisted": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": true},
+    "resources": {"type": "object"},
+    "items": {"type": "array", "items": {"type": "object", "required": ["kind", "namespace", "name", "immutable", "keys"], "properties": {"kind": {"enum": ["ConfigMap", "Secret"]}, "namespace": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}, "immutable": {"type": "boolean"}, "keys": {"type": "array", "items": {"type": "string"}}, "type": {"type": "string"}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false
+}

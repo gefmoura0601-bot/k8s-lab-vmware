@@ -183,14 +183,14 @@ run_section 21 'KEDA ScaledObjects' get scaledobject "${scope[@]}"
 run_section 22 'Services' get services "${scope[@]}"
 run_section 23 'EndpointSlices' get endpointslices "${scope[@]}"
 run_section 24 'Ingresses' get ingress "${scope[@]}"
-run_section 25 'Gateway API objects' get gateway,httproute,grpcroute,tlsroute "${scope[@]}"
+run_section 25 'Gateway API objects' get gateway,httproute,grpcroute,tlsroute,referencegrant "${scope[@]}"
 run_section 26 'NetworkPolicies' get networkpolicy "${scope[@]}"
 run_section 27 'Ingress controller topology' get deployment,daemonset,service "${scope[@]}" -l app.kubernetes.io/component=controller
 run_section 28 'Istio control plane' get deployment,service "${scope[@]}" -l app=istiod
-run_section 29 'Istio traffic and mTLS' get virtualservice,destinationrule,peerauthentication,authorizationpolicy -A
+run_section 29 'Istio traffic and mTLS' get virtualservices.networking.istio.io,destinationrules.networking.istio.io,gateways.networking.istio.io,serviceentries.networking.istio.io,peerauthentications.security.istio.io,authorizationpolicies.security.istio.io,requestauthentications.security.istio.io -A
 run_section 30 'CNI health (Calico)' get tigerastatus
 
-# Storage and configuration. Secrets are intentionally metadata only.
+# Storage and configuration. ConfigMaps and Secrets are disabled by default.
 run_section 31 'Storage classes' get storageclass
 run_section 32 'Persistent volumes' get pv
 run_section 33 'Persistent volume claims' get pvc "${scope[@]}"

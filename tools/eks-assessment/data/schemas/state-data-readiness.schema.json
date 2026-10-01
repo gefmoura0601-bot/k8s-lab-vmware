@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/state-data-readiness-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "summary", "statefulWorkloads", "persistentClaims", "jobs", "gates", "manualEvidence"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "state": {"enum": ["PASS", "FAIL", "UNKNOWN"]}, "summary": {"type": "object"},
+    "statefulWorkloads": {"type": "array"}, "persistentClaims": {"type": "array"}, "jobs": {"type": "array"},
+    "gates": {"type": "array", "items": {"type": "object", "required": ["gateId", "status", "mandatory", "detail"], "properties": {"gateId": {"type": "string"}, "status": {"enum": ["PASS", "FAIL", "UNKNOWN", "N/A"]}, "mandatory": {"type": "boolean"}, "detail": {"type": "string"}}, "additionalProperties": false}},
+    "manualEvidence": {"type": "object"}
+  },
+  "additionalProperties": false
+}

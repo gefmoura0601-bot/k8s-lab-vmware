@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assessment.local/schemas/migration-probes-1.0.json",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "readOnly", "state", "summary", "items", "policy"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"}, "generatedAt": {"type": "string", "minLength": 1}, "readOnly": {"const": true},
+    "state": {"enum": ["PASS", "WARN", "FAIL", "DISABLED"]}, "summary": {"type": "object"},
+    "items": {"type": "array", "items": {"type": "object", "required": ["url", "state"], "properties": {"url": {"type": "string"}, "state": {"enum": ["PASS", "WARN", "FAIL"]}, "httpStatus": {"type": "integer"}, "latencyMs": {"type": "number", "minimum": 0}, "tlsValidated": {"type": "boolean"}, "error": {"type": "string"}}, "additionalProperties": false}},
+    "policy": {"type": "object", "required": ["method", "redirects", "responseBodyPersisted", "credentialsAllowed"], "properties": {"method": {"const": "GET"}, "redirects": {"const": "DENIED"}, "responseBodyPersisted": {"const": false}, "credentialsAllowed": {"const": false}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}

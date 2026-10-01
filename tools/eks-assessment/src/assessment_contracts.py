@@ -25,6 +25,14 @@ SCHEMA_FILES = {
     "manifest-schema-validation.json": "manifest-schema-validation.schema.json",
     "node-process-evidence.json": "node-process-evidence.schema.json",
     "collector-state.json": "collector-state.schema.json",
+    "configuration-metadata.json": "configuration-metadata.schema.json",
+    "configuration-references.json": "configuration-references.schema.json",
+    "traffic-paths.json": "traffic-paths.schema.json",
+    "state-data-readiness.json": "state-data-readiness.schema.json",
+    "migration-probes.json": "migration-probes.schema.json",
+    "blue-green-readiness.json": "blue-green-readiness.schema.json",
+    "migration-comparison.json": "migration-comparison.schema.json",
+    "migration-evidence.json": "migration-evidence.schema.json",
 }
 TERMINAL_REQUIRED = {
     "metadata.json",
@@ -41,6 +49,11 @@ def utc_iso() -> str:
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def version_at_least(value: str, minimum: tuple[int, ...]) -> bool:
+    numbers = tuple(int(item) for item in re.findall(r"\d+", str(value))[: len(minimum)])
+    return numbers + (0,) * (len(minimum) - len(numbers)) >= minimum
 
 
 def json_type(value: Any, expected: str) -> bool:
@@ -151,11 +164,24 @@ def validate_collection(collection: Path, schema_root: Path | None = None) -> di
             pass
     completed = metadata.get("completed") is True or str(metadata.get("status", "")).upper() == "COMPLETED"
     operational_version = "0"
+    comprehensive_version = "0"
     try:
         operational = load_json(collection / "operational-insights.json")
         operational_version = str(operational.get("schemaVersion", "0")) if isinstance(operational, dict) else "0"
     except (OSError, json.JSONDecodeError):
         pass
+    try:
+        comprehensive = load_json(collection / "comprehensive-assessment.json")
+        comprehensive_version = str(comprehensive.get("schemaVersion", "0")) if isinstance(comprehensive, dict) else "0"
+    except (OSError, json.JSONDecodeError):
+        pass
+    blue_green_required = {
+        "configuration-references.json",
+        "traffic-paths.json",
+        "state-data-readiness.json",
+        "migration-probes.json",
+        "blue-green-readiness.json",
+    }
     for artifact, schema_name in SCHEMA_FILES.items():
         document = collection / artifact
         schema_path = schemas / schema_name
@@ -163,7 +189,10 @@ def validate_collection(collection: Path, schema_root: Path | None = None) -> di
             global_errors.append(f"schema ausente: {schema_name}")
             continue
         if not document.is_file():
-            required_new_artifact = completed and artifact == "manifest-schema-validation.json" and operational_version >= "1.3"
+            required_new_artifact = completed and (
+                (artifact == "manifest-schema-validation.json" and version_at_least(operational_version, (1, 3)))
+                or (artifact in blue_green_required and version_at_least(comprehensive_version, (4, 1)))
+            )
             if artifact == "metadata.json" or (completed and artifact in TERMINAL_REQUIRED) or required_new_artifact:
                 results.append({"artifact": artifact, "schema": schema_name, "state": "FAIL", "errors": ["artefato obrigatório ausente"]})
             else:

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "2026-09-29T00:00:00Z",
+  "readOnly": true,
+  "changeReference": "CHANGE-0000",
+  "approvalReference": "APPROVAL-0000",
+  "dnsValidated": true,
+  "loadBalancerValidated": true,
+  "restoreTested": true,
+  "schemaBackwardCompatible": true,
+  "singletonJobsControlled": true,
+  "rollbackAvailable": true,
+  "pointOfNoReturn": "Antes da ativação de escrita exclusiva no target",
+  "dataReplication": {
+    "state": "READY",
+    "detail": "Lag e consistência aprovados conforme evidência externa da mudança"
+  }
+}

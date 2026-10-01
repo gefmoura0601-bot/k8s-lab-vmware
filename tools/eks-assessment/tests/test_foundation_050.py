@@ -45,8 +45,13 @@ class Foundation050Tests(unittest.TestCase):
         plan = collectors.build_plan(registry, channel="cli", prometheus=False, include={"assessment"})
         self.assertIn("preflight", [item["id"] for item in plan])
         self.assertIn("contract-validation", [item["id"] for item in plan])
+        self.assertNotIn("configuration-metadata", [item["id"] for item in plan])
+        configuration_plan = collectors.build_plan(registry, channel="cli", prometheus=False, configuration_metadata=True)
+        self.assertIn("configuration-metadata", [item["id"] for item in configuration_plan])
         with self.assertRaises(ValueError):
             collectors.build_plan(registry, channel="cli", prometheus=False, include={"prometheus"})
+        with self.assertRaises(ValueError):
+            collectors.build_plan(registry, channel="cli", prometheus=False, include={"configuration-metadata"})
         with self.assertRaises(ValueError):
             collectors.build_plan(registry, channel="cli", prometheus=False, exclude={"preflight"})
         with tempfile.TemporaryDirectory() as temporary:
