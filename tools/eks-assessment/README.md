@@ -142,7 +142,21 @@ A série `0.5.0-rc` amplia as áreas baseadas no mesmo artefato sanitizado:
 
 O artefato fica em `operational-insights.json` e pode ser exportado por `GET /export-operational`.
 
-O dashboard agrupa a navegação por visão, análise, operações, inventário, integrações, governança e relatórios. A busca global consulta findings, inventário, CIS Security, Events, Node Health, Versions, Manifest Quality, Best Practices e gates de release; conteúdo de logs não é indexado.
+O dashboard organiza a navegação pela finalidade de cada página:
+
+| Área | Páginas |
+|---|---|
+| Visão geral | Visão geral, Assessment, Problemas, Busca global |
+| Inventário | Nodes, Namespaces, Workloads, Tecnologias, Versions & Lifecycle, RabbitMQ |
+| Observabilidade | Events & Diagnostics, Operational Timeline, Logs, Prometheus |
+| Capacidade e saúde | Node Health, Container Tuning |
+| Segurança | CIS Security, Relatório executivo CIS |
+| Governança | Best Practices, Manifest Quality, Release Gate, Regression Gate |
+| Migração | Blue-Green Readiness, incluindo a comparação Migration Gate source → target |
+| Plataformas | Cloud Provider, AWS / EKS detalhado |
+| Coletas e relatórios | Nova coleta, Cobertura da coleta, Comparar coletas |
+
+A busca global consulta esses domínios; conteúdo de logs não é indexado. No terminal, as opções ficam em Coletas, Visualização e relatórios, Governança e Migração, mantendo a numeração existente.
 
 Logs permanecem desabilitados por padrão. Para coleta explícita:
 
@@ -370,7 +384,7 @@ O fluxo também está na opção 8 do menu e em **Governança → Regression Gat
 
 ## Blue-Green Readiness e Migration Gate
 
-A opção 11 e **Governança → Blue-Green Readiness** avaliam uma coleta sem alterar o cluster. A opção 12 e o subcomando `migration-gate` comparam source e target, inclusive em clusters e namespaces diferentes, desde que o mapping seja explícito. Os gates cobrem workloads, Services, Configuration References, Traffic Paths, NetworkPolicy/PDB/autoscaling, ServiceAccounts, API/lifecycle, storage/dados, Node Health, CIS, observabilidade, probes, DNS/load balancer e rollback.
+A opção 11 e **Migração → Blue-Green Readiness** avaliam uma coleta sem alterar o cluster. A opção 12 e o subcomando `migration-gate` comparam source e target, inclusive em clusters e namespaces diferentes, desde que o mapping seja explícito. No dashboard, essa comparação fica na seção **Migration Gate source → target** da mesma página. Os gates cobrem workloads, Services, Configuration References, Traffic Paths, NetworkPolicy/PDB/autoscaling, ServiceAccounts, API/lifecycle, storage/dados, Node Health, CIS, observabilidade, probes, DNS/load balancer e rollback.
 
 ConfigMap/Secret metadata é opt-in com `--configmap-metadata` e `--secret-metadata` e exige `--namespace` explícito; coleta cluster-wide desses objetos é bloqueada. DNS, consistência de dados e rollback usam `migration-evidence.json`; ausência de evidência obrigatória resulta em `UNKNOWN`, nunca `GO`. O desenho, exemplos, RBAC e limitações estão em [`docs/blue-green-migration.md`](docs/blue-green-migration.md).
 

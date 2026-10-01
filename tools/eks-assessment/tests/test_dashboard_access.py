@@ -75,8 +75,8 @@ class DashboardAccessTests(unittest.TestCase):
             handler.root = root
             handler.static = STATIC
             navigation = handler.layout("Teste", "body", collection, "best")
-            self.assertIn("ANÁLISE", navigation)
-            self.assertIn("OPERAÇÕES", navigation)
+            self.assertIn("VISÃO GERAL", navigation)
+            self.assertIn("OBSERVABILIDADE", navigation)
             self.assertIn("BUSCA GLOBAL", navigation)
             result = handler.search_page(collection, {"q": ["bestpractice.gke"]})
             self.assertIn("bestpractice.gke.release.channel", result)

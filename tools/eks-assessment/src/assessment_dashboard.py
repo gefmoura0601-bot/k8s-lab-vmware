@@ -472,13 +472,52 @@ class Handler(BaseHTTPRequestHandler):
         ident = directory.name if directory else ""
         cq = urlencode({"collection": ident}) if ident else ""
         groups = [
-            ("VISÃO", [("overview", "/", "Visão geral"), ("search", "/search", "Busca global")]),
-            ("ANÁLISE", [("assessment", "/assessment", "Assessment"), ("problems", "/problems", "Problemas"), ("cis", "/cis-security", "CIS Security"), ("best", "/best-practices", "Best Practices")]),
-            ("OPERAÇÕES", [("diagnostics", "/diagnostics", "Events & Diagnostics"), ("timeline", "/timeline", "Operational Timeline"), ("node-health", "/node-health", "Node Health"), ("versions", "/versions", "Versions & Lifecycle"), ("manifests", "/manifest-quality", "Manifest Quality"), ("logs", "/logs", "Logs"), ("capacity", "/capacity", "Container Tuning")]),
-            ("INVENTÁRIO", [("nodes", "/resources?kind=nodes", "Nodes"), ("namespaces", "/resources?kind=namespaces", "Namespaces"), ("workloads", "/resources?kind=workloads", "Workloads"), ("technologies", "/technologies", "Tecnologias"), ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ")]),
-            ("INTEGRAÇÕES", [("prometheus", "/prometheus", "Prometheus"), ("cloud", "/cloud", "Cloud Provider"), ("aws", "/aws", "AWS / EKS detalhado"), ("coverage", "/coverage", "Cobertura")]),
-            ("GOVERNANÇA", [("release-gate", "/release-gate", "Release Gate"), ("regression-gate", "/regression-gate", "Regression Gate"), ("blue-green", "/blue-green", "Blue-Green Readiness")]),
-            ("RELATÓRIOS", [("compare", "/compare", "Comparar coletas")]),
+            ("VISÃO GERAL", [
+                ("overview", "/", "Visão geral"),
+                ("assessment", "/assessment", "Assessment"),
+                ("problems", "/problems", "Problemas"),
+                ("search", "/search", "Busca global"),
+            ]),
+            ("INVENTÁRIO", [
+                ("nodes", "/resources?kind=nodes", "Nodes"),
+                ("namespaces", "/resources?kind=namespaces", "Namespaces"),
+                ("workloads", "/resources?kind=workloads", "Workloads"),
+                ("technologies", "/technologies", "Tecnologias"),
+                ("versions", "/versions", "Versions & Lifecycle"),
+                ("rabbitmq", "/resources?kind=rabbitmq", "RabbitMQ"),
+            ]),
+            ("OBSERVABILIDADE", [
+                ("diagnostics", "/diagnostics", "Events & Diagnostics"),
+                ("timeline", "/timeline", "Operational Timeline"),
+                ("logs", "/logs", "Logs"),
+                ("prometheus", "/prometheus", "Prometheus"),
+            ]),
+            ("CAPACIDADE E SAÚDE", [
+                ("node-health", "/node-health", "Node Health"),
+                ("capacity", "/capacity", "Container Tuning"),
+            ]),
+            ("SEGURANÇA", [
+                ("cis", "/cis-security", "CIS Security"),
+                ("cis-report", "/cis-report", "Relatório executivo CIS"),
+            ]),
+            ("GOVERNANÇA", [
+                ("best", "/best-practices", "Best Practices"),
+                ("manifests", "/manifest-quality", "Manifest Quality"),
+                ("release-gate", "/release-gate", "Release Gate"),
+                ("regression-gate", "/regression-gate", "Regression Gate"),
+            ]),
+            ("MIGRAÇÃO", [
+                ("blue-green", "/blue-green", "Blue-Green Readiness"),
+            ]),
+            ("PLATAFORMAS", [
+                ("cloud", "/cloud", "Cloud Provider"),
+                ("aws", "/aws", "AWS / EKS detalhado"),
+            ]),
+            ("COLETAS E RELATÓRIOS", [
+                ("collect", "/collect", "Nova coleta"),
+                ("coverage", "/coverage", "Cobertura da coleta"),
+                ("compare", "/compare", "Comparar coletas"),
+            ]),
         ]
         nav = []
         for group_label, links in groups:
@@ -540,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
         term = query.get("q", [""])[0].strip()
         form = f'<form class="filters global-results" action="/search"><input type="hidden" name="collection" value="{esc(directory.name)}"><input name="q" minlength="2" value="{esc(term)}" placeholder="Recurso, namespace, Rule ID, Event, versão ou recomendação"><button>Pesquisar</button></form>'
         if len(term) < 2:
-            return self.layout("Busca global", f'<h1>Busca global</h1><p>Pesquise em findings, inventário, CIS Security, Events, Versions, Manifest Quality, Best Practices e gates de governança.</p>{form}<div class="message">Informe ao menos dois caracteres.</div>', directory, "search")
+            return self.layout("Busca global", f'<h1>Busca global</h1><p>Pesquise em findings, inventário, CIS Security, Events, Versions, Manifest Quality, Best Practices e gates de governança e migração.</p>{form}<div class="message">Informe ao menos dois caracteres.</div>', directory, "search")
         value = details(directory)
         needle = term.lower()
         collection = quote_plus(directory.name)
@@ -1741,11 +1780,11 @@ class Handler(BaseHTTPRequestHandler):
     def cis_report(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
         report = details(directory).get("cisSecurity") or {}; summary = report.get("summary") or {}
-        if not report: return self.layout("Relatório CIS", '<div class="message">Relatório CIS indisponível.</div>', directory, "cis")
+        if not report: return self.layout("Relatório CIS", '<div class="message">Relatório CIS indisponível.</div>', directory, "cis-report")
         actions = sorted((c for c in report.get("controls") or [] if c.get("status") == "WARN"), key=lambda c: (-int(c.get("riskWeight") or 0), str(c.get("controlId"))))
         rows = [{"priority": c.get("priority"), "domain": c.get("domain"), "control": c.get("title"), "owner": (c.get("remediation") or {}).get("owner", "Não atribuído"), "due": (c.get("remediation") or {}).get("dueDate", "-"), "state": (c.get("remediation") or {}).get("state", "OPEN"), "recommendation": c.get("recommendation")} for c in actions]
         body = f'<div class="print-only-note">Use Imprimir → Salvar como PDF.</div><h1>Relatório executivo — CIS Security</h1><p><b>Coleta:</b> {esc(directory.name)} · <b>Plataforma:</b> {esc(report.get("platform"))}</p><div class="message warn">{esc(report.get("notice"))}</div><div class="facts"><div><small>Posture Score</small><b>{summary.get("postureScorePercent","N/A")}%</b></div><div><small>Evidence Coverage</small><b>{summary.get("evidenceCoveragePercent","N/A")}%</b></div><div><small>Riscos</small><b>{summary.get("warnings",0)}</b></div><div><small>Evidências externas</small><b>{summary.get("acceptedExternalEvidence",0)}</b></div></div><h2>Score por domínio</h2>{table(summary.get("domains") or [], [("domain","Domínio"),("controls","Controles"),("passed","PASS"),("scorePercent","Score %")])}<h2>Plano de ação</h2>{table(rows, [("priority","Prioridade"),("domain","Domínio"),("control","Controle"),("owner","Owner"),("due","Prazo"),("state","Estado"),("recommendation","Recomendação")])}<h2>Matriz de responsabilidade</h2>{table([{"responsibility": k, "controls": v} for k,v in (summary.get("responsibility") or {}).items()], [("responsibility","Responsabilidade"),("controls","Controles")])}'
-        return self.layout("Relatório executivo CIS", body, directory, "cis")
+        return self.layout("Relatório executivo CIS", body, directory, "cis-report")
 
     def coverage(self, directory: Path | None) -> str:
         if not directory: return self.overview(None)
@@ -1933,7 +1972,7 @@ class Handler(BaseHTTPRequestHandler):
             '<button id="collection-submit">Iniciar assessment read-only</button></form>'
             '<script>(()=>{const form=document.getElementById("collection-form");if(!form)return;const box=document.getElementById("collection-progress"),bar=box.querySelector("[role=progressbar]"),fill=document.getElementById("progress-fill"),value=document.getElementById("progress-value"),title=document.getElementById("progress-title"),detail=document.getElementById("progress-detail"),button=document.getElementById("collection-submit");let timer;const labels={preparing:"Preparando coleta",preflight:"Validando ambiente",assessment:"Executando assessment",discovery:"Coletando discovery","configuration-metadata":"Validando Configuration References",comprehensive:"Analisando recomendações",prometheus:"Coletando métricas do Prometheus","node-evidence":"Atribuindo uso dos nodes","inventory-services":"Inventariando Services","inventory-pvcs":"Inventariando PVCs","inventory-hpas":"Inventariando HPAs","artifact-validation":"Validando artefatos","contract-validation":"Validando JSON Schemas"};function render(s){const p=Math.max(0,Math.min(100,Number(s.progressPercent||0)));fill.style.width=p+"%";value.textContent=p+"%";bar.setAttribute("aria-valuenow",String(p));title.textContent=s.status==="COMPLETED"?"Coleta concluída":(labels[s.component]||"Coleta em andamento");const done=(s.completedComponents||[]).length,total=(s.plannedComponents||[]).length;detail.textContent=s.active?`${done} de ${total} etapas concluídas${s.remainingSeconds!==undefined?` · até ${s.remainingSeconds}s restantes`:""}`:(s.status==="COMPLETED"?"Todos os artefatos foram gerados e validados.":`Coleta encerrada: ${s.status||"erro"}.`)}async function poll(){try{const r=await fetch("/api/collection-status",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){detail.textContent="Aguardando atualização do servidor..."}}form.addEventListener("submit",async e=>{e.preventDefault();box.hidden=false;button.disabled=true;button.textContent="Coleta em andamento...";render({progressPercent:0,component:"preflight",active:true,completedComponents:[],plannedComponents:[1],remainingSeconds:"..."});timer=setInterval(poll,750);try{const r=await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form)),headers:{"X-Assessment-Async":"1"}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Falha HTTP ${r.status}`);clearInterval(timer);render({progressPercent:100,status:"COMPLETED",active:false});window.location.assign(data.redirect)}catch(err){clearInterval(timer);await poll();button.disabled=false;button.textContent="Tentar novamente";detail.textContent=err.message}})})();</script>'
         )
-        return self.layout("Nova coleta", body)
+        return self.layout("Nova coleta", body, active="collect")
     def do_GET(self):
         if not self.authenticated(): return
         parsed = urlparse(self.path); path, query = parsed.path, parse_qs(parsed.query); directory = self.selected(query)
