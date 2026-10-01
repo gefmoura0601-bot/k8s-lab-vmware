@@ -97,7 +97,7 @@ class CollectionSupervisorTests(unittest.TestCase):
         self.assertIn("KUBERNETES ASSESSMENT CONSOLE", menu)
         self.assertIn("render_menu", menu)
         self.assertIn("NO_COLOR", menu)
-        self.assertIn("GOVERNANÇA & RELEASE", menu)
+        self.assertIn("GOVERNANÇA", menu)
         self.assertIn("Release Gate por provider", menu)
         self.assertIn("provider_gate", menu)
         self.assertIn("Provider esperado [eks|aks|gke|generic-kubernetes]", menu)

@@ -1,5 +1,11 @@
 # Changelog
 
+## Não lançado
+
+- reorganiza a navegação do dashboard por finalidade, com áreas próprias para Segurança, Migração, Observabilidade e Capacidade e saúde;
+- reúne CIS Security e o relatório executivo em Segurança, Best Practices e Manifest Quality em Governança, Versions & Lifecycle em Inventário e cobertura em Coletas e relatórios;
+- separa Migração de Governança no terminal, preserva as opções numeradas e atualiza os caminhos de navegação na documentação.
+
 ## 0.5.0-rc.2 — 2026-09-29
 
 - adiciona Blue-Green Readiness provider-neutral com estados `GO`, `NO_GO` e `UNKNOWN` fail-closed;

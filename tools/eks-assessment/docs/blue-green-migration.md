@@ -84,7 +84,7 @@ Saídas no diretório target:
 - `migration-probes.json`: status/latência sem response body;
 - `blue-green-readiness.json`: decisão consolidada da coleta.
 
-Todos os artefatos possuem JSON Schema. No dashboard, use **Governança → Blue-Green Readiness** para revisar evidências, atualizar probes e executar a comparação source → target.
+Todos os artefatos possuem JSON Schema. No dashboard, use **Migração → Blue-Green Readiness** para revisar evidências, atualizar probes e executar a comparação source → target.
 
 ## Limitações explícitas
 
